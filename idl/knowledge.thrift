@@ -146,7 +146,7 @@ service KnowledgeService {
     
     // 图谱分析
     GraphStatsResp GetGraphStats()
-    BatchEntityResp GetRelatedEntities(1: string entityId, 1: optional string relationType)
+    BatchEntityResp GetRelatedEntities(1: string entityId, 2: optional string relationType)
     
     // 数据导入
     common.BaseResp ImportData(1: ImportDataReq req)

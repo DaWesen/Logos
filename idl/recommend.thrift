@@ -18,7 +18,7 @@ struct RecommendationItem {
 struct RecommendationReq {
     1: i64 userId
     2: optional string type
-    3: optional int limit
+    3: optional i32 limit
     4: optional map<string, string> context
 }
 
@@ -33,7 +33,7 @@ struct RecommendationResp {
 struct RelatedRecommendationReq {
     1: string entityId
     2: optional string type
-    3: optional int limit
+    3: optional i32 limit
 }
 
 // 推荐反馈请求
@@ -72,7 +72,7 @@ struct HistoryResp {
 struct BatchRecommendationReq {
     1: list<i64> userIds
     2: optional string type
-    3: optional int limit
+    3: optional i32 limit
 }
 
 // 批量推荐响应
