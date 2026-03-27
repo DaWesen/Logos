@@ -2,14 +2,19 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
 	"Noah/internal/user/dao"
 	"Noah/internal/user/model"
+	"Noah/pkg/cache"
+	"Noah/pkg/es"
 	"Noah/pkg/jwt"
 	"Noah/pkg/logger"
+	"Noah/pkg/mq"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -43,19 +48,18 @@ type UserService interface {
 type userServiceImpl struct {
 	repo       dao.UserRepository
 	jwtManager *jwt.JWTManager
+	cache      cache.Cache
+	producer   *mq.Producer
+	esManager  *es.ESManager
 }
 
-func NewUserService(repo dao.UserRepository, jwtManager *jwt.JWTManager) UserService {
+func NewUserService(repo dao.UserRepository, jwtManager *jwt.JWTManager, cache cache.Cache, producer *mq.Producer, esManager *es.ESManager) UserService {
 	return &userServiceImpl{
 		repo:       repo,
 		jwtManager: jwtManager,
-	}
-}
-
-func NewUserServiceWithRepo(repo dao.UserRepository, jwtManager *jwt.JWTManager) UserService {
-	return &userServiceImpl{
-		repo:       repo,
-		jwtManager: jwtManager,
+		cache:      cache,
+		producer:   producer,
+		esManager:  esManager,
 	}
 }
 
@@ -113,6 +117,36 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password, emai
 	}
 
 	expireAt := time.Now().Add(time.Hour * 24).Unix()
+
+	if s.producer != nil {
+		eventData, _ := json.Marshal(map[string]interface{}{
+			"user_id":       u.ID,
+			"username":      u.Username,
+			"registered_at": time.Now(),
+			"email":         u.Email,
+			"phone":         u.Phone,
+		})
+		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
+		logger.Info("发送用户注册事件",
+			logger.Int64Field("user_id", u.ID))
+	}
+
+	if s.esManager != nil {
+		esUser := map[string]interface{}{
+			"id":         u.ID,
+			"username":   u.Username,
+			"email":      u.Email,
+			"phone":      u.Phone,
+			"avatar":     u.Avatar,
+			"created_at": u.CreatedAt.Format("2006-01-02 15:04:05"),
+		}
+		err = s.esManager.AddDocument("users", fmt.Sprintf("%d", u.ID), esUser)
+		if err != nil {
+			logger.Error("同步用户到ES失败",
+				logger.ErrorField(err),
+				logger.Int64Field("user_id", u.ID))
+		}
+	}
 
 	logger.Info("用户注册成功",
 		logger.Int64Field("user_id", u.ID),
@@ -175,6 +209,17 @@ func (s *userServiceImpl) Login(ctx context.Context, account, password string) (
 
 	expireAt := time.Now().Add(time.Hour * 24).Unix()
 
+	if s.producer != nil {
+		eventData, _ := json.Marshal(map[string]interface{}{
+			"user_id":   u.ID,
+			"username":  u.Username,
+			"logged_at": time.Now(),
+		})
+		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
+		logger.Info("发送用户登录事件",
+			logger.Int64Field("user_id", u.ID))
+	}
+
 	logger.Info("用户登录成功",
 		logger.Int64Field("user_id", u.ID),
 		logger.StringField("account", account))
@@ -185,6 +230,19 @@ func (s *userServiceImpl) Login(ctx context.Context, account, password string) (
 func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model.User, error) {
 	logger.Info("获取用户信息请求",
 		logger.Int64Field("user_id", userID))
+
+	if s.cache != nil {
+		userKey := cache.GenerateUserKey(userID)
+		cachedUser, err := s.cache.Get(ctx, userKey)
+		if err == nil && cachedUser != "" {
+			var user model.User
+			if json.Unmarshal([]byte(cachedUser), &user) == nil {
+				logger.Info("从缓存获取用户信息成功",
+					logger.Int64Field("user_id", userID))
+				return &user, nil
+			}
+		}
+	}
 
 	u, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
@@ -198,6 +256,17 @@ func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model
 			logger.Int64Field("user_id", userID))
 		return nil, ErrUserNotFound
 	}
+
+	if s.cache != nil {
+		userKey := cache.GenerateUserKey(userID)
+		userData, err := json.Marshal(u)
+		if err == nil {
+			s.cache.Set(ctx, userKey, string(userData), 10*time.Minute)
+			logger.Info("用户信息存入缓存成功",
+				logger.Int64Field("user_id", userID))
+		}
+	}
+
 	return u, nil
 }
 
@@ -283,6 +352,33 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 		return ErrInternalServer
 	}
 
+	if s.cache != nil {
+		userKey := cache.GenerateUserKey(userID)
+		s.cache.Delete(ctx, userKey)
+		logger.Info("删除用户缓存成功",
+			logger.Int64Field("user_id", userID))
+	}
+
+	if s.esManager != nil {
+		updatedUser, err := s.repo.FindByID(ctx, userID)
+		if err == nil && updatedUser != nil {
+			esUser := map[string]interface{}{
+				"id":         updatedUser.ID,
+				"username":   updatedUser.Username,
+				"email":      updatedUser.Email,
+				"phone":      updatedUser.Phone,
+				"avatar":     updatedUser.Avatar,
+				"created_at": updatedUser.CreatedAt.Format("2006-01-02 15:04:05"),
+			}
+			err = s.esManager.UpdateDocument("users", fmt.Sprintf("%d", userID), esUser)
+			if err != nil {
+				logger.Error("更新用户到ES失败",
+					logger.ErrorField(err),
+					logger.Int64Field("user_id", userID))
+			}
+		}
+	}
+
 	logger.Info("用户更新成功",
 		logger.Int64Field("user_id", userID))
 
@@ -348,6 +444,57 @@ func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page,
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
 
+	if s.esManager != nil {
+		query := es.SearchQuery{
+			Query: map[string]interface{}{
+				"multi_match": map[string]interface{}{
+					"query":    keyword,
+					"fields":   []string{"username", "email"},
+					"type":     "best_fields",
+					"operator": "and",
+				},
+			},
+			From: (page - 1) * pageSize,
+			Size: pageSize,
+			Sort: []map[string]interface{}{
+				{
+					"created_at": map[string]interface{}{
+						"order": "desc",
+					},
+				},
+			},
+		}
+
+		var searchResult es.SearchResult
+		err := s.esManager.Search("users", query, &searchResult)
+		if err == nil {
+			var users []*model.User
+			for _, hit := range searchResult.Hits.Hits {
+				var esUser map[string]interface{}
+				if json.Unmarshal(hit.Source, &esUser) == nil {
+					user := &model.User{}
+					if id, ok := esUser["id"].(float64); ok {
+						user.ID = int64(id)
+					}
+					if username, ok := esUser["username"].(string); ok {
+						user.Username = username
+					}
+					if email, ok := esUser["email"].(string); ok {
+						user.Email = &email
+					}
+					if phone, ok := esUser["phone"].(string); ok {
+						user.Phone = &phone
+					}
+					if avatar, ok := esUser["avatar"].(string); ok {
+						user.Avatar = &avatar
+					}
+					users = append(users, user)
+				}
+			}
+			return users, searchResult.Hits.Total.Value, nil
+		}
+	}
+
 	return s.repo.Search(ctx, keyword, page, pageSize)
 }
 
@@ -369,7 +516,7 @@ func (s *userServiceImpl) VerifyToken(ctx context.Context, token string) (int64,
 
 func (s *userServiceImpl) WithTransaction(ctx context.Context, fn func(txService UserService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.UserRepository) error {
-		txService := NewUserServiceWithRepo(txRepo, s.jwtManager)
+		txService := NewUserService(txRepo, s.jwtManager, s.cache, s.producer, s.esManager)
 		return fn(txService)
 	})
 }

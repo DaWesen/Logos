@@ -15,6 +15,11 @@ var (
 	loggerOnce     sync.Once
 )
 
+// InitLogger 初始化日志
+func InitLogger() {
+	GetLogger()
+}
+
 // 日志接口
 type Logger interface {
 	//不同级别的日志记录

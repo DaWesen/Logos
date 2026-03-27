@@ -2,6 +2,16 @@ package main
 
 import (
 	"Noah/config"
+	"Noah/internal/user/dao"
+	"Noah/internal/user/handler"
+	"Noah/internal/user/service"
+	"Noah/pkg/cache"
+	"Noah/pkg/database/pgsql"
+	"Noah/pkg/es"
+	"Noah/pkg/jwt"
+	"Noah/pkg/logger"
+	"Noah/pkg/mq"
+	user "Noah/kitex_gen/user/userservice"
 	"log"
 
 	"github.com/cloudwego/kitex/pkg/rpcinfo"
@@ -12,12 +22,50 @@ import (
 func main() {
 	cfg := config.GetConfig()
 
+	logger.InitLogger()
+
+	db, err := pgsql.InitPostgres()
+	if err != nil {
+		log.Fatalf("Failed to init postgres: %v", err)
+	}
+
+	userRepo := dao.NewUserRepository(db)
+
+	jwtManager := jwt.NewJWTManager()
+
+	var redisCache cache.Cache
+	redisClient, err := cache.InitRedis(cfg.Redis)
+	if err != nil {
+		log.Printf("Failed to init redis, will continue without cache: %v", err)
+	} else {
+		redisCache = redisClient
+	}
+
+	var kafkaProducer *mq.Producer
+	kafkaClient, err := mq.InitKafkaProducer()
+	if err != nil {
+		log.Printf("Failed to init kafka, will continue without producer: %v", err)
+	} else {
+		kafkaProducer = mq.NewProducer(kafkaClient)
+	}
+
+	var esManager *es.ESManager
+	esClient, err := es.InitElasticsearch()
+	if err != nil {
+		log.Printf("Failed to init elasticsearch, will continue without es: %v", err)
+	} else {
+		esManager = es.NewESManager(esClient)
+	}
+
+	userService := service.NewUserService(userRepo, jwtManager, redisCache, kafkaProducer, esManager)
+
 	r, err := etcd.NewEtcdRegistry(cfg.Etcd.Endpoints)
 	if err != nil {
 		log.Fatalf("Failed to create etcd registry: %v", err)
 	}
 
-	svr := server.NewServer(
+	svr := user.NewServer(
+		&handler.UserServiceImpl{UserService: userService},
 		server.WithRegistry(r),
 		server.WithServerBasicInfo(&rpcinfo.EndpointBasicInfo{ServiceName: "user"}),
 	)

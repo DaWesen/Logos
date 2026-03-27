@@ -1,13 +1,16 @@
 package handler
 
 import (
+	"Noah/internal/user/service"
 	common "Noah/kitex_gen/common"
 	user "Noah/kitex_gen/user"
 	"context"
 )
 
 // UserServiceImpl implements the last service interface defined in the IDL.
-type UserServiceImpl struct{}
+type UserServiceImpl struct {
+	UserService service.UserService
+}
 
 // Register implements the UserServiceImpl interface.
 func (s *UserServiceImpl) Register(ctx context.Context, req *user.RegisterReq) (resp *user.LoginRegisterResp, err error) {
