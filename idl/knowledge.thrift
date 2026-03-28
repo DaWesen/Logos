@@ -128,6 +128,14 @@ struct ImportDataReq {
     2: list<string> data
 }
 
+// 搜索实体请求
+struct SearchEntityReq {
+    1: string keyword
+    2: optional string type
+    3: i32 page
+    4: i32 pageSize
+}
+
 // 知识服务接口
 service KnowledgeService {
     // 实体管理
@@ -136,6 +144,7 @@ service KnowledgeService {
     common.BaseResp DeleteEntity(1: DeleteEntityReq req)
     EntityResp GetEntity(1: string id)
     BatchEntityResp QueryEntities(1: QueryEntityReq req)
+    BatchEntityResp SearchEntities(1: SearchEntityReq req)
     
     // 关系管理
     RelationResp AddRelation(1: AddRelationReq req)

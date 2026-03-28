@@ -49,6 +49,13 @@ var serviceMethods = map[string]kitex.MethodInfo{
 		false,
 		kitex.WithStreamingMode(kitex.StreamingNone),
 	),
+	"SearchEntities": kitex.NewMethodInfo(
+		searchEntitiesHandler,
+		newKnowledgeServiceSearchEntitiesArgs,
+		newKnowledgeServiceSearchEntitiesResult,
+		false,
+		kitex.WithStreamingMode(kitex.StreamingNone),
+	),
 	"AddRelation": kitex.NewMethodInfo(
 		addRelationHandler,
 		newKnowledgeServiceAddRelationArgs,
@@ -261,6 +268,24 @@ func newKnowledgeServiceQueryEntitiesResult() interface{} {
 	return knowledge.NewKnowledgeServiceQueryEntitiesResult()
 }
 
+func searchEntitiesHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
+	realArg := arg.(*knowledge.KnowledgeServiceSearchEntitiesArgs)
+	realResult := result.(*knowledge.KnowledgeServiceSearchEntitiesResult)
+	success, err := handler.(knowledge.KnowledgeService).SearchEntities(ctx, realArg.Req)
+	if err != nil {
+		return err
+	}
+	realResult.Success = success
+	return nil
+}
+func newKnowledgeServiceSearchEntitiesArgs() interface{} {
+	return knowledge.NewKnowledgeServiceSearchEntitiesArgs()
+}
+
+func newKnowledgeServiceSearchEntitiesResult() interface{} {
+	return knowledge.NewKnowledgeServiceSearchEntitiesResult()
+}
+
 func addRelationHandler(ctx context.Context, handler interface{}, arg, result interface{}) error {
 	realArg := arg.(*knowledge.KnowledgeServiceAddRelationArgs)
 	realResult := result.(*knowledge.KnowledgeServiceAddRelationResult)
@@ -460,6 +485,16 @@ func (p *kClient) QueryEntities(ctx context.Context, req *knowledge.QueryEntityR
 	_args.Req = req
 	var _result knowledge.KnowledgeServiceQueryEntitiesResult
 	if err = p.c.Call(ctx, "QueryEntities", &_args, &_result); err != nil {
+		return
+	}
+	return _result.GetSuccess(), nil
+}
+
+func (p *kClient) SearchEntities(ctx context.Context, req *knowledge.SearchEntityReq) (r *knowledge.BatchEntityResp, err error) {
+	var _args knowledge.KnowledgeServiceSearchEntitiesArgs
+	_args.Req = req
+	var _result knowledge.KnowledgeServiceSearchEntitiesResult
+	if err = p.c.Call(ctx, "SearchEntities", &_args, &_result); err != nil {
 		return
 	}
 	return _result.GetSuccess(), nil

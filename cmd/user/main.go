@@ -5,13 +5,13 @@ import (
 	"Noah/internal/user/dao"
 	"Noah/internal/user/handler"
 	"Noah/internal/user/service"
+	user "Noah/kitex_gen/user/userservice"
 	"Noah/pkg/cache"
 	"Noah/pkg/database/pgsql"
 	"Noah/pkg/es"
 	"Noah/pkg/jwt"
 	"Noah/pkg/logger"
 	"Noah/pkg/mq"
-	user "Noah/kitex_gen/user/userservice"
 	"log"
 
 	"github.com/cloudwego/kitex/pkg/rpcinfo"
@@ -42,12 +42,7 @@ func main() {
 	}
 
 	var kafkaProducer *mq.Producer
-	kafkaClient, err := mq.InitKafkaProducer()
-	if err != nil {
-		log.Printf("Failed to init kafka, will continue without producer: %v", err)
-	} else {
-		kafkaProducer = mq.NewProducer(kafkaClient)
-	}
+	kafkaProducer = mq.NewProducer()
 
 	var esManager *es.ESManager
 	esClient, err := es.InitElasticsearch()

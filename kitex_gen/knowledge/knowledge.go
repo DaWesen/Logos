@@ -1120,6 +1120,71 @@ var fieldIDToName_ImportDataReq = map[int16]string{
 	2: "data",
 }
 
+type SearchEntityReq struct {
+	Keyword  string  `thrift:"keyword,1" frugal:"1,default,string" json:"keyword"`
+	Type     *string `thrift:"type,2,optional" frugal:"2,optional,string" json:"type,omitempty"`
+	Page     int32   `thrift:"page,3" frugal:"3,default,i32" json:"page"`
+	PageSize int32   `thrift:"pageSize,4" frugal:"4,default,i32" json:"pageSize"`
+}
+
+func NewSearchEntityReq() *SearchEntityReq {
+	return &SearchEntityReq{}
+}
+
+func (p *SearchEntityReq) InitDefault() {
+}
+
+func (p *SearchEntityReq) GetKeyword() (v string) {
+	return p.Keyword
+}
+
+var SearchEntityReq_Type_DEFAULT string
+
+func (p *SearchEntityReq) GetType() (v string) {
+	if !p.IsSetType() {
+		return SearchEntityReq_Type_DEFAULT
+	}
+	return *p.Type
+}
+
+func (p *SearchEntityReq) GetPage() (v int32) {
+	return p.Page
+}
+
+func (p *SearchEntityReq) GetPageSize() (v int32) {
+	return p.PageSize
+}
+func (p *SearchEntityReq) SetKeyword(val string) {
+	p.Keyword = val
+}
+func (p *SearchEntityReq) SetType(val *string) {
+	p.Type = val
+}
+func (p *SearchEntityReq) SetPage(val int32) {
+	p.Page = val
+}
+func (p *SearchEntityReq) SetPageSize(val int32) {
+	p.PageSize = val
+}
+
+func (p *SearchEntityReq) IsSetType() bool {
+	return p.Type != nil
+}
+
+func (p *SearchEntityReq) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("SearchEntityReq(%+v)", *p)
+}
+
+var fieldIDToName_SearchEntityReq = map[int16]string{
+	1: "keyword",
+	2: "type",
+	3: "page",
+	4: "pageSize",
+}
+
 type KnowledgeService interface {
 	AddEntity(ctx context.Context, req *AddEntityReq) (r *EntityResp, err error)
 
@@ -1130,6 +1195,8 @@ type KnowledgeService interface {
 	GetEntity(ctx context.Context, id string) (r *EntityResp, err error)
 
 	QueryEntities(ctx context.Context, req *QueryEntityReq) (r *BatchEntityResp, err error)
+
+	SearchEntities(ctx context.Context, req *SearchEntityReq) (r *BatchEntityResp, err error)
 
 	AddRelation(ctx context.Context, req *AddRelationReq) (r *RelationResp, err error)
 
@@ -1516,6 +1583,82 @@ func (p *KnowledgeServiceQueryEntitiesResult) String() string {
 }
 
 var fieldIDToName_KnowledgeServiceQueryEntitiesResult = map[int16]string{
+	0: "success",
+}
+
+type KnowledgeServiceSearchEntitiesArgs struct {
+	Req *SearchEntityReq `thrift:"req,1" frugal:"1,default,SearchEntityReq" json:"req"`
+}
+
+func NewKnowledgeServiceSearchEntitiesArgs() *KnowledgeServiceSearchEntitiesArgs {
+	return &KnowledgeServiceSearchEntitiesArgs{}
+}
+
+func (p *KnowledgeServiceSearchEntitiesArgs) InitDefault() {
+}
+
+var KnowledgeServiceSearchEntitiesArgs_Req_DEFAULT *SearchEntityReq
+
+func (p *KnowledgeServiceSearchEntitiesArgs) GetReq() (v *SearchEntityReq) {
+	if !p.IsSetReq() {
+		return KnowledgeServiceSearchEntitiesArgs_Req_DEFAULT
+	}
+	return p.Req
+}
+func (p *KnowledgeServiceSearchEntitiesArgs) SetReq(val *SearchEntityReq) {
+	p.Req = val
+}
+
+func (p *KnowledgeServiceSearchEntitiesArgs) IsSetReq() bool {
+	return p.Req != nil
+}
+
+func (p *KnowledgeServiceSearchEntitiesArgs) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("KnowledgeServiceSearchEntitiesArgs(%+v)", *p)
+}
+
+var fieldIDToName_KnowledgeServiceSearchEntitiesArgs = map[int16]string{
+	1: "req",
+}
+
+type KnowledgeServiceSearchEntitiesResult struct {
+	Success *BatchEntityResp `thrift:"success,0,optional" frugal:"0,optional,BatchEntityResp" json:"success,omitempty"`
+}
+
+func NewKnowledgeServiceSearchEntitiesResult() *KnowledgeServiceSearchEntitiesResult {
+	return &KnowledgeServiceSearchEntitiesResult{}
+}
+
+func (p *KnowledgeServiceSearchEntitiesResult) InitDefault() {
+}
+
+var KnowledgeServiceSearchEntitiesResult_Success_DEFAULT *BatchEntityResp
+
+func (p *KnowledgeServiceSearchEntitiesResult) GetSuccess() (v *BatchEntityResp) {
+	if !p.IsSetSuccess() {
+		return KnowledgeServiceSearchEntitiesResult_Success_DEFAULT
+	}
+	return p.Success
+}
+func (p *KnowledgeServiceSearchEntitiesResult) SetSuccess(x interface{}) {
+	p.Success = x.(*BatchEntityResp)
+}
+
+func (p *KnowledgeServiceSearchEntitiesResult) IsSetSuccess() bool {
+	return p.Success != nil
+}
+
+func (p *KnowledgeServiceSearchEntitiesResult) String() string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("KnowledgeServiceSearchEntitiesResult(%+v)", *p)
+}
+
+var fieldIDToName_KnowledgeServiceSearchEntitiesResult = map[int16]string{
 	0: "success",
 }
 

@@ -17,6 +17,7 @@ type Client interface {
 	DeleteEntity(ctx context.Context, req *knowledge.DeleteEntityReq, callOptions ...callopt.Option) (r *common.BaseResp, err error)
 	GetEntity(ctx context.Context, id string, callOptions ...callopt.Option) (r *knowledge.EntityResp, err error)
 	QueryEntities(ctx context.Context, req *knowledge.QueryEntityReq, callOptions ...callopt.Option) (r *knowledge.BatchEntityResp, err error)
+	SearchEntities(ctx context.Context, req *knowledge.SearchEntityReq, callOptions ...callopt.Option) (r *knowledge.BatchEntityResp, err error)
 	AddRelation(ctx context.Context, req *knowledge.AddRelationReq, callOptions ...callopt.Option) (r *knowledge.RelationResp, err error)
 	UpdateRelation(ctx context.Context, req *knowledge.UpdateRelationReq, callOptions ...callopt.Option) (r *knowledge.RelationResp, err error)
 	DeleteRelation(ctx context.Context, req *knowledge.DeleteRelationReq, callOptions ...callopt.Option) (r *common.BaseResp, err error)
@@ -79,6 +80,11 @@ func (p *kKnowledgeServiceClient) GetEntity(ctx context.Context, id string, call
 func (p *kKnowledgeServiceClient) QueryEntities(ctx context.Context, req *knowledge.QueryEntityReq, callOptions ...callopt.Option) (r *knowledge.BatchEntityResp, err error) {
 	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
 	return p.kClient.QueryEntities(ctx, req)
+}
+
+func (p *kKnowledgeServiceClient) SearchEntities(ctx context.Context, req *knowledge.SearchEntityReq, callOptions ...callopt.Option) (r *knowledge.BatchEntityResp, err error) {
+	ctx = client.NewCtxWithCallOptions(ctx, callOptions)
+	return p.kClient.SearchEntities(ctx, req)
 }
 
 func (p *kKnowledgeServiceClient) AddRelation(ctx context.Context, req *knowledge.AddRelationReq, callOptions ...callopt.Option) (r *knowledge.RelationResp, err error) {

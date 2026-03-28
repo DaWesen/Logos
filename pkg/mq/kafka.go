@@ -4,69 +4,98 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"Noah/config"
+	"Noah/pkg/logger"
 
-	"github.com/IBM/sarama"
-)
-
-var (
-	producer sarama.SyncProducer
-	producerOnce sync.Once
+	"github.com/segmentio/kafka-go"
 )
 
 type Producer struct {
-	producer sarama.SyncProducer
+	writer *kafka.Writer
 }
 
 type Consumer struct {
-	consumer sarama.Consumer
+	reader *kafka.Reader
 }
 
-type MessageHandler func(msg *sarama.ConsumerMessage) error
+type Message struct {
+	Topic     string
+	Key       string
+	Value     []byte
+	Partition int
+	Offset    int64
+	Time      time.Time
+}
 
-func InitKafkaProducer() (sarama.SyncProducer, error) {
-	var err error
+type MessageHandler func(msg *Message) error
+
+var (
+	producerInstance *Producer
+	producerOnce     sync.Once
+)
+
+func NewProducer() *Producer {
 	producerOnce.Do(func() {
-		cfg := config.GetConfig()
-		kafkaConfig := cfg.Kafka
-
-		config := sarama.NewConfig()
-		config.Producer.RequiredAcks = sarama.WaitForAll
-		config.Producer.Retry.Max = 5
-		config.Producer.Return.Successes = true
-
-		if kafkaConfig.Version != "" {
-			version, parseErr := sarama.ParseKafkaVersion(kafkaConfig.Version)
-			if parseErr == nil {
-				config.Version = version
-			}
-		}
-
-		producer, err = sarama.NewSyncProducer(kafkaConfig.Brokers, config)
+		kafkaConfig := config.GetConfig().Kafka
+		var err error
+		producerInstance, err = InitProducer(kafkaConfig.Brokers)
 		if err != nil {
-			err = fmt.Errorf("failed to create kafka producer: %w", err)
-			return
+			logger.Warn("初始化Kafka生产者失败", logger.ErrorField(err))
+		}
+		ctx := context.Background()
+		if err := CreateTopics(ctx); err != nil {
+			logger.Warn("创建Kafka主题失败", logger.ErrorField(err))
 		}
 	})
-
-	return producer, err
+	return producerInstance
 }
 
-func NewProducer(producer sarama.SyncProducer) *Producer {
-	return &Producer{
-		producer: producer,
+func InitProducer(brokers []string) (*Producer, error) {
+	producer := &Producer{
+		writer: &kafka.Writer{
+			Addr:         kafka.TCP(brokers...),
+			Balancer:     &kafka.LeastBytes{},
+			WriteTimeout: 10 * time.Second,
+			ReadTimeout:  10 * time.Second,
+		},
+	}
+	return producer, nil
+}
+
+func NewConsumer(topic string, groupID string) *Consumer {
+	kafkaConfig := config.GetConfig().Kafka
+	return &Consumer{
+		reader: kafka.NewReader(kafka.ReaderConfig{
+			Brokers:         kafkaConfig.Brokers,
+			Topic:           topic,
+			GroupID:         groupID,
+			MinBytes:        10e3,
+			MaxBytes:        10e6,
+			MaxWait:         10 * time.Second,
+			ReadLagInterval: time.Second,
+		}),
 	}
 }
 
-func (p *Producer) SendMessage(ctx context.Context, topic string, key string, value []byte) (partition int32, offset int64, err error) {
-	msg := &sarama.ProducerMessage{
+func (p *Producer) Send(ctx context.Context, topic string, key string, value []byte) error {
+	if p == nil || p.writer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	msg := kafka.Message{
 		Topic: topic,
-		Key:   sarama.StringEncoder(key),
-		Value: sarama.ByteEncoder(value),
+		Key:   []byte(key),
+		Value: value,
 	}
 
-	return p.producer.SendMessage(msg)
+	err := p.writer.WriteMessages(ctx, msg)
+	if err != nil {
+		return fmt.Errorf("发送消息失败: %w", err)
+	}
+
+	return nil
 }
 
 func (p *Producer) SendUserEvent(ctx context.Context, key string, value []byte) error {
@@ -75,9 +104,7 @@ func (p *Producer) SendUserEvent(ctx context.Context, key string, value []byte) 
 	if topic == "" {
 		topic = "user_events"
 	}
-
-	_, _, err := p.SendMessage(ctx, topic, key, value)
-	return err
+	return p.Send(ctx, topic, key, value)
 }
 
 func (p *Producer) SendKnowledgeEvent(ctx context.Context, key string, value []byte) error {
@@ -86,9 +113,7 @@ func (p *Producer) SendKnowledgeEvent(ctx context.Context, key string, value []b
 	if topic == "" {
 		topic = "knowledge_events"
 	}
-
-	_, _, err := p.SendMessage(ctx, topic, key, value)
-	return err
+	return p.Send(ctx, topic, key, value)
 }
 
 func (p *Producer) SendQuestionEvent(ctx context.Context, key string, value []byte) error {
@@ -97,75 +122,119 @@ func (p *Producer) SendQuestionEvent(ctx context.Context, key string, value []by
 	if topic == "" {
 		topic = "question_events"
 	}
-
-	_, _, err := p.SendMessage(ctx, topic, key, value)
-	return err
+	return p.Send(ctx, topic, key, value)
 }
 
 func (p *Producer) Close() error {
-	return p.producer.Close()
+	if p == nil || p.writer == nil {
+		return nil
+	}
+	return p.writer.Close()
 }
 
-func InitKafkaConsumer() (sarama.Consumer, error) {
-	cfg := config.GetConfig()
-	kafkaConfig := cfg.Kafka
-
-	config := sarama.NewConfig()
-	config.Consumer.Return.Errors = true
-
-	if kafkaConfig.Version != "" {
-		version, parseErr := sarama.ParseKafkaVersion(kafkaConfig.Version)
-		if parseErr == nil {
-			config.Version = version
-		}
+func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
+	if c == nil || c.reader == nil {
+		return nil, fmt.Errorf("consumer not initialized")
 	}
 
-	consumer, err := sarama.NewConsumer(kafkaConfig.Brokers, config)
+	msg, err := c.reader.ReadMessage(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create kafka consumer: %w", err)
+		return nil, fmt.Errorf("读取消息失败: %w", err)
 	}
 
-	return consumer, nil
+	return &Message{
+		Topic:     msg.Topic,
+		Key:       string(msg.Key),
+		Value:     msg.Value,
+		Partition: msg.Partition,
+		Offset:    msg.Offset,
+		Time:      msg.Time,
+	}, nil
 }
 
-func NewConsumer(consumer sarama.Consumer) *Consumer {
-	return &Consumer{
-		consumer: consumer,
-	}
-}
-
-func (c *Consumer) Subscribe(ctx context.Context, topic string, handler MessageHandler) error {
-	partitionList, err := c.consumer.Partitions(topic)
-	if err != nil {
-		return err
+func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error {
+	if c == nil || c.reader == nil {
+		return fmt.Errorf("consumer not initialized")
 	}
 
-	for _, partition := range partitionList {
-		pc, err := c.consumer.ConsumePartition(topic, partition, sarama.OffsetNewest)
-		if err != nil {
-			return err
-		}
-
-		go func(pc sarama.PartitionConsumer) {
-			defer pc.Close()
-			for {
-				select {
-				case msg := <-pc.Messages():
-					if err := handler(msg); err != nil {
-						continue
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				msg, err := c.Receive(ctx)
+				if err != nil {
+					if ctx.Err() != nil {
+						return
 					}
-				case <-pc.Errors():
+					logger.Warn("接收消息失败", logger.ErrorField(err))
 					continue
-				case <-ctx.Done():
-					return
+				}
+				if err := handler(msg); err != nil {
+					logger.Warn("处理消息失败", logger.ErrorField(err))
 				}
 			}
-		}(pc)
-	}
+		}
+	}()
 
 	return nil
 }
 
 func (c *Consumer) Close() error {
-	return c.consumer.Close()
+	if c == nil || c.reader == nil {
+		return nil
+	}
+	return c.reader.Close()
+}
+
+func CreateTopics(ctx context.Context) error {
+	kafkaConfig := config.GetConfig().Kafka
+	logger.Info("Kafka主题配置",
+		logger.AnyField("topics", kafkaConfig.Topics),
+		logger.AnyField("brokers", kafkaConfig.Brokers))
+
+	if len(kafkaConfig.Brokers) == 0 {
+		logger.Warn("Kafka brokers配置为空")
+		return nil
+	}
+
+	conn, err := kafka.Dial("tcp", kafkaConfig.Brokers[0])
+	if err != nil {
+		logger.Warn("连接Kafka失败", logger.ErrorField(err))
+		return err
+	}
+	defer conn.Close()
+
+	topicConfigs := []kafka.TopicConfig{
+		{
+			Topic:             "user_events",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "knowledge_events",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "question_events",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+	}
+
+	for _, tc := range topicConfigs {
+		logger.Info("尝试创建主题", logger.StringField("topic", tc.Topic))
+		err := conn.CreateTopics(tc)
+		if err != nil {
+			logger.Warn("创建主题失败",
+				logger.StringField("topic", tc.Topic),
+				logger.ErrorField(err))
+			continue
+		}
+		logger.Info("主题创建成功", logger.StringField("topic", tc.Topic))
+	}
+
+	return nil
 }
