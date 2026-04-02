@@ -319,6 +319,21 @@ func (c *Config) GetKitexKeepaliveTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.Kitex.Server.Keepalive.Timeout)
 }
 
+// GetUserServerAddr 获取用户服务地址
+func (c *Config) GetUserServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.User)
+}
+
+// GetKnowledgeServerAddr 获取知识服务地址
+func (c *Config) GetKnowledgeServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Knowledge)
+}
+
+// GetSearchServerAddr 获取搜索服务地址
+func (c *Config) GetSearchServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Search)
+}
+
 // GetConfig 获取应用配置（单例模式）
 func GetConfig() *Config {
 	cfgOnce.Do(func() {
