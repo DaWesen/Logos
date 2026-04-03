@@ -44,6 +44,7 @@ struct SearchResultItem {
     4: string content
     5: double score
     6: map<string, string> metadata
+    7: optional map<string, binary> fields
 }
 
 // 搜索响应
@@ -63,6 +64,7 @@ struct IndexDocument {
     5: map<string, string> metadata
     6: i64 createdAt
     7: i64 updatedAt
+    8: optional map<string, binary> fields
 }
 
 // 添加文档请求
@@ -71,6 +73,7 @@ struct AddDocumentReq {
     2: string title
     3: string content
     4: map<string, string> metadata
+    5: optional map<string, binary> fields
 }
 
 // 更新文档请求
@@ -79,6 +82,7 @@ struct UpdateDocumentReq {
     2: optional string title
     3: optional string content
     4: optional map<string, string> metadata
+    5: optional map<string, binary> fields
 }
 
 // 删除文档请求

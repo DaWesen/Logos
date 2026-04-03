@@ -108,10 +108,12 @@ func (r *searchRepository) Search(ctx context.Context, query string, indexType m
 		}
 
 		item := &model.SearchResultItem{
-			ID:    hit.ID,
-			Score: hit.Score,
+			ID:     hit.ID,
+			Score:  hit.Score,
+			Fields: make(map[string]interface{}),
 		}
 
+		// 提取通用字段
 		if title, ok := doc["title"].(string); ok {
 			item.Title = title
 		}
@@ -124,6 +126,21 @@ func (r *searchRepository) Search(ctx context.Context, query string, indexType m
 				if strV, ok := v.(string); ok {
 					item.Metadata[k] = strV
 				}
+			}
+		}
+
+		// 提取所有其他字段到 Fields
+		commonFields := map[string]bool{
+			"id":         true,
+			"title":      true,
+			"content":    true,
+			"metadata":   true,
+			"created_at": true,
+			"updated_at": true,
+		}
+		for k, v := range doc {
+			if !commonFields[k] {
+				item.Fields[k] = v
 			}
 		}
 
@@ -143,7 +160,22 @@ func (r *searchRepository) AddDocument(ctx context.Context, doc *model.SearchDoc
 	}
 	doc.UpdatedAt = time.Now()
 
-	if err := r.esManager.AddDocument(indexName, doc.ID, doc); err != nil {
+	// 创建合并的文档结构
+	mergedDoc := make(map[string]interface{})
+	mergedDoc["id"] = doc.ID
+	mergedDoc["type"] = doc.Type
+	mergedDoc["title"] = doc.Title
+	mergedDoc["content"] = doc.Content
+	mergedDoc["metadata"] = doc.Metadata
+	mergedDoc["created_at"] = doc.CreatedAt
+	mergedDoc["updated_at"] = doc.UpdatedAt
+
+	// 合并 Fields 到根级别
+	for k, v := range doc.Fields {
+		mergedDoc[k] = v
+	}
+
+	if err := r.esManager.AddDocument(indexName, doc.ID, mergedDoc); err != nil {
 		logger.Error("添加文档失败",
 			logger.StringField("id", doc.ID),
 			logger.StringField("index", indexName),
@@ -158,7 +190,26 @@ func (r *searchRepository) UpdateDocument(ctx context.Context, doc *model.Search
 	indexName := r.getIndexName(doc.Type)
 	doc.UpdatedAt = time.Now()
 
-	if err := r.esManager.UpdateDocument(indexName, doc.ID, doc); err != nil {
+	// 创建合并的文档结构
+	mergedDoc := make(map[string]interface{})
+	mergedDoc["id"] = doc.ID
+	if doc.Title != "" {
+		mergedDoc["title"] = doc.Title
+	}
+	if doc.Content != "" {
+		mergedDoc["content"] = doc.Content
+	}
+	if doc.Metadata != nil {
+		mergedDoc["metadata"] = doc.Metadata
+	}
+	mergedDoc["updated_at"] = doc.UpdatedAt
+
+	// 合并 Fields 到根级别
+	for k, v := range doc.Fields {
+		mergedDoc[k] = v
+	}
+
+	if err := r.esManager.UpdateDocument(indexName, doc.ID, mergedDoc); err != nil {
 		logger.Error("更新文档失败",
 			logger.StringField("id", doc.ID),
 			logger.StringField("index", indexName),
@@ -188,10 +239,64 @@ func (r *searchRepository) GetDocument(ctx context.Context, id string) (*model.S
 	for _, index := range indexes {
 		source, err := r.esManager.GetDocument(index, id)
 		if err == nil {
-			var doc model.SearchDocument
-			if err := json.Unmarshal(source, &doc); err == nil {
-				return &doc, nil
+			var docMap map[string]interface{}
+			if err := json.Unmarshal(source, &docMap); err != nil {
+				continue
 			}
+
+			doc := &model.SearchDocument{
+				Fields: make(map[string]interface{}),
+			}
+
+			// 提取通用字段
+			if idVal, ok := docMap["id"].(string); ok {
+				doc.ID = idVal
+			}
+			if typeVal, ok := docMap["type"].(float64); ok {
+				doc.Type = model.IndexType(typeVal)
+			}
+			if title, ok := docMap["title"].(string); ok {
+				doc.Title = title
+			}
+			if content, ok := docMap["content"].(string); ok {
+				doc.Content = content
+			}
+			if metadata, ok := docMap["metadata"].(map[string]interface{}); ok {
+				doc.Metadata = make(map[string]string)
+				for k, v := range metadata {
+					if strV, ok := v.(string); ok {
+						doc.Metadata[k] = strV
+					}
+				}
+			}
+			if createdAt, ok := docMap["created_at"].(string); ok {
+				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+					doc.CreatedAt = t
+				}
+			}
+			if updatedAt, ok := docMap["updated_at"].(string); ok {
+				if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+					doc.UpdatedAt = t
+				}
+			}
+
+			// 提取所有其他字段到 Fields
+			commonFields := map[string]bool{
+				"id":         true,
+				"type":       true,
+				"title":      true,
+				"content":    true,
+				"metadata":   true,
+				"created_at": true,
+				"updated_at": true,
+			}
+			for k, v := range docMap {
+				if !commonFields[k] {
+					doc.Fields[k] = v
+				}
+			}
+
+			return doc, nil
 		}
 	}
 
@@ -223,28 +328,22 @@ func (r *searchRepository) BatchDeleteDocuments(ctx context.Context, ids []strin
 func (r *searchRepository) CreateIndex(ctx context.Context, indexType model.IndexType) error {
 	indexName := r.getIndexName(indexType)
 
-	mappings := map[string]interface{}{
-		"mappings": map[string]interface{}{
-			"properties": map[string]interface{}{
-				"title": map[string]interface{}{
-					"type":     "text",
-					"analyzer": "ik_max_word",
-				},
-				"content": map[string]interface{}{
-					"type":     "text",
-					"analyzer": "ik_max_word",
-				},
-				"metadata": map[string]interface{}{
-					"type": "object",
-				},
-				"created_at": map[string]interface{}{
-					"type": "date",
-				},
-				"updated_at": map[string]interface{}{
-					"type": "date",
-				},
-			},
-		},
+	var mappings model.IndexMapping
+	switch indexType {
+	case model.ENTITY:
+		mappings = model.GenerateEntityMapping()
+	case model.RELATION:
+		mappings = model.GenerateRelationMapping()
+	case model.QUESTION:
+		mappings = model.GenerateQuestionMapping()
+	case model.ANSWER:
+		mappings = model.GenerateAnswerMapping()
+	case model.DOCUMENT:
+		mappings = model.GenerateDocumentMapping()
+	case model.USER:
+		mappings = model.GenerateUserMapping()
+	default:
+		mappings = model.GenerateDocumentMapping()
 	}
 
 	if err := r.esManager.CreateIndex(indexName, mappings); err != nil {

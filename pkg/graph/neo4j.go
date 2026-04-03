@@ -119,7 +119,7 @@ func (n *Neo4jManager) DeleteNode(ctx context.Context, label string, id string) 
 	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
 	defer session.Close(ctx)
 
-	params := map[string]interface{}{
+	params := map[string]any{
 		"id": id,
 	}
 

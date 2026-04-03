@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"time"
 
 	"Noah/internal/search/model"
@@ -37,7 +38,7 @@ func convertModelDocumentToThriftDocument(doc *model.SearchDocument) *search.Ind
 		return nil
 	}
 
-	return &search.IndexDocument{
+	result := &search.IndexDocument{
 		Id:        doc.ID,
 		Type:      search.IndexType(doc.Type),
 		Title:     doc.Title,
@@ -46,6 +47,21 @@ func convertModelDocumentToThriftDocument(doc *model.SearchDocument) *search.Ind
 		CreatedAt: doc.CreatedAt.Unix(),
 		UpdatedAt: doc.UpdatedAt.Unix(),
 	}
+
+	// 转换 Fields 字段
+	if doc.Fields != nil {
+		fields := make(map[string][]byte)
+		for k, v := range doc.Fields {
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				fields[k] = jsonBytes
+			}
+		}
+		if len(fields) > 0 {
+			result.SetFields(fields)
+		}
+	}
+
+	return result
 }
 
 func convertModelResultItemToThriftResultItem(item *model.SearchResultItem) *search.SearchResultItem {
@@ -53,7 +69,7 @@ func convertModelResultItemToThriftResultItem(item *model.SearchResultItem) *sea
 		return nil
 	}
 
-	return &search.SearchResultItem{
+	result := &search.SearchResultItem{
 		Id:       item.ID,
 		Type:     item.Type,
 		Title:    item.Title,
@@ -61,6 +77,21 @@ func convertModelResultItemToThriftResultItem(item *model.SearchResultItem) *sea
 		Score:    item.Score,
 		Metadata: item.Metadata,
 	}
+
+	// 转换 Fields 字段
+	if item.Fields != nil {
+		fields := make(map[string][]byte)
+		for k, v := range item.Fields {
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				fields[k] = jsonBytes
+			}
+		}
+		if len(fields) > 0 {
+			result.SetFields(fields)
+		}
+	}
+
+	return result
 }
 
 func convertModelStatsToThriftStats(stat *model.IndexStats) *search.IndexStats {
@@ -138,6 +169,17 @@ func (s *SearchServiceImpl) AddDocument(ctx context.Context, req *search.AddDocu
 		Title:    req.Title,
 		Content:  req.Content,
 		Metadata: req.Metadata,
+		Fields:   make(map[string]interface{}),
+	}
+
+	// 转换 Fields 字段
+	if req.IsSetFields() {
+		for k, v := range req.GetFields() {
+			var val interface{}
+			if err := json.Unmarshal(v, &val); err == nil {
+				doc.Fields[k] = val
+			}
+		}
 	}
 
 	createdDoc, err := s.SearchService.AddDocument(ctx, doc)
@@ -169,6 +211,17 @@ func (s *SearchServiceImpl) UpdateDocument(ctx context.Context, req *search.Upda
 	}
 	if req.IsSetMetadata() {
 		doc.Metadata = req.Metadata
+	}
+
+	// 转换 Fields 字段
+	if req.IsSetFields() {
+		doc.Fields = make(map[string]interface{})
+		for k, v := range req.GetFields() {
+			var val interface{}
+			if err := json.Unmarshal(v, &val); err == nil {
+				doc.Fields[k] = val
+			}
+		}
 	}
 
 	updatedDoc, err := s.SearchService.UpdateDocument(ctx, doc)

@@ -274,6 +274,7 @@ type SearchResultItem struct {
 	Content  string            `thrift:"content,4" frugal:"4,default,string" json:"content"`
 	Score    float64           `thrift:"score,5" frugal:"5,default,double" json:"score"`
 	Metadata map[string]string `thrift:"metadata,6" frugal:"6,default,map<string:string>" json:"metadata"`
+	Fields   map[string][]byte `thrift:"fields,7,optional" frugal:"7,optional,map<string:binary>" json:"fields,omitempty"`
 }
 
 func NewSearchResultItem() *SearchResultItem {
@@ -306,6 +307,15 @@ func (p *SearchResultItem) GetScore() (v float64) {
 func (p *SearchResultItem) GetMetadata() (v map[string]string) {
 	return p.Metadata
 }
+
+var SearchResultItem_Fields_DEFAULT map[string][]byte
+
+func (p *SearchResultItem) GetFields() (v map[string][]byte) {
+	if !p.IsSetFields() {
+		return SearchResultItem_Fields_DEFAULT
+	}
+	return p.Fields
+}
 func (p *SearchResultItem) SetId(val string) {
 	p.Id = val
 }
@@ -324,6 +334,13 @@ func (p *SearchResultItem) SetScore(val float64) {
 func (p *SearchResultItem) SetMetadata(val map[string]string) {
 	p.Metadata = val
 }
+func (p *SearchResultItem) SetFields(val map[string][]byte) {
+	p.Fields = val
+}
+
+func (p *SearchResultItem) IsSetFields() bool {
+	return p.Fields != nil
+}
 
 func (p *SearchResultItem) String() string {
 	if p == nil {
@@ -339,6 +356,7 @@ var fieldIDToName_SearchResultItem = map[int16]string{
 	4: "content",
 	5: "score",
 	6: "metadata",
+	7: "fields",
 }
 
 type SearchResp struct {
@@ -414,6 +432,7 @@ type IndexDocument struct {
 	Metadata  map[string]string `thrift:"metadata,5" frugal:"5,default,map<string:string>" json:"metadata"`
 	CreatedAt int64             `thrift:"createdAt,6" frugal:"6,default,i64" json:"createdAt"`
 	UpdatedAt int64             `thrift:"updatedAt,7" frugal:"7,default,i64" json:"updatedAt"`
+	Fields    map[string][]byte `thrift:"fields,8,optional" frugal:"8,optional,map<string:binary>" json:"fields,omitempty"`
 }
 
 func NewIndexDocument() *IndexDocument {
@@ -450,6 +469,15 @@ func (p *IndexDocument) GetCreatedAt() (v int64) {
 func (p *IndexDocument) GetUpdatedAt() (v int64) {
 	return p.UpdatedAt
 }
+
+var IndexDocument_Fields_DEFAULT map[string][]byte
+
+func (p *IndexDocument) GetFields() (v map[string][]byte) {
+	if !p.IsSetFields() {
+		return IndexDocument_Fields_DEFAULT
+	}
+	return p.Fields
+}
 func (p *IndexDocument) SetId(val string) {
 	p.Id = val
 }
@@ -471,6 +499,13 @@ func (p *IndexDocument) SetCreatedAt(val int64) {
 func (p *IndexDocument) SetUpdatedAt(val int64) {
 	p.UpdatedAt = val
 }
+func (p *IndexDocument) SetFields(val map[string][]byte) {
+	p.Fields = val
+}
+
+func (p *IndexDocument) IsSetFields() bool {
+	return p.Fields != nil
+}
 
 func (p *IndexDocument) String() string {
 	if p == nil {
@@ -487,6 +522,7 @@ var fieldIDToName_IndexDocument = map[int16]string{
 	5: "metadata",
 	6: "createdAt",
 	7: "updatedAt",
+	8: "fields",
 }
 
 type AddDocumentReq struct {
@@ -494,6 +530,7 @@ type AddDocumentReq struct {
 	Title    string            `thrift:"title,2" frugal:"2,default,string" json:"title"`
 	Content  string            `thrift:"content,3" frugal:"3,default,string" json:"content"`
 	Metadata map[string]string `thrift:"metadata,4" frugal:"4,default,map<string:string>" json:"metadata"`
+	Fields   map[string][]byte `thrift:"fields,5,optional" frugal:"5,optional,map<string:binary>" json:"fields,omitempty"`
 }
 
 func NewAddDocumentReq() *AddDocumentReq {
@@ -518,6 +555,15 @@ func (p *AddDocumentReq) GetContent() (v string) {
 func (p *AddDocumentReq) GetMetadata() (v map[string]string) {
 	return p.Metadata
 }
+
+var AddDocumentReq_Fields_DEFAULT map[string][]byte
+
+func (p *AddDocumentReq) GetFields() (v map[string][]byte) {
+	if !p.IsSetFields() {
+		return AddDocumentReq_Fields_DEFAULT
+	}
+	return p.Fields
+}
 func (p *AddDocumentReq) SetType(val IndexType) {
 	p.Type = val
 }
@@ -529,6 +575,13 @@ func (p *AddDocumentReq) SetContent(val string) {
 }
 func (p *AddDocumentReq) SetMetadata(val map[string]string) {
 	p.Metadata = val
+}
+func (p *AddDocumentReq) SetFields(val map[string][]byte) {
+	p.Fields = val
+}
+
+func (p *AddDocumentReq) IsSetFields() bool {
+	return p.Fields != nil
 }
 
 func (p *AddDocumentReq) String() string {
@@ -543,6 +596,7 @@ var fieldIDToName_AddDocumentReq = map[int16]string{
 	2: "title",
 	3: "content",
 	4: "metadata",
+	5: "fields",
 }
 
 type UpdateDocumentReq struct {
@@ -550,6 +604,7 @@ type UpdateDocumentReq struct {
 	Title    *string           `thrift:"title,2,optional" frugal:"2,optional,string" json:"title,omitempty"`
 	Content  *string           `thrift:"content,3,optional" frugal:"3,optional,string" json:"content,omitempty"`
 	Metadata map[string]string `thrift:"metadata,4,optional" frugal:"4,optional,map<string:string>" json:"metadata,omitempty"`
+	Fields   map[string][]byte `thrift:"fields,5,optional" frugal:"5,optional,map<string:binary>" json:"fields,omitempty"`
 }
 
 func NewUpdateDocumentReq() *UpdateDocumentReq {
@@ -589,6 +644,15 @@ func (p *UpdateDocumentReq) GetMetadata() (v map[string]string) {
 	}
 	return p.Metadata
 }
+
+var UpdateDocumentReq_Fields_DEFAULT map[string][]byte
+
+func (p *UpdateDocumentReq) GetFields() (v map[string][]byte) {
+	if !p.IsSetFields() {
+		return UpdateDocumentReq_Fields_DEFAULT
+	}
+	return p.Fields
+}
 func (p *UpdateDocumentReq) SetId(val string) {
 	p.Id = val
 }
@@ -600,6 +664,9 @@ func (p *UpdateDocumentReq) SetContent(val *string) {
 }
 func (p *UpdateDocumentReq) SetMetadata(val map[string]string) {
 	p.Metadata = val
+}
+func (p *UpdateDocumentReq) SetFields(val map[string][]byte) {
+	p.Fields = val
 }
 
 func (p *UpdateDocumentReq) IsSetTitle() bool {
@@ -614,6 +681,10 @@ func (p *UpdateDocumentReq) IsSetMetadata() bool {
 	return p.Metadata != nil
 }
 
+func (p *UpdateDocumentReq) IsSetFields() bool {
+	return p.Fields != nil
+}
+
 func (p *UpdateDocumentReq) String() string {
 	if p == nil {
 		return "<nil>"
@@ -626,6 +697,7 @@ var fieldIDToName_UpdateDocumentReq = map[int16]string{
 	2: "title",
 	3: "content",
 	4: "metadata",
+	5: "fields",
 }
 
 type DeleteDocumentReq struct {
