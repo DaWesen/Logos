@@ -1,11 +1,11 @@
-﻿package main
+package main
 
 import (
 	"Logos/config"
-	"Logos/internal/messaging/message/dao"
-	"Logos/internal/messaging/message/handler"
-	"Logos/internal/messaging/message/model"
-	"Logos/internal/messaging/message/service"
+	"Logos/internal/service/messaging/message/dao"
+	"Logos/internal/service/messaging/message/handler"
+	"Logos/internal/service/messaging/message/model"
+	"Logos/internal/service/messaging/message/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"

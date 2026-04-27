@@ -1,61 +1,274 @@
 syntax = "proto3";
 
-package contact;
+package messaging.contact;
 
 option go_package = "Logos/proto_gen/contact";
 
-import "common.proto";
+import "google/protobuf/timestamp.proto";
 
+// 好友请求状态
+enum FriendRequestStatus {
+  FRIEND_REQUEST_STATUS_UNSPECIFIED = 0;
+  FRIEND_REQUEST_STATUS_PENDING = 1;
+  FRIEND_REQUEST_STATUS_ACCEPTED = 2;
+  FRIEND_REQUEST_STATUS_REJECTED = 3;
+}
+
+// 好友关系
 message Friendship {
-  int64 id = 1;
-  int64 user_id = 2;
-  int64 friend_id = 3;
-  string status = 4;
-  optional string remark = 5;
-  int64 created_at = 6;
+  string id = 1;
+  string user_id = 2;
+  string friend_id = 3;
+  string remark = 4;
+  string group_id = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
 }
 
-message AddFriendReq {
-  int64 user_id = 1;
-  int64 friend_id = 2;
-  optional string message = 3;
+// 好友分组
+message FriendGroup {
+  string id = 1;
+  string user_id = 2;
+  string name = 3;
+  int32 sort_order = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
 }
 
-message AddFriendResp {
-  common.BaseResp base_resp = 1;
-  Friendship friendship = 2;
+// 黑名单记录
+message BlacklistRecord {
+  string id = 1;
+  string user_id = 2;
+  string blocked_user_id = 3;
+  google.protobuf.Timestamp created_at = 4;
 }
 
-message HandleFriendReq {
-  int64 friendship_id = 1;
-  bool accept = 2;
+// 添加好友请求
+message AddFriendRequest {
+  string user_id = 1;
+  string remark = 2;
+  string message = 3;
 }
 
-message FriendListResp {
-  common.BaseResp base_resp = 1;
-  repeated common.User friends = 2;
+// 添加好友响应
+message AddFriendResponse {
+  int32 code = 1;
+  string message = 2;
 }
 
-message RemoveFriendReq {
-  int64 user_id = 1;
-  int64 friend_id = 2;
+// 处理好友请求请求
+message HandleFriendRequestRequest {
+  string request_id = 1;
+  FriendRequestStatus status = 2;
 }
 
-message GetByUserIdReq {
-  int64 user_id = 1;
+// 处理好友请求响应
+message HandleFriendRequestResponse {
+  int32 code = 1;
+  string message = 2;
 }
 
-message BlockUserReq {
-  int64 user_id = 1;
-  int64 target_id = 2;
+// 获取好友请求列表请求
+message GetFriendRequestsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
 }
 
+// 获取好友请求列表响应
+message GetFriendRequestsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated FriendRequest requests = 3;
+  int32 total = 4;
+}
+
+// 好友请求
+message FriendRequest {
+  string id = 1;
+  string from_user_id = 2;
+  string to_user_id = 3;
+  string remark = 4;
+  string message = 5;
+  FriendRequestStatus status = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// 删除好友请求
+message DeleteFriendRequest {
+  string friend_id = 1;
+}
+
+// 删除好友响应
+message DeleteFriendResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 更新好友备注请求
+message UpdateFriendRemarkRequest {
+  string friend_id = 1;
+  string remark = 2;
+}
+
+// 更新好友备注响应
+message UpdateFriendRemarkResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取好友列表请求
+message GetFriendListRequest {
+  string group_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// 获取好友列表响应
+message GetFriendListResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Friendship friends = 3;
+  int32 total = 4;
+}
+
+// 创建好友分组请求
+message CreateFriendGroupRequest {
+  string name = 1;
+  int32 sort_order = 2;
+}
+
+// 创建好友分组响应
+message CreateFriendGroupResponse {
+  int32 code = 1;
+  string message = 2;
+  FriendGroup data = 3;
+}
+
+// 删除好友分组请求
+message DeleteFriendGroupRequest {
+  string group_id = 1;
+}
+
+// 删除好友分组响应
+message DeleteFriendGroupResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 更新好友分组请求
+message UpdateFriendGroupRequest {
+  string group_id = 1;
+  string name = 2;
+  int32 sort_order = 3;
+}
+
+// 更新好友分组响应
+message UpdateFriendGroupResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取好友分组列表请求
+message GetFriendGroupsRequest {
+}
+
+// 获取好友分组列表响应
+message GetFriendGroupsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated FriendGroup groups = 3;
+}
+
+// 移动好友到分组请求
+message MoveFriendToGroupRequest {
+  string friend_id = 1;
+  string group_id = 2;
+}
+
+// 移动好友到分组响应
+message MoveFriendToGroupResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 拉黑用户请求
+message BlockUserRequest {
+  string user_id = 1;
+}
+
+// 拉黑用户响应
+message BlockUserResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 取消拉黑请求
+message UnblockUserRequest {
+  string user_id = 1;
+}
+
+// 取消拉黑响应
+message UnblockUserResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取黑名单请求
+message GetBlacklistRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+// 获取黑名单响应
+message GetBlacklistResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated BlacklistRecord records = 3;
+  int32 total = 4;
+}
+
+// 联系人服务
 service ContactService {
-  rpc AddFriend(AddFriendReq) returns (AddFriendResp);
-  rpc HandleFriendRequest(HandleFriendReq) returns (common.BaseResp);
-  rpc RemoveFriend(RemoveFriendReq) returns (common.BaseResp);
-  rpc GetFriendList(GetByUserIdReq) returns (FriendListResp);
-  rpc GetPendingRequests(GetByUserIdReq) returns (FriendListResp);
-  rpc BlockUser(BlockUserReq) returns (common.BaseResp);
-  rpc UnblockUser(BlockUserReq) returns (common.BaseResp);
+  // 添加好友
+  rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
+  
+  // 处理好友请求
+  rpc HandleFriendRequest(HandleFriendRequestRequest) returns (HandleFriendRequestResponse);
+  
+  // 获取好友请求列表
+  rpc GetFriendRequests(GetFriendRequestsRequest) returns (GetFriendRequestsResponse);
+  
+  // 删除好友
+  rpc DeleteFriend(DeleteFriendRequest) returns (DeleteFriendResponse);
+  
+  // 更新好友备注
+  rpc UpdateFriendRemark(UpdateFriendRemarkRequest) returns (UpdateFriendRemarkResponse);
+  
+  // 获取好友列表
+  rpc GetFriendList(GetFriendListRequest) returns (GetFriendListResponse);
+  
+  // 创建好友分组
+  rpc CreateFriendGroup(CreateFriendGroupRequest) returns (CreateFriendGroupResponse);
+  
+  // 删除好友分组
+  rpc DeleteFriendGroup(DeleteFriendGroupRequest) returns (DeleteFriendGroupResponse);
+  
+  // 更新好友分组
+  rpc UpdateFriendGroup(UpdateFriendGroupRequest) returns (UpdateFriendGroupResponse);
+  
+  // 获取好友分组列表
+  rpc GetFriendGroups(GetFriendGroupsRequest) returns (GetFriendGroupsResponse);
+  
+  // 移动好友到分组
+  rpc MoveFriendToGroup(MoveFriendToGroupRequest) returns (MoveFriendToGroupResponse);
+  
+  // 拉黑用户
+  rpc BlockUser(BlockUserRequest) returns (BlockUserResponse);
+  
+  // 取消拉黑
+  rpc UnblockUser(UnblockUserRequest) returns (UnblockUserResponse);
+  
+  // 获取黑名单
+  rpc GetBlacklist(GetBlacklistRequest) returns (GetBlacklistResponse);
 }

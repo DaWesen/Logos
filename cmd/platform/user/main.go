@@ -1,11 +1,11 @@
-﻿package main
+﻿﻿package main
 
 import (
 	"Logos/config"
-	"Logos/internal/platform/user/dao"
-	"Logos/internal/platform/user/handler"
-	"Logos/internal/platform/user/model"
-	"Logos/internal/platform/user/service"
+	"Logos/internal/service/platform/user/dao"
+	"Logos/internal/service/platform/user/handler"
+	"Logos/internal/service/platform/user/model"
+	"Logos/internal/service/platform/user/service"
 	"Logos/pkg/cache"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/es"

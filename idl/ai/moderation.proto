@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package ai.moderation;
+
+option go_package = "Logos/proto_gen/moderation";
+
+import "google/protobuf/timestamp.proto";
+
+// 审核结果
+enum ModerationResult {
+  MODERATION_RESULT_UNSPECIFIED = 0;
+  MODERATION_RESULT_PASSED = 1;
+  MODERATION_RESULT_FLAGGED = 2;
+  MODERATION_RESULT_REJECTED = 3;
+}
+
+// 审核分类
+enum ModerationCategory {
+  MODERATION_CATEGORY_UNSPECIFIED = 0;
+  MODERATION_CATEGORY_HATE = 1;
+  MODERATION_CATEGORY_HARASSMENT = 2;
+  MODERATION_CATEGORY_SEXUAL = 3;
+  MODERATION_CATEGORY_VIOLENCE = 4;
+  MODERATION_CATEGORY_SELF_HARM = 5;
+  MODERATION_CATEGORY_SPAM = 6;
+  MODERATION_CATEGORY_ILLEGAL = 7;
+}
+
+// 审核记录
+message ModerationRecord {
+  string id = 1;
+  string content = 2;
+  ModerationResult result = 3;
+  repeated ModerationCategory categories = 4;
+  map<string, float> scores = 5;
+  string action_taken = 6;
+  string moderator_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// 翻译请求
+message TranslateRequest {
+  string content = 1;
+  string source_lang = 2;
+  string target_lang = 3;
+  string content_id = 4;
+}
+
+// 翻译响应
+message TranslateResponse {
+  int32 code = 1;
+  string message = 2;
+  string translated_content = 3;
+  string source_lang = 4;
+  string target_lang = 5;
+}
+
+// 审核请求
+message ModerateContentRequest {
+  string content = 1;
+  string content_id = 2;
+  string content_type = 3;
+}
+
+// 审核响应
+message ModerateContentResponse {
+  int32 code = 1;
+  string message = 2;
+  ModerationRecord data = 3;
+}
+
+// 获取审核记录请求
+message GetModerationRecordsRequest {
+  ModerationResult result = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+// 获取审核记录响应
+message GetModerationRecordsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated ModerationRecord records = 3;
+  int32 total = 4;
+}
+
+// 审核与翻译服务
+service ModerationService {
+  // 翻译内容
+  rpc Translate(TranslateRequest) returns (TranslateResponse);
+  
+  // 审核内容
+  rpc ModerateContent(ModerateContentRequest) returns (ModerateContentResponse);
+  
+  // 获取审核记录
+  rpc GetModerationRecords(GetModerationRecordsRequest) returns (GetModerationRecordsResponse);
+}

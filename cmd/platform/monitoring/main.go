@@ -2,10 +2,10 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/platform/monitoring/dao"
-	"Logos/internal/platform/monitoring/handler"
-	"Logos/internal/platform/monitoring/model"
-	"Logos/internal/platform/monitoring/service"
+	"Logos/internal/service/platform/monitoring/dao"
+	"Logos/internal/service/platform/monitoring/handler"
+	"Logos/internal/service/platform/monitoring/model"
+	"Logos/internal/service/platform/monitoring/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"

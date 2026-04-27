@@ -2,10 +2,10 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/recommend/dao"
-	"Logos/internal/ai/recommend/handler"
-	"Logos/internal/ai/recommend/model"
-	"Logos/internal/ai/recommend/service"
+	"Logos/internal/service/ai/recommend/dao"
+	"Logos/internal/service/ai/recommend/handler"
+	"Logos/internal/service/ai/recommend/model"
+	"Logos/internal/service/ai/recommend/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"

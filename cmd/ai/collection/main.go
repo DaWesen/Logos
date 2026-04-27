@@ -1,11 +1,11 @@
-﻿package main
+package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/collection/dao"
-	"Logos/internal/ai/collection/handler"
-	"Logos/internal/ai/collection/model"
-	"Logos/internal/ai/collection/service"
+	"Logos/internal/service/ai/collection/dao"
+	"Logos/internal/service/ai/collection/handler"
+	"Logos/internal/service/ai/collection/model"
+	"Logos/internal/service/ai/collection/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"

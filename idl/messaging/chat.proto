@@ -1,84 +1,370 @@
 syntax = "proto3";
 
-package chat;
+package messaging.chat;
 
 option go_package = "Logos/proto_gen/chat";
 
-import "common.proto";
+import "google/protobuf/timestamp.proto";
 
+// 消息类型枚举
 enum MessageType {
-  TEXT = 0;
-  IMAGE = 1;
-  FILE = 2;
-  SYSTEM = 3;
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  MESSAGE_TYPE_TEXT = 1;
+  MESSAGE_TYPE_IMAGE = 2;
+  MESSAGE_TYPE_FILE = 3;
+  MESSAGE_TYPE_VOICE = 4;
+  MESSAGE_TYPE_SYSTEM = 5;
 }
 
-message ChatMessage {
+// 聊天类型
+enum ChatType {
+  CHAT_TYPE_UNSPECIFIED = 0;
+  CHAT_TYPE_PRIVATE = 1;
+  CHAT_TYPE_GROUP = 2;
+  CHAT_TYPE_BROADCAST = 3;
+}
+
+// 消息状态
+enum MessageStatus {
+  MESSAGE_STATUS_UNSPECIFIED = 0;
+  MESSAGE_STATUS_SENT = 1;
+  MESSAGE_STATUS_DELIVERED = 2;
+  MESSAGE_STATUS_READ = 3;
+  MESSAGE_STATUS_WITHDRAWN = 4;
+  MESSAGE_STATUS_EDITED = 5;
+}
+
+// 成员角色
+enum GroupMemberRole {
+  GROUP_MEMBER_ROLE_UNSPECIFIED = 0;
+  GROUP_MEMBER_ROLE_OWNER = 1;
+  GROUP_MEMBER_ROLE_ADMIN = 2;
+  GROUP_MEMBER_ROLE_MEMBER = 3;
+}
+
+// 禁言类型
+enum MuteType {
+  MUTE_TYPE_UNSPECIFIED = 0;
+  MUTE_TYPE_NONE = 1;
+  MUTE_TYPE_TEMPORARY = 2;
+  MUTE_TYPE_PERMANENT = 3;
+}
+
+// 消息
+message Message {
   string id = 1;
-  int64 sender_id = 2;
-  optional int64 receiver_id = 3;
-  optional int64 group_id = 4;
-  MessageType type = 5;
+  string chat_id = 2;
+  ChatType chat_type = 3;
+  string sender_id = 4;
+  MessageType message_type = 5;
   string content = 6;
-  int64 created_at = 7;
-  optional bool read = 8;
+  map<string, string> metadata = 7;
+  MessageStatus status = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  string reply_to_message_id = 11;
+  repeated string mention_user_ids = 12;
 }
 
-message SendMessageReq {
-  int64 sender_id = 1;
-  optional int64 receiver_id = 2;
-  optional int64 group_id = 3;
-  MessageType type = 4;
-  string content = 5;
-}
-
-message SendMessageResp {
-  common.BaseResp base_resp = 1;
-  ChatMessage message = 2;
-}
-
-message GetHistoryReq {
-  int64 user_id = 1;
-  optional int64 receiver_id = 2;
-  optional int64 group_id = 3;
-  int64 before_time = 4;
-  int32 limit = 5;
-}
-
-message HistoryResp {
-  common.BaseResp base_resp = 1;
-  repeated ChatMessage messages = 2;
-  bool has_more = 3;
-}
-
-message MarkReadReq {
-  int64 user_id = 1;
-  repeated string message_ids = 2;
-}
-
-message CreateGroupReq {
-  int64 creator_id = 1;
+// 群组
+message Group {
+  string id = 1;
   string name = 2;
-  repeated int64 member_ids = 3;
+  string owner_id = 3;
+  repeated string member_ids = 4;
+  map<string, string> metadata = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  string announcement = 8;
 }
 
-message GroupResp {
-  common.BaseResp base_resp = 1;
-  int64 group_id = 2;
-  string name = 3;
-  repeated int64 member_ids = 4;
+// 群组成员
+message GroupMember {
+  string user_id = 1;
+  GroupMemberRole role = 2;
+  MuteType mute_type = 3;
+  google.protobuf.Timestamp mute_until = 4;
+  google.protobuf.Timestamp joined_at = 5;
 }
 
-message GroupMemberReq {
-  int64 group_id = 1;
-  int64 user_id = 2;
+// 发送消息请求
+message SendMessageRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  MessageType message_type = 3;
+  string content = 4;
+  map<string, string> metadata = 5;
+  string reply_to_message_id = 6;
+  repeated string mention_user_ids = 7;
 }
 
+// 发送消息响应
+message SendMessageResponse {
+  int32 code = 1;
+  string message = 2;
+  Message data = 3;
+}
+
+// 搜索消息请求
+message SearchMessagesRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  string keyword = 3;
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+  int32 page = 6;
+  int32 page_size = 7;
+}
+
+// 搜索消息响应
+message SearchMessagesResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Message messages = 3;
+  int32 total = 4;
+}
+
+// 获取消息历史请求
+message GetMessageHistoryRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  google.protobuf.Timestamp before_time = 3;
+  int32 limit = 4;
+}
+
+// 获取消息历史响应
+message GetMessageHistoryResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Message messages = 3;
+  bool has_more = 4;
+}
+
+// 标记消息已读请求
+message MarkMessagesReadRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  repeated string message_ids = 3;
+}
+
+// 标记消息已读响应
+message MarkMessagesReadResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 撤回消息请求
+message WithdrawMessageRequest {
+  string message_id = 1;
+}
+
+// 撤回消息响应
+message WithdrawMessageResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 编辑消息请求
+message EditMessageRequest {
+  string message_id = 1;
+  string content = 2;
+}
+
+// 编辑消息响应
+message EditMessageResponse {
+  int32 code = 1;
+  string message = 2;
+  Message data = 3;
+}
+
+// 创建群组请求
+message CreateGroupRequest {
+  string name = 1;
+  repeated string member_ids = 2;
+  map<string, string> metadata = 3;
+}
+
+// 创建群组响应
+message CreateGroupResponse {
+  int32 code = 1;
+  string message = 2;
+  Group data = 3;
+}
+
+// 邀请成员请求
+message InviteGroupMemberRequest {
+  string group_id = 1;
+  repeated string user_ids = 2;
+}
+
+// 邀请成员响应
+message InviteGroupMemberResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 踢出成员请求
+message KickGroupMemberRequest {
+  string group_id = 1;
+  string user_id = 2;
+}
+
+// 踢出成员响应
+message KickGroupMemberResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 禁言/解禁成员请求
+message MuteGroupMemberRequest {
+  string group_id = 1;
+  string user_id = 2;
+  MuteType mute_type = 3;
+  google.protobuf.Timestamp mute_until = 4;
+}
+
+// 禁言/解禁成员响应
+message MuteGroupMemberResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 转让群主请求
+message TransferGroupOwnerRequest {
+  string group_id = 1;
+  string new_owner_id = 2;
+}
+
+// 转让群主响应
+message TransferGroupOwnerResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 更新群公告请求
+message UpdateGroupAnnouncementRequest {
+  string group_id = 1;
+  string announcement = 2;
+}
+
+// 更新群公告响应
+message UpdateGroupAnnouncementResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 设置管理员请求
+message SetGroupAdminRequest {
+  string group_id = 1;
+  string user_id = 2;
+  bool is_admin = 3;
+}
+
+// 设置管理员响应
+message SetGroupAdminResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取群成员列表请求
+message GetGroupMembersRequest {
+  string group_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// 获取群成员列表响应
+message GetGroupMembersResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated GroupMember members = 3;
+  int32 total = 4;
+}
+
+// 加入群组请求
+message JoinGroupRequest {
+  string group_id = 1;
+}
+
+// 加入群组响应
+message JoinGroupResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 退出群组请求
+message LeaveGroupRequest {
+  string group_id = 1;
+}
+
+// 退出群组响应
+message LeaveGroupResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取群组信息请求
+message GetGroupRequest {
+  string group_id = 1;
+}
+
+// 获取群组信息响应
+message GetGroupResponse {
+  int32 code = 1;
+  string message = 2;
+  Group data = 3;
+}
+
+// 聊天服务
 service ChatService {
-  rpc SendMessage(SendMessageReq) returns (SendMessageResp);
-  rpc GetMessageHistory(GetHistoryReq) returns (HistoryResp);
-  rpc MarkMessagesRead(MarkReadReq) returns (common.BaseResp);
-  rpc CreateGroup(CreateGroupReq) returns (GroupResp);
-  rpc JoinGroup(GroupMemberReq) returns (common.BaseResp);
-  rpc LeaveGroup(GroupMemberReq) returns (common.BaseResp);
+  // 发送消息
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  
+  // 搜索消息
+  rpc SearchMessages(SearchMessagesRequest) returns (SearchMessagesResponse);
+  
+  // 获取消息历史
+  rpc GetMessageHistory(GetMessageHistoryRequest) returns (GetMessageHistoryResponse);
+  
+  // 标记消息已读
+  rpc MarkMessagesRead(MarkMessagesReadRequest) returns (MarkMessagesReadResponse);
+  
+  // 撤回消息
+  rpc WithdrawMessage(WithdrawMessageRequest) returns (WithdrawMessageResponse);
+  
+  // 编辑消息
+  rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);
+  
+  // 创建群组
+  rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse);
+  
+  // 邀请成员
+  rpc InviteGroupMember(InviteGroupMemberRequest) returns (InviteGroupMemberResponse);
+  
+  // 踢出成员
+  rpc KickGroupMember(KickGroupMemberRequest) returns (KickGroupMemberResponse);
+  
+  // 禁言/解禁成员
+  rpc MuteGroupMember(MuteGroupMemberRequest) returns (MuteGroupMemberResponse);
+  
+  // 转让群主
+  rpc TransferGroupOwner(TransferGroupOwnerRequest) returns (TransferGroupOwnerResponse);
+  
+  // 更新群公告
+  rpc UpdateGroupAnnouncement(UpdateGroupAnnouncementRequest) returns (UpdateGroupAnnouncementResponse);
+  
+  // 设置管理员
+  rpc SetGroupAdmin(SetGroupAdminRequest) returns (SetGroupAdminResponse);
+  
+  // 获取群成员列表
+  rpc GetGroupMembers(GetGroupMembersRequest) returns (GetGroupMembersResponse);
+  
+  // 加入群组
+  rpc JoinGroup(JoinGroupRequest) returns (JoinGroupResponse);
+  
+  // 退出群组
+  rpc LeaveGroup(LeaveGroupRequest) returns (LeaveGroupResponse);
+  
+  // 获取群组信息
+  rpc GetGroup(GetGroupRequest) returns (GetGroupResponse);
 }

@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package ai.summary;
+
+option go_package = "Logos/proto_gen/summary";
+
+import "google/protobuf/timestamp.proto";
+import "messaging/chat.proto";
+
+// 待办事项
+message TodoItem {
+  string id = 1;
+  string content = 2;
+  string assignee = 3;
+  google.protobuf.Timestamp deadline = 4;
+  string status = 5;
+}
+
+// 回复候选
+message ReplyCandidate {
+  string id = 1;
+  string content = 2;
+  float confidence = 3;
+  string type = 4;
+}
+
+// 总结请求
+message SummarizeMessagesRequest {
+  string chat_id = 1;
+  messaging.chat.ChatType chat_type = 2;
+  repeated string message_ids = 3;
+  google.protobuf.Timestamp start_time = 4;
+  google.protobuf.Timestamp end_time = 5;
+  bool include_todos = 6;
+  bool include_candidates = 7;
+}
+
+// 总结响应
+message SummarizeMessagesResponse {
+  int32 code = 1;
+  string message = 2;
+  string summary = 3;
+  repeated TodoItem todos = 4;
+  repeated ReplyCandidate reply_candidates = 5;
+  repeated string key_points = 6;
+  repeated string participants = 7;
+}
+
+// 生成回复候选请求
+message GenerateReplyCandidatesRequest {
+  string chat_id = 1;
+  messaging.chat.ChatType chat_type = 2;
+  repeated string context_message_ids = 3;
+  int32 candidate_count = 4;
+  string tone = 5;
+}
+
+// 生成回复候选响应
+message GenerateReplyCandidatesResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated ReplyCandidate candidates = 3;
+}
+
+// 提取待办事项请求
+message ExtractTodosRequest {
+  string chat_id = 1;
+  messaging.chat.ChatType chat_type = 2;
+  repeated string message_ids = 3;
+}
+
+// 提取待办事项响应
+message ExtractTodosResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated TodoItem todos = 3;
+}
+
+// 总结服务
+service SummaryService {
+  // 总结消息
+  rpc SummarizeMessages(SummarizeMessagesRequest) returns (SummarizeMessagesResponse);
+  
+  // 生成回复候选
+  rpc GenerateReplyCandidates(GenerateReplyCandidatesRequest) returns (GenerateReplyCandidatesResponse);
+  
+  // 提取待办事项
+  rpc ExtractTodos(ExtractTodosRequest) returns (ExtractTodosResponse);
+}

@@ -1,39 +1,162 @@
 syntax = "proto3";
 
-package im;
+package messaging.im;
 
 option go_package = "Logos/proto_gen/im";
 
-import "common.proto";
+import "google/protobuf/timestamp.proto";
+import "messaging/chat.proto";
 
-message ConnectReq {
-  int64 user_id = 1;
+// 在线状态
+enum OnlineStatus {
+  ONLINE_STATUS_UNSPECIFIED = 0;
+  ONLINE_STATUS_ONLINE = 1;
+  ONLINE_STATUS_OFFLINE = 2;
+  ONLINE_STATUS_AWAY = 3;
+  ONLINE_STATUS_BUSY = 4;
+}
+
+// 输入状态
+enum TypingStatus {
+  TYPING_STATUS_UNSPECIFIED = 0;
+  TYPING_STATUS_TYPING = 1;
+  TYPING_STATUS_NOT_TYPING = 2;
+}
+
+// 实时消息
+message RealtimeMessage {
+  string id = 1;
+  string type = 2;
+  bytes payload = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// 连接请求
+message ConnectRequest {
+  string user_id = 1;
   string device_id = 2;
+  string token = 3;
 }
 
-message OnlineStatus {
-  int64 user_id = 1;
-  bool online = 2;
-  int64 last_seen = 3;
+// 连接响应
+message ConnectResponse {
+  int32 code = 1;
+  string message = 2;
+  string session_id = 3;
 }
 
-message OnlineStatusResp {
-  common.BaseResp base_resp = 1;
-  repeated OnlineStatus statuses = 2;
+// 断开连接请求
+message DisconnectRequest {
+  string session_id = 1;
 }
 
-message HeartbeatReq {
-  int64 user_id = 1;
-  string device_id = 2;
+// 断开连接响应
+message DisconnectResponse {
+  int32 code = 1;
+  string message = 2;
 }
 
-message GetUserStatusReq {
-  repeated int64 user_ids = 1;
+// 获取在线状态请求
+message GetOnlineStatusRequest {
+  repeated string user_ids = 1;
 }
 
+// 获取在线状态响应
+message GetOnlineStatusResponse {
+  int32 code = 1;
+  string message = 2;
+  map<string, OnlineStatus> statuses = 3;
+}
+
+// 设置在线状态请求
+message SetOnlineStatusRequest {
+  OnlineStatus status = 1;
+}
+
+// 设置在线状态响应
+message SetOnlineStatusResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 心跳请求
+message HeartbeatRequest {
+  string session_id = 1;
+}
+
+// 心跳响应
+message HeartbeatResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 发送输入状态请求
+message SendTypingStatusRequest {
+  string chat_id = 1;
+  messaging.chat.ChatType chat_type = 2;
+  TypingStatus status = 3;
+}
+
+// 发送输入状态响应
+message SendTypingStatusResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 广播消息请求
+message BroadcastMessageRequest {
+  string content = 1;
+  messaging.chat.MessageType message_type = 2;
+  map<string, string> metadata = 3;
+}
+
+// 广播消息响应
+message BroadcastMessageResponse {
+  int32 code = 1;
+  string message = 2;
+  messaging.chat.Message data = 3;
+}
+
+// 离线消息同步请求
+message SyncOfflineMessagesRequest {
+  google.protobuf.Timestamp last_sync_time = 1;
+  int32 limit = 2;
+}
+
+// 离线消息同步响应
+message SyncOfflineMessagesResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated messaging.chat.Message messages = 3;
+  bool has_more = 4;
+}
+
+// IM 服务
 service IMService {
-  rpc Connect(ConnectReq) returns (common.BaseResp);
-  rpc Disconnect(ConnectReq) returns (common.BaseResp);
-  rpc GetOnlineStatus(GetUserStatusReq) returns (OnlineStatusResp);
-  rpc Heartbeat(HeartbeatReq) returns (common.BaseResp);
+  // 连接
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  
+  // 断开连接
+  rpc Disconnect(DisconnectRequest) returns (DisconnectResponse);
+  
+  // 获取在线状态
+  rpc GetOnlineStatus(GetOnlineStatusRequest) returns (GetOnlineStatusResponse);
+  
+  // 设置在线状态
+  rpc SetOnlineStatus(SetOnlineStatusRequest) returns (SetOnlineStatusResponse);
+  
+  // 心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // 发送输入状态
+  rpc SendTypingStatus(SendTypingStatusRequest) returns (SendTypingStatusResponse);
+  
+  // 广播消息
+  rpc BroadcastMessage(BroadcastMessageRequest) returns (BroadcastMessageResponse);
+  
+  // 同步离线消息
+  rpc SyncOfflineMessages(SyncOfflineMessagesRequest) returns (SyncOfflineMessagesResponse);
+  
+  // 实时消息流
+  rpc StreamMessages(ConnectRequest) returns (stream RealtimeMessage);
 }

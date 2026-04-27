@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package ai.bot;
+
+option go_package = "Logos/proto_gen/bot";
+
+import "google/protobuf/timestamp.proto";
+
+// Bot 类型
+enum BotType {
+  BOT_TYPE_UNSPECIFIED = 0;
+  BOT_TYPE_BUILTIN = 1;
+  BOT_TYPE_CUSTOM = 2;
+}
+
+// 模型提供商
+enum ModelProvider {
+  MODEL_PROVIDER_UNSPECIFIED = 0;
+  MODEL_PROVIDER_OPENAI = 1;
+  MODEL_PROVIDER_CLAUDE = 2;
+  MODEL_PROVIDER_QIANFAN = 3;
+  MODEL_PROVIDER_PLATFORM = 4;
+}
+
+// Bot 状态
+enum BotStatus {
+  BOT_STATUS_UNSPECIFIED = 0;
+  BOT_STATUS_ACTIVE = 1;
+  BOT_STATUS_INACTIVE = 2;
+  BOT_STATUS_DELETED = 3;
+}
+
+// Bot
+message Bot {
+  string id = 1;
+  string user_id = 2;
+  string name = 3;
+  string description = 4;
+  string avatar = 5;
+  BotType type = 6;
+  ModelProvider provider = 7;
+  string model = 8;
+  string api_key = 9;
+  string system_prompt = 10;
+  BotStatus status = 11;
+  map<string, string> config = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+// Bot 对话消息
+message BotMessage {
+  string id = 1;
+  string bot_id = 2;
+  string chat_id = 3;
+  string role = 4;
+  string content = 5;
+  map<string, string> metadata = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+// 创建 Bot 请求
+message CreateBotRequest {
+  string name = 1;
+  string description = 2;
+  string avatar = 3;
+  BotType type = 4;
+  ModelProvider provider = 5;
+  string model = 6;
+  string api_key = 7;
+  string system_prompt = 8;
+  map<string, string> config = 9;
+}
+
+// 创建 Bot 响应
+message CreateBotResponse {
+  int32 code = 1;
+  string message = 2;
+  Bot data = 3;
+}
+
+// 更新 Bot 请求
+message UpdateBotRequest {
+  string bot_id = 1;
+  string name = 2;
+  string description = 3;
+  string avatar = 4;
+  string model = 5;
+  string api_key = 6;
+  string system_prompt = 7;
+  map<string, string> config = 8;
+  BotStatus status = 9;
+}
+
+// 更新 Bot 响应
+message UpdateBotResponse {
+  int32 code = 1;
+  string message = 2;
+  Bot data = 3;
+}
+
+// 删除 Bot 请求
+message DeleteBotRequest {
+  string bot_id = 1;
+}
+
+// 删除 Bot 响应
+message DeleteBotResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取 Bot 请求
+message GetBotRequest {
+  string bot_id = 1;
+}
+
+// 获取 Bot 响应
+message GetBotResponse {
+  int32 code = 1;
+  string message = 2;
+  Bot data = 3;
+}
+
+// 获取 Bot 列表请求
+message ListBotsRequest {
+  BotType type = 1;
+  BotStatus status = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// 获取 Bot 列表响应
+message ListBotsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Bot bots = 3;
+  int32 total = 4;
+}
+
+// 发送消息给 Bot 请求
+message SendBotMessageRequest {
+  string bot_id = 1;
+  string chat_id = 2;
+  string content = 3;
+  map<string, string> metadata = 4;
+  bool stream = 5;
+}
+
+// 发送消息给 Bot 响应
+message SendBotMessageResponse {
+  int32 code = 1;
+  string message = 2;
+  BotMessage data = 3;
+}
+
+// 流式响应
+message StreamBotResponse {
+  string content = 1;
+  bool done = 2;
+}
+
+// 获取对话历史请求
+message GetBotHistoryRequest {
+  string bot_id = 1;
+  string chat_id = 2;
+  int32 limit = 3;
+  google.protobuf.Timestamp before_time = 4;
+}
+
+// 获取对话历史响应
+message GetBotHistoryResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated BotMessage messages = 3;
+  bool has_more = 4;
+}
+
+// Bot 服务
+service BotService {
+  // 创建 Bot
+  rpc CreateBot(CreateBotRequest) returns (CreateBotResponse);
+  
+  // 更新 Bot
+  rpc UpdateBot(UpdateBotRequest) returns (UpdateBotResponse);
+  
+  // 删除 Bot
+  rpc DeleteBot(DeleteBotRequest) returns (DeleteBotResponse);
+  
+  // 获取 Bot
+  rpc GetBot(GetBotRequest) returns (GetBotResponse);
+  
+  // 获取 Bot 列表
+  rpc ListBots(ListBotsRequest) returns (ListBotsResponse);
+  
+  // 发送消息给 Bot
+  rpc SendBotMessage(SendBotMessageRequest) returns (StreamBotResponse);
+  
+  // 获取对话历史
+  rpc GetBotHistory(GetBotHistoryRequest) returns (GetBotHistoryResponse);
+}

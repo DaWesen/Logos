@@ -2,7 +2,7 @@
 
 import (
 	"Logos/config"
-	"Logos/internal/messaging/chat/handler"
+	"Logos/internal/service/messaging/chat/handler"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"

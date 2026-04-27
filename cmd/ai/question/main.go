@@ -2,10 +2,10 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/question/dao"
-	"Logos/internal/ai/question/handler"
-	"Logos/internal/ai/question/model"
-	"Logos/internal/ai/question/service"
+	"Logos/internal/service/ai/question/dao"
+	"Logos/internal/service/ai/question/handler"
+	"Logos/internal/service/ai/question/model"
+	"Logos/internal/service/ai/question/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"

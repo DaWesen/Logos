@@ -2,9 +2,9 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/vector/dao"
-	"Logos/internal/ai/vector/handler"
-	"Logos/internal/ai/vector/service"
+	"Logos/internal/service/ai/vector/dao"
+	"Logos/internal/service/ai/vector/handler"
+	"Logos/internal/service/ai/vector/service"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"

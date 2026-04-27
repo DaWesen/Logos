@@ -2,7 +2,7 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/platform/gateway/router"
+	"Logos/internal/service/platform/gateway/router"
 	"Logos/pkg/logger"
 	"log"
 	"net/http"

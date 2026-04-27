@@ -2,7 +2,7 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/messaging/im/handler"
+	"Logos/internal/service/messaging/im/handler"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"

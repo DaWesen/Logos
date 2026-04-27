@@ -2,9 +2,9 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/search/dao"
-	"Logos/internal/ai/search/handler"
-	"Logos/internal/ai/search/service"
+	"Logos/internal/service/ai/search/dao"
+	"Logos/internal/service/ai/search/handler"
+	"Logos/internal/service/ai/search/service"
 	"Logos/pkg/es"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"

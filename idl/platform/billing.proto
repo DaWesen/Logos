@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package platform.billing;
+
+option go_package = "Logos/proto_gen/billing";
+
+import "google/protobuf/timestamp.proto";
+
+// 交易类型
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_TYPE_DEPOSIT = 1;
+  TRANSACTION_TYPE_WITHDRAWAL = 2;
+  TRANSACTION_TYPE_CONSUME = 3;
+  TRANSACTION_TYPE_REFUND = 4;
+}
+
+// 交易状态
+enum TransactionStatus {
+  TRANSACTION_STATUS_UNSPECIFIED = 0;
+  TRANSACTION_STATUS_PENDING = 1;
+  TRANSACTION_STATUS_SUCCESS = 2;
+  TRANSACTION_STATUS_FAILED = 3;
+}
+
+// 计费项目
+enum BillingItem {
+  BILLING_ITEM_UNSPECIFIED = 0;
+  BILLING_ITEM_MODEL_CALL = 1;
+  BILLING_ITEM_STORAGE = 2;
+  BILLING_ITEM_BANDWIDTH = 3;
+  BILLING_ITEM_EMBEDDING = 4;
+}
+
+// 账户
+message Account {
+  string id = 1;
+  string user_id = 2;
+  double balance = 3;
+  double credit_limit = 4;
+  map<string, double> usage = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// 交易记录
+message Transaction {
+  string id = 1;
+  string user_id = 2;
+  string account_id = 3;
+  TransactionType type = 4;
+  BillingItem item = 5;
+  double amount = 6;
+  double balance_before = 7;
+  double balance_after = 8;
+  string description = 9;
+  TransactionStatus status = 10;
+  map<string, string> metadata = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+// 充值请求
+message DepositRequest {
+  double amount = 1;
+  string payment_method = 2;
+  map<string, string> metadata = 3;
+}
+
+// 充值响应
+message DepositResponse {
+  int32 code = 1;
+  string message = 2;
+  Transaction data = 3;
+}
+
+// 获取账户请求
+message GetAccountRequest {
+}
+
+// 获取账户响应
+message GetAccountResponse {
+  int32 code = 1;
+  string message = 2;
+  Account data = 3;
+}
+
+// 获取交易记录请求
+message GetTransactionsRequest {
+  TransactionType type = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+// 获取交易记录响应
+message GetTransactionsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Transaction transactions = 3;
+  int32 total = 4;
+}
+
+// 获取用量统计请求
+message GetUsageStatsRequest {
+  BillingItem item = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+}
+
+// 获取用量统计响应
+message GetUsageStatsResponse {
+  int32 code = 1;
+  string message = 2;
+  map<string, double> stats = 3;
+}
+
+// 计费服务
+service BillingService {
+  // 充值
+  rpc Deposit(DepositRequest) returns (DepositResponse);
+  
+  // 获取账户信息
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  
+  // 获取交易记录
+  rpc GetTransactions(GetTransactionsRequest) returns (GetTransactionsResponse);
+  
+  // 获取用量统计
+  rpc GetUsageStats(GetUsageStatsRequest) returns (GetUsageStatsResponse);
+}

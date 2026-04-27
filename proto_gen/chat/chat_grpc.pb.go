@@ -7,7 +7,6 @@
 package chat
 
 import (
-	common "Logos/proto_gen/common"
 	context "context"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
@@ -20,24 +19,65 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChatService_SendMessage_FullMethodName       = "/chat.ChatService/SendMessage"
-	ChatService_GetMessageHistory_FullMethodName = "/chat.ChatService/GetMessageHistory"
-	ChatService_MarkMessagesRead_FullMethodName  = "/chat.ChatService/MarkMessagesRead"
-	ChatService_CreateGroup_FullMethodName       = "/chat.ChatService/CreateGroup"
-	ChatService_JoinGroup_FullMethodName         = "/chat.ChatService/JoinGroup"
-	ChatService_LeaveGroup_FullMethodName        = "/chat.ChatService/LeaveGroup"
+	ChatService_SendMessage_FullMethodName             = "/messaging.chat.ChatService/SendMessage"
+	ChatService_SearchMessages_FullMethodName          = "/messaging.chat.ChatService/SearchMessages"
+	ChatService_GetMessageHistory_FullMethodName       = "/messaging.chat.ChatService/GetMessageHistory"
+	ChatService_MarkMessagesRead_FullMethodName        = "/messaging.chat.ChatService/MarkMessagesRead"
+	ChatService_WithdrawMessage_FullMethodName         = "/messaging.chat.ChatService/WithdrawMessage"
+	ChatService_EditMessage_FullMethodName             = "/messaging.chat.ChatService/EditMessage"
+	ChatService_CreateGroup_FullMethodName             = "/messaging.chat.ChatService/CreateGroup"
+	ChatService_InviteGroupMember_FullMethodName       = "/messaging.chat.ChatService/InviteGroupMember"
+	ChatService_KickGroupMember_FullMethodName         = "/messaging.chat.ChatService/KickGroupMember"
+	ChatService_MuteGroupMember_FullMethodName         = "/messaging.chat.ChatService/MuteGroupMember"
+	ChatService_TransferGroupOwner_FullMethodName      = "/messaging.chat.ChatService/TransferGroupOwner"
+	ChatService_UpdateGroupAnnouncement_FullMethodName = "/messaging.chat.ChatService/UpdateGroupAnnouncement"
+	ChatService_SetGroupAdmin_FullMethodName           = "/messaging.chat.ChatService/SetGroupAdmin"
+	ChatService_GetGroupMembers_FullMethodName         = "/messaging.chat.ChatService/GetGroupMembers"
+	ChatService_JoinGroup_FullMethodName               = "/messaging.chat.ChatService/JoinGroup"
+	ChatService_LeaveGroup_FullMethodName              = "/messaging.chat.ChatService/LeaveGroup"
+	ChatService_GetGroup_FullMethodName                = "/messaging.chat.ChatService/GetGroup"
 )
 
 // ChatServiceClient is the client API for ChatService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// 聊天服务
 type ChatServiceClient interface {
-	SendMessage(ctx context.Context, in *SendMessageReq, opts ...grpc.CallOption) (*SendMessageResp, error)
-	GetMessageHistory(ctx context.Context, in *GetHistoryReq, opts ...grpc.CallOption) (*HistoryResp, error)
-	MarkMessagesRead(ctx context.Context, in *MarkReadReq, opts ...grpc.CallOption) (*common.BaseResp, error)
-	CreateGroup(ctx context.Context, in *CreateGroupReq, opts ...grpc.CallOption) (*GroupResp, error)
-	JoinGroup(ctx context.Context, in *GroupMemberReq, opts ...grpc.CallOption) (*common.BaseResp, error)
-	LeaveGroup(ctx context.Context, in *GroupMemberReq, opts ...grpc.CallOption) (*common.BaseResp, error)
+	// 发送消息
+	SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error)
+	// 搜索消息
+	SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error)
+	// 获取消息历史
+	GetMessageHistory(ctx context.Context, in *GetMessageHistoryRequest, opts ...grpc.CallOption) (*GetMessageHistoryResponse, error)
+	// 标记消息已读
+	MarkMessagesRead(ctx context.Context, in *MarkMessagesReadRequest, opts ...grpc.CallOption) (*MarkMessagesReadResponse, error)
+	// 撤回消息
+	WithdrawMessage(ctx context.Context, in *WithdrawMessageRequest, opts ...grpc.CallOption) (*WithdrawMessageResponse, error)
+	// 编辑消息
+	EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error)
+	// 创建群组
+	CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*CreateGroupResponse, error)
+	// 邀请成员
+	InviteGroupMember(ctx context.Context, in *InviteGroupMemberRequest, opts ...grpc.CallOption) (*InviteGroupMemberResponse, error)
+	// 踢出成员
+	KickGroupMember(ctx context.Context, in *KickGroupMemberRequest, opts ...grpc.CallOption) (*KickGroupMemberResponse, error)
+	// 禁言/解禁成员
+	MuteGroupMember(ctx context.Context, in *MuteGroupMemberRequest, opts ...grpc.CallOption) (*MuteGroupMemberResponse, error)
+	// 转让群主
+	TransferGroupOwner(ctx context.Context, in *TransferGroupOwnerRequest, opts ...grpc.CallOption) (*TransferGroupOwnerResponse, error)
+	// 更新群公告
+	UpdateGroupAnnouncement(ctx context.Context, in *UpdateGroupAnnouncementRequest, opts ...grpc.CallOption) (*UpdateGroupAnnouncementResponse, error)
+	// 设置管理员
+	SetGroupAdmin(ctx context.Context, in *SetGroupAdminRequest, opts ...grpc.CallOption) (*SetGroupAdminResponse, error)
+	// 获取群成员列表
+	GetGroupMembers(ctx context.Context, in *GetGroupMembersRequest, opts ...grpc.CallOption) (*GetGroupMembersResponse, error)
+	// 加入群组
+	JoinGroup(ctx context.Context, in *JoinGroupRequest, opts ...grpc.CallOption) (*JoinGroupResponse, error)
+	// 退出群组
+	LeaveGroup(ctx context.Context, in *LeaveGroupRequest, opts ...grpc.CallOption) (*LeaveGroupResponse, error)
+	// 获取群组信息
+	GetGroup(ctx context.Context, in *GetGroupRequest, opts ...grpc.CallOption) (*GetGroupResponse, error)
 }
 
 type chatServiceClient struct {
@@ -48,9 +88,9 @@ func NewChatServiceClient(cc grpc.ClientConnInterface) ChatServiceClient {
 	return &chatServiceClient{cc}
 }
 
-func (c *chatServiceClient) SendMessage(ctx context.Context, in *SendMessageReq, opts ...grpc.CallOption) (*SendMessageResp, error) {
+func (c *chatServiceClient) SendMessage(ctx context.Context, in *SendMessageRequest, opts ...grpc.CallOption) (*SendMessageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SendMessageResp)
+	out := new(SendMessageResponse)
 	err := c.cc.Invoke(ctx, ChatService_SendMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -58,9 +98,19 @@ func (c *chatServiceClient) SendMessage(ctx context.Context, in *SendMessageReq,
 	return out, nil
 }
 
-func (c *chatServiceClient) GetMessageHistory(ctx context.Context, in *GetHistoryReq, opts ...grpc.CallOption) (*HistoryResp, error) {
+func (c *chatServiceClient) SearchMessages(ctx context.Context, in *SearchMessagesRequest, opts ...grpc.CallOption) (*SearchMessagesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(HistoryResp)
+	out := new(SearchMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_SearchMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) GetMessageHistory(ctx context.Context, in *GetMessageHistoryRequest, opts ...grpc.CallOption) (*GetMessageHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMessageHistoryResponse)
 	err := c.cc.Invoke(ctx, ChatService_GetMessageHistory_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -68,9 +118,9 @@ func (c *chatServiceClient) GetMessageHistory(ctx context.Context, in *GetHistor
 	return out, nil
 }
 
-func (c *chatServiceClient) MarkMessagesRead(ctx context.Context, in *MarkReadReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *chatServiceClient) MarkMessagesRead(ctx context.Context, in *MarkMessagesReadRequest, opts ...grpc.CallOption) (*MarkMessagesReadResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(MarkMessagesReadResponse)
 	err := c.cc.Invoke(ctx, ChatService_MarkMessagesRead_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -78,9 +128,29 @@ func (c *chatServiceClient) MarkMessagesRead(ctx context.Context, in *MarkReadRe
 	return out, nil
 }
 
-func (c *chatServiceClient) CreateGroup(ctx context.Context, in *CreateGroupReq, opts ...grpc.CallOption) (*GroupResp, error) {
+func (c *chatServiceClient) WithdrawMessage(ctx context.Context, in *WithdrawMessageRequest, opts ...grpc.CallOption) (*WithdrawMessageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GroupResp)
+	out := new(WithdrawMessageResponse)
+	err := c.cc.Invoke(ctx, ChatService_WithdrawMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EditMessageResponse)
+	err := c.cc.Invoke(ctx, ChatService_EditMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) CreateGroup(ctx context.Context, in *CreateGroupRequest, opts ...grpc.CallOption) (*CreateGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateGroupResponse)
 	err := c.cc.Invoke(ctx, ChatService_CreateGroup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -88,9 +158,79 @@ func (c *chatServiceClient) CreateGroup(ctx context.Context, in *CreateGroupReq,
 	return out, nil
 }
 
-func (c *chatServiceClient) JoinGroup(ctx context.Context, in *GroupMemberReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *chatServiceClient) InviteGroupMember(ctx context.Context, in *InviteGroupMemberRequest, opts ...grpc.CallOption) (*InviteGroupMemberResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(InviteGroupMemberResponse)
+	err := c.cc.Invoke(ctx, ChatService_InviteGroupMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) KickGroupMember(ctx context.Context, in *KickGroupMemberRequest, opts ...grpc.CallOption) (*KickGroupMemberResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(KickGroupMemberResponse)
+	err := c.cc.Invoke(ctx, ChatService_KickGroupMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) MuteGroupMember(ctx context.Context, in *MuteGroupMemberRequest, opts ...grpc.CallOption) (*MuteGroupMemberResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MuteGroupMemberResponse)
+	err := c.cc.Invoke(ctx, ChatService_MuteGroupMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) TransferGroupOwner(ctx context.Context, in *TransferGroupOwnerRequest, opts ...grpc.CallOption) (*TransferGroupOwnerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TransferGroupOwnerResponse)
+	err := c.cc.Invoke(ctx, ChatService_TransferGroupOwner_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) UpdateGroupAnnouncement(ctx context.Context, in *UpdateGroupAnnouncementRequest, opts ...grpc.CallOption) (*UpdateGroupAnnouncementResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateGroupAnnouncementResponse)
+	err := c.cc.Invoke(ctx, ChatService_UpdateGroupAnnouncement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) SetGroupAdmin(ctx context.Context, in *SetGroupAdminRequest, opts ...grpc.CallOption) (*SetGroupAdminResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetGroupAdminResponse)
+	err := c.cc.Invoke(ctx, ChatService_SetGroupAdmin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) GetGroupMembers(ctx context.Context, in *GetGroupMembersRequest, opts ...grpc.CallOption) (*GetGroupMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupMembersResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetGroupMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) JoinGroup(ctx context.Context, in *JoinGroupRequest, opts ...grpc.CallOption) (*JoinGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinGroupResponse)
 	err := c.cc.Invoke(ctx, ChatService_JoinGroup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -98,10 +238,20 @@ func (c *chatServiceClient) JoinGroup(ctx context.Context, in *GroupMemberReq, o
 	return out, nil
 }
 
-func (c *chatServiceClient) LeaveGroup(ctx context.Context, in *GroupMemberReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *chatServiceClient) LeaveGroup(ctx context.Context, in *LeaveGroupRequest, opts ...grpc.CallOption) (*LeaveGroupResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(LeaveGroupResponse)
 	err := c.cc.Invoke(ctx, ChatService_LeaveGroup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) GetGroup(ctx context.Context, in *GetGroupRequest, opts ...grpc.CallOption) (*GetGroupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetGroupResponse)
+	err := c.cc.Invoke(ctx, ChatService_GetGroup_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -111,13 +261,43 @@ func (c *chatServiceClient) LeaveGroup(ctx context.Context, in *GroupMemberReq, 
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
+//
+// 聊天服务
 type ChatServiceServer interface {
-	SendMessage(context.Context, *SendMessageReq) (*SendMessageResp, error)
-	GetMessageHistory(context.Context, *GetHistoryReq) (*HistoryResp, error)
-	MarkMessagesRead(context.Context, *MarkReadReq) (*common.BaseResp, error)
-	CreateGroup(context.Context, *CreateGroupReq) (*GroupResp, error)
-	JoinGroup(context.Context, *GroupMemberReq) (*common.BaseResp, error)
-	LeaveGroup(context.Context, *GroupMemberReq) (*common.BaseResp, error)
+	// 发送消息
+	SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error)
+	// 搜索消息
+	SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error)
+	// 获取消息历史
+	GetMessageHistory(context.Context, *GetMessageHistoryRequest) (*GetMessageHistoryResponse, error)
+	// 标记消息已读
+	MarkMessagesRead(context.Context, *MarkMessagesReadRequest) (*MarkMessagesReadResponse, error)
+	// 撤回消息
+	WithdrawMessage(context.Context, *WithdrawMessageRequest) (*WithdrawMessageResponse, error)
+	// 编辑消息
+	EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error)
+	// 创建群组
+	CreateGroup(context.Context, *CreateGroupRequest) (*CreateGroupResponse, error)
+	// 邀请成员
+	InviteGroupMember(context.Context, *InviteGroupMemberRequest) (*InviteGroupMemberResponse, error)
+	// 踢出成员
+	KickGroupMember(context.Context, *KickGroupMemberRequest) (*KickGroupMemberResponse, error)
+	// 禁言/解禁成员
+	MuteGroupMember(context.Context, *MuteGroupMemberRequest) (*MuteGroupMemberResponse, error)
+	// 转让群主
+	TransferGroupOwner(context.Context, *TransferGroupOwnerRequest) (*TransferGroupOwnerResponse, error)
+	// 更新群公告
+	UpdateGroupAnnouncement(context.Context, *UpdateGroupAnnouncementRequest) (*UpdateGroupAnnouncementResponse, error)
+	// 设置管理员
+	SetGroupAdmin(context.Context, *SetGroupAdminRequest) (*SetGroupAdminResponse, error)
+	// 获取群成员列表
+	GetGroupMembers(context.Context, *GetGroupMembersRequest) (*GetGroupMembersResponse, error)
+	// 加入群组
+	JoinGroup(context.Context, *JoinGroupRequest) (*JoinGroupResponse, error)
+	// 退出群组
+	LeaveGroup(context.Context, *LeaveGroupRequest) (*LeaveGroupResponse, error)
+	// 获取群组信息
+	GetGroup(context.Context, *GetGroupRequest) (*GetGroupResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -128,23 +308,56 @@ type ChatServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedChatServiceServer struct{}
 
-func (UnimplementedChatServiceServer) SendMessage(context.Context, *SendMessageReq) (*SendMessageResp, error) {
+func (UnimplementedChatServiceServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
-func (UnimplementedChatServiceServer) GetMessageHistory(context.Context, *GetHistoryReq) (*HistoryResp, error) {
+func (UnimplementedChatServiceServer) SearchMessages(context.Context, *SearchMessagesRequest) (*SearchMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchMessages not implemented")
+}
+func (UnimplementedChatServiceServer) GetMessageHistory(context.Context, *GetMessageHistoryRequest) (*GetMessageHistoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMessageHistory not implemented")
 }
-func (UnimplementedChatServiceServer) MarkMessagesRead(context.Context, *MarkReadReq) (*common.BaseResp, error) {
+func (UnimplementedChatServiceServer) MarkMessagesRead(context.Context, *MarkMessagesReadRequest) (*MarkMessagesReadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method MarkMessagesRead not implemented")
 }
-func (UnimplementedChatServiceServer) CreateGroup(context.Context, *CreateGroupReq) (*GroupResp, error) {
+func (UnimplementedChatServiceServer) WithdrawMessage(context.Context, *WithdrawMessageRequest) (*WithdrawMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WithdrawMessage not implemented")
+}
+func (UnimplementedChatServiceServer) EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EditMessage not implemented")
+}
+func (UnimplementedChatServiceServer) CreateGroup(context.Context, *CreateGroupRequest) (*CreateGroupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateGroup not implemented")
 }
-func (UnimplementedChatServiceServer) JoinGroup(context.Context, *GroupMemberReq) (*common.BaseResp, error) {
+func (UnimplementedChatServiceServer) InviteGroupMember(context.Context, *InviteGroupMemberRequest) (*InviteGroupMemberResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InviteGroupMember not implemented")
+}
+func (UnimplementedChatServiceServer) KickGroupMember(context.Context, *KickGroupMemberRequest) (*KickGroupMemberResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method KickGroupMember not implemented")
+}
+func (UnimplementedChatServiceServer) MuteGroupMember(context.Context, *MuteGroupMemberRequest) (*MuteGroupMemberResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MuteGroupMember not implemented")
+}
+func (UnimplementedChatServiceServer) TransferGroupOwner(context.Context, *TransferGroupOwnerRequest) (*TransferGroupOwnerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TransferGroupOwner not implemented")
+}
+func (UnimplementedChatServiceServer) UpdateGroupAnnouncement(context.Context, *UpdateGroupAnnouncementRequest) (*UpdateGroupAnnouncementResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateGroupAnnouncement not implemented")
+}
+func (UnimplementedChatServiceServer) SetGroupAdmin(context.Context, *SetGroupAdminRequest) (*SetGroupAdminResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetGroupAdmin not implemented")
+}
+func (UnimplementedChatServiceServer) GetGroupMembers(context.Context, *GetGroupMembersRequest) (*GetGroupMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGroupMembers not implemented")
+}
+func (UnimplementedChatServiceServer) JoinGroup(context.Context, *JoinGroupRequest) (*JoinGroupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method JoinGroup not implemented")
 }
-func (UnimplementedChatServiceServer) LeaveGroup(context.Context, *GroupMemberReq) (*common.BaseResp, error) {
+func (UnimplementedChatServiceServer) LeaveGroup(context.Context, *LeaveGroupRequest) (*LeaveGroupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method LeaveGroup not implemented")
+}
+func (UnimplementedChatServiceServer) GetGroup(context.Context, *GetGroupRequest) (*GetGroupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetGroup not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -168,7 +381,7 @@ func RegisterChatServiceServer(s grpc.ServiceRegistrar, srv ChatServiceServer) {
 }
 
 func _ChatService_SendMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SendMessageReq)
+	in := new(SendMessageRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -180,13 +393,31 @@ func _ChatService_SendMessage_Handler(srv interface{}, ctx context.Context, dec 
 		FullMethod: ChatService_SendMessage_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).SendMessage(ctx, req.(*SendMessageReq))
+		return srv.(ChatServiceServer).SendMessage(ctx, req.(*SendMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_SearchMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SearchMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SearchMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SearchMessages(ctx, req.(*SearchMessagesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_GetMessageHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetHistoryReq)
+	in := new(GetMessageHistoryRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -198,13 +429,13 @@ func _ChatService_GetMessageHistory_Handler(srv interface{}, ctx context.Context
 		FullMethod: ChatService_GetMessageHistory_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).GetMessageHistory(ctx, req.(*GetHistoryReq))
+		return srv.(ChatServiceServer).GetMessageHistory(ctx, req.(*GetMessageHistoryRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_MarkMessagesRead_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MarkReadReq)
+	in := new(MarkMessagesReadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -216,13 +447,49 @@ func _ChatService_MarkMessagesRead_Handler(srv interface{}, ctx context.Context,
 		FullMethod: ChatService_MarkMessagesRead_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).MarkMessagesRead(ctx, req.(*MarkReadReq))
+		return srv.(ChatServiceServer).MarkMessagesRead(ctx, req.(*MarkMessagesReadRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_WithdrawMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WithdrawMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).WithdrawMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_WithdrawMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).WithdrawMessage(ctx, req.(*WithdrawMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_EditMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EditMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).EditMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_EditMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).EditMessage(ctx, req.(*EditMessageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_CreateGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateGroupReq)
+	in := new(CreateGroupRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -234,13 +501,139 @@ func _ChatService_CreateGroup_Handler(srv interface{}, ctx context.Context, dec 
 		FullMethod: ChatService_CreateGroup_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).CreateGroup(ctx, req.(*CreateGroupReq))
+		return srv.(ChatServiceServer).CreateGroup(ctx, req.(*CreateGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_InviteGroupMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InviteGroupMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).InviteGroupMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_InviteGroupMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).InviteGroupMember(ctx, req.(*InviteGroupMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_KickGroupMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(KickGroupMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).KickGroupMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_KickGroupMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).KickGroupMember(ctx, req.(*KickGroupMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_MuteGroupMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MuteGroupMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).MuteGroupMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_MuteGroupMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).MuteGroupMember(ctx, req.(*MuteGroupMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_TransferGroupOwner_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransferGroupOwnerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).TransferGroupOwner(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_TransferGroupOwner_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).TransferGroupOwner(ctx, req.(*TransferGroupOwnerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_UpdateGroupAnnouncement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateGroupAnnouncementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).UpdateGroupAnnouncement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_UpdateGroupAnnouncement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).UpdateGroupAnnouncement(ctx, req.(*UpdateGroupAnnouncementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_SetGroupAdmin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetGroupAdminRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SetGroupAdmin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SetGroupAdmin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SetGroupAdmin(ctx, req.(*SetGroupAdminRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_GetGroupMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGroupMembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetGroupMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetGroupMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetGroupMembers(ctx, req.(*GetGroupMembersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_JoinGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupMemberReq)
+	in := new(JoinGroupRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -252,13 +645,13 @@ func _ChatService_JoinGroup_Handler(srv interface{}, ctx context.Context, dec fu
 		FullMethod: ChatService_JoinGroup_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).JoinGroup(ctx, req.(*GroupMemberReq))
+		return srv.(ChatServiceServer).JoinGroup(ctx, req.(*JoinGroupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _ChatService_LeaveGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GroupMemberReq)
+	in := new(LeaveGroupRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -270,7 +663,25 @@ func _ChatService_LeaveGroup_Handler(srv interface{}, ctx context.Context, dec f
 		FullMethod: ChatService_LeaveGroup_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChatServiceServer).LeaveGroup(ctx, req.(*GroupMemberReq))
+		return srv.(ChatServiceServer).LeaveGroup(ctx, req.(*LeaveGroupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_GetGroup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetGroupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).GetGroup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_GetGroup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).GetGroup(ctx, req.(*GetGroupRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -279,12 +690,16 @@ func _ChatService_LeaveGroup_Handler(srv interface{}, ctx context.Context, dec f
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ChatService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "chat.ChatService",
+	ServiceName: "messaging.chat.ChatService",
 	HandlerType: (*ChatServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "SendMessage",
 			Handler:    _ChatService_SendMessage_Handler,
+		},
+		{
+			MethodName: "SearchMessages",
+			Handler:    _ChatService_SearchMessages_Handler,
 		},
 		{
 			MethodName: "GetMessageHistory",
@@ -295,8 +710,44 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _ChatService_MarkMessagesRead_Handler,
 		},
 		{
+			MethodName: "WithdrawMessage",
+			Handler:    _ChatService_WithdrawMessage_Handler,
+		},
+		{
+			MethodName: "EditMessage",
+			Handler:    _ChatService_EditMessage_Handler,
+		},
+		{
 			MethodName: "CreateGroup",
 			Handler:    _ChatService_CreateGroup_Handler,
+		},
+		{
+			MethodName: "InviteGroupMember",
+			Handler:    _ChatService_InviteGroupMember_Handler,
+		},
+		{
+			MethodName: "KickGroupMember",
+			Handler:    _ChatService_KickGroupMember_Handler,
+		},
+		{
+			MethodName: "MuteGroupMember",
+			Handler:    _ChatService_MuteGroupMember_Handler,
+		},
+		{
+			MethodName: "TransferGroupOwner",
+			Handler:    _ChatService_TransferGroupOwner_Handler,
+		},
+		{
+			MethodName: "UpdateGroupAnnouncement",
+			Handler:    _ChatService_UpdateGroupAnnouncement_Handler,
+		},
+		{
+			MethodName: "SetGroupAdmin",
+			Handler:    _ChatService_SetGroupAdmin_Handler,
+		},
+		{
+			MethodName: "GetGroupMembers",
+			Handler:    _ChatService_GetGroupMembers_Handler,
 		},
 		{
 			MethodName: "JoinGroup",
@@ -305,6 +756,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LeaveGroup",
 			Handler:    _ChatService_LeaveGroup_Handler,
+		},
+		{
+			MethodName: "GetGroup",
+			Handler:    _ChatService_GetGroup_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

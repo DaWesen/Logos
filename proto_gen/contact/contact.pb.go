@@ -7,9 +7,9 @@
 package contact
 
 import (
-	common "Logos/proto_gen/common"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -22,14 +22,69 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// 好友请求状态
+type FriendRequestStatus int32
+
+const (
+	FriendRequestStatus_FRIEND_REQUEST_STATUS_UNSPECIFIED FriendRequestStatus = 0
+	FriendRequestStatus_FRIEND_REQUEST_STATUS_PENDING     FriendRequestStatus = 1
+	FriendRequestStatus_FRIEND_REQUEST_STATUS_ACCEPTED    FriendRequestStatus = 2
+	FriendRequestStatus_FRIEND_REQUEST_STATUS_REJECTED    FriendRequestStatus = 3
+)
+
+// Enum value maps for FriendRequestStatus.
+var (
+	FriendRequestStatus_name = map[int32]string{
+		0: "FRIEND_REQUEST_STATUS_UNSPECIFIED",
+		1: "FRIEND_REQUEST_STATUS_PENDING",
+		2: "FRIEND_REQUEST_STATUS_ACCEPTED",
+		3: "FRIEND_REQUEST_STATUS_REJECTED",
+	}
+	FriendRequestStatus_value = map[string]int32{
+		"FRIEND_REQUEST_STATUS_UNSPECIFIED": 0,
+		"FRIEND_REQUEST_STATUS_PENDING":     1,
+		"FRIEND_REQUEST_STATUS_ACCEPTED":    2,
+		"FRIEND_REQUEST_STATUS_REJECTED":    3,
+	}
+)
+
+func (x FriendRequestStatus) Enum() *FriendRequestStatus {
+	p := new(FriendRequestStatus)
+	*p = x
+	return p
+}
+
+func (x FriendRequestStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FriendRequestStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_messaging_contact_proto_enumTypes[0].Descriptor()
+}
+
+func (FriendRequestStatus) Type() protoreflect.EnumType {
+	return &file_messaging_contact_proto_enumTypes[0]
+}
+
+func (x FriendRequestStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FriendRequestStatus.Descriptor instead.
+func (FriendRequestStatus) EnumDescriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{0}
+}
+
+// 好友关系
 type Friendship struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	FriendId      int64                  `protobuf:"varint,3,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
-	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
-	Remark        *string                `protobuf:"bytes,5,opt,name=remark,proto3,oneof" json:"remark,omitempty"`
-	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	FriendId      string                 `protobuf:"bytes,3,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	Remark        string                 `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
+	GroupId       string                 `protobuf:"bytes,5,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -64,71 +119,82 @@ func (*Friendship) Descriptor() ([]byte, []int) {
 	return file_messaging_contact_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *Friendship) GetId() int64 {
+func (x *Friendship) GetId() string {
 	if x != nil {
 		return x.Id
 	}
-	return 0
+	return ""
 }
 
-func (x *Friendship) GetUserId() int64 {
+func (x *Friendship) GetUserId() string {
 	if x != nil {
 		return x.UserId
 	}
-	return 0
+	return ""
 }
 
-func (x *Friendship) GetFriendId() int64 {
+func (x *Friendship) GetFriendId() string {
 	if x != nil {
 		return x.FriendId
-	}
-	return 0
-}
-
-func (x *Friendship) GetStatus() string {
-	if x != nil {
-		return x.Status
 	}
 	return ""
 }
 
 func (x *Friendship) GetRemark() string {
-	if x != nil && x.Remark != nil {
-		return *x.Remark
+	if x != nil {
+		return x.Remark
 	}
 	return ""
 }
 
-func (x *Friendship) GetCreatedAt() int64 {
+func (x *Friendship) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *Friendship) GetCreatedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.CreatedAt
 	}
-	return 0
+	return nil
 }
 
-type AddFriendReq struct {
+func (x *Friendship) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 好友分组
+type FriendGroup struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	FriendId      int64                  `protobuf:"varint,2,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
-	Message       *string                `protobuf:"bytes,3,opt,name=message,proto3,oneof" json:"message,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	SortOrder     int32                  `protobuf:"varint,4,opt,name=sort_order,json=sortOrder,proto3" json:"sort_order,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *AddFriendReq) Reset() {
-	*x = AddFriendReq{}
+func (x *FriendGroup) Reset() {
+	*x = FriendGroup{}
 	mi := &file_messaging_contact_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *AddFriendReq) String() string {
+func (x *FriendGroup) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*AddFriendReq) ProtoMessage() {}
+func (*FriendGroup) ProtoMessage() {}
 
-func (x *AddFriendReq) ProtoReflect() protoreflect.Message {
+func (x *FriendGroup) ProtoReflect() protoreflect.Message {
 	mi := &file_messaging_contact_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -140,158 +206,206 @@ func (x *AddFriendReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use AddFriendReq.ProtoReflect.Descriptor instead.
-func (*AddFriendReq) Descriptor() ([]byte, []int) {
+// Deprecated: Use FriendGroup.ProtoReflect.Descriptor instead.
+func (*FriendGroup) Descriptor() ([]byte, []int) {
 	return file_messaging_contact_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *AddFriendReq) GetUserId() int64 {
+func (x *FriendGroup) GetId() string {
 	if x != nil {
-		return x.UserId
-	}
-	return 0
-}
-
-func (x *AddFriendReq) GetFriendId() int64 {
-	if x != nil {
-		return x.FriendId
-	}
-	return 0
-}
-
-func (x *AddFriendReq) GetMessage() string {
-	if x != nil && x.Message != nil {
-		return *x.Message
+		return x.Id
 	}
 	return ""
 }
 
-type AddFriendResp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
-	Friendship    *Friendship            `protobuf:"bytes,2,opt,name=friendship,proto3" json:"friendship,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AddFriendResp) Reset() {
-	*x = AddFriendResp{}
-	mi := &file_messaging_contact_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AddFriendResp) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AddFriendResp) ProtoMessage() {}
-
-func (x *AddFriendResp) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_contact_proto_msgTypes[2]
+func (x *FriendGroup) GetUserId() string {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.UserId
 	}
-	return mi.MessageOf(x)
+	return ""
 }
 
-// Deprecated: Use AddFriendResp.ProtoReflect.Descriptor instead.
-func (*AddFriendResp) Descriptor() ([]byte, []int) {
-	return file_messaging_contact_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *AddFriendResp) GetBaseResp() *common.BaseResp {
+func (x *FriendGroup) GetName() string {
 	if x != nil {
-		return x.BaseResp
+		return x.Name
 	}
-	return nil
+	return ""
 }
 
-func (x *AddFriendResp) GetFriendship() *Friendship {
+func (x *FriendGroup) GetSortOrder() int32 {
 	if x != nil {
-		return x.Friendship
-	}
-	return nil
-}
-
-type HandleFriendReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FriendshipId  int64                  `protobuf:"varint,1,opt,name=friendship_id,json=friendshipId,proto3" json:"friendship_id,omitempty"`
-	Accept        bool                   `protobuf:"varint,2,opt,name=accept,proto3" json:"accept,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *HandleFriendReq) Reset() {
-	*x = HandleFriendReq{}
-	mi := &file_messaging_contact_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *HandleFriendReq) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*HandleFriendReq) ProtoMessage() {}
-
-func (x *HandleFriendReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_contact_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use HandleFriendReq.ProtoReflect.Descriptor instead.
-func (*HandleFriendReq) Descriptor() ([]byte, []int) {
-	return file_messaging_contact_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *HandleFriendReq) GetFriendshipId() int64 {
-	if x != nil {
-		return x.FriendshipId
+		return x.SortOrder
 	}
 	return 0
 }
 
-func (x *HandleFriendReq) GetAccept() bool {
+func (x *FriendGroup) GetCreatedAt() *timestamppb.Timestamp {
 	if x != nil {
-		return x.Accept
+		return x.CreatedAt
 	}
-	return false
+	return nil
 }
 
-type FriendListResp struct {
+func (x *FriendGroup) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 黑名单记录
+type BlacklistRecord struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
-	Friends       []*common.User         `protobuf:"bytes,2,rep,name=friends,proto3" json:"friends,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BlockedUserId string                 `protobuf:"bytes,3,opt,name=blocked_user_id,json=blockedUserId,proto3" json:"blocked_user_id,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FriendListResp) Reset() {
-	*x = FriendListResp{}
+func (x *BlacklistRecord) Reset() {
+	*x = BlacklistRecord{}
+	mi := &file_messaging_contact_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlacklistRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlacklistRecord) ProtoMessage() {}
+
+func (x *BlacklistRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlacklistRecord.ProtoReflect.Descriptor instead.
+func (*BlacklistRecord) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *BlacklistRecord) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BlacklistRecord) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *BlacklistRecord) GetBlockedUserId() string {
+	if x != nil {
+		return x.BlockedUserId
+	}
+	return ""
+}
+
+func (x *BlacklistRecord) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+// 添加好友请求
+type AddFriendRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Remark        string                 `protobuf:"bytes,2,opt,name=remark,proto3" json:"remark,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddFriendRequest) Reset() {
+	*x = AddFriendRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddFriendRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddFriendRequest) ProtoMessage() {}
+
+func (x *AddFriendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddFriendRequest.ProtoReflect.Descriptor instead.
+func (*AddFriendRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *AddFriendRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *AddFriendRequest) GetRemark() string {
+	if x != nil {
+		return x.Remark
+	}
+	return ""
+}
+
+func (x *AddFriendRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 添加好友响应
+type AddFriendResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddFriendResponse) Reset() {
+	*x = AddFriendResponse{}
 	mi := &file_messaging_contact_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FriendListResp) String() string {
+func (x *AddFriendResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FriendListResp) ProtoMessage() {}
+func (*AddFriendResponse) ProtoMessage() {}
 
-func (x *FriendListResp) ProtoReflect() protoreflect.Message {
+func (x *AddFriendResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_messaging_contact_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -303,48 +417,712 @@ func (x *FriendListResp) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FriendListResp.ProtoReflect.Descriptor instead.
-func (*FriendListResp) Descriptor() ([]byte, []int) {
+// Deprecated: Use AddFriendResponse.ProtoReflect.Descriptor instead.
+func (*AddFriendResponse) Descriptor() ([]byte, []int) {
 	return file_messaging_contact_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *FriendListResp) GetBaseResp() *common.BaseResp {
+func (x *AddFriendResponse) GetCode() int32 {
 	if x != nil {
-		return x.BaseResp
+		return x.Code
+	}
+	return 0
+}
+
+func (x *AddFriendResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 处理好友请求请求
+type HandleFriendRequestRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	Status        FriendRequestStatus    `protobuf:"varint,2,opt,name=status,proto3,enum=messaging.contact.FriendRequestStatus" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HandleFriendRequestRequest) Reset() {
+	*x = HandleFriendRequestRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HandleFriendRequestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HandleFriendRequestRequest) ProtoMessage() {}
+
+func (x *HandleFriendRequestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HandleFriendRequestRequest.ProtoReflect.Descriptor instead.
+func (*HandleFriendRequestRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *HandleFriendRequestRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *HandleFriendRequestRequest) GetStatus() FriendRequestStatus {
+	if x != nil {
+		return x.Status
+	}
+	return FriendRequestStatus_FRIEND_REQUEST_STATUS_UNSPECIFIED
+}
+
+// 处理好友请求响应
+type HandleFriendRequestResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HandleFriendRequestResponse) Reset() {
+	*x = HandleFriendRequestResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HandleFriendRequestResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HandleFriendRequestResponse) ProtoMessage() {}
+
+func (x *HandleFriendRequestResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HandleFriendRequestResponse.ProtoReflect.Descriptor instead.
+func (*HandleFriendRequestResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *HandleFriendRequestResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *HandleFriendRequestResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取好友请求列表请求
+type GetFriendRequestsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Page          int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendRequestsRequest) Reset() {
+	*x = GetFriendRequestsRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendRequestsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendRequestsRequest) ProtoMessage() {}
+
+func (x *GetFriendRequestsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendRequestsRequest.ProtoReflect.Descriptor instead.
+func (*GetFriendRequestsRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GetFriendRequestsRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *GetFriendRequestsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取好友请求列表响应
+type GetFriendRequestsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Requests      []*FriendRequest       `protobuf:"bytes,3,rep,name=requests,proto3" json:"requests,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendRequestsResponse) Reset() {
+	*x = GetFriendRequestsResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendRequestsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendRequestsResponse) ProtoMessage() {}
+
+func (x *GetFriendRequestsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendRequestsResponse.ProtoReflect.Descriptor instead.
+func (*GetFriendRequestsResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetFriendRequestsResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetFriendRequestsResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetFriendRequestsResponse) GetRequests() []*FriendRequest {
+	if x != nil {
+		return x.Requests
 	}
 	return nil
 }
 
-func (x *FriendListResp) GetFriends() []*common.User {
+func (x *GetFriendRequestsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// 好友请求
+type FriendRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	FromUserId    string                 `protobuf:"bytes,2,opt,name=from_user_id,json=fromUserId,proto3" json:"from_user_id,omitempty"`
+	ToUserId      string                 `protobuf:"bytes,3,opt,name=to_user_id,json=toUserId,proto3" json:"to_user_id,omitempty"`
+	Remark        string                 `protobuf:"bytes,4,opt,name=remark,proto3" json:"remark,omitempty"`
+	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	Status        FriendRequestStatus    `protobuf:"varint,6,opt,name=status,proto3,enum=messaging.contact.FriendRequestStatus" json:"status,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FriendRequest) Reset() {
+	*x = FriendRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FriendRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FriendRequest) ProtoMessage() {}
+
+func (x *FriendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FriendRequest.ProtoReflect.Descriptor instead.
+func (*FriendRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *FriendRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FriendRequest) GetFromUserId() string {
+	if x != nil {
+		return x.FromUserId
+	}
+	return ""
+}
+
+func (x *FriendRequest) GetToUserId() string {
+	if x != nil {
+		return x.ToUserId
+	}
+	return ""
+}
+
+func (x *FriendRequest) GetRemark() string {
+	if x != nil {
+		return x.Remark
+	}
+	return ""
+}
+
+func (x *FriendRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *FriendRequest) GetStatus() FriendRequestStatus {
+	if x != nil {
+		return x.Status
+	}
+	return FriendRequestStatus_FRIEND_REQUEST_STATUS_UNSPECIFIED
+}
+
+func (x *FriendRequest) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *FriendRequest) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 删除好友请求
+type DeleteFriendRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FriendId      string                 `protobuf:"bytes,1,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFriendRequest) Reset() {
+	*x = DeleteFriendRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFriendRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFriendRequest) ProtoMessage() {}
+
+func (x *DeleteFriendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFriendRequest.ProtoReflect.Descriptor instead.
+func (*DeleteFriendRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DeleteFriendRequest) GetFriendId() string {
+	if x != nil {
+		return x.FriendId
+	}
+	return ""
+}
+
+// 删除好友响应
+type DeleteFriendResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFriendResponse) Reset() {
+	*x = DeleteFriendResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFriendResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFriendResponse) ProtoMessage() {}
+
+func (x *DeleteFriendResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFriendResponse.ProtoReflect.Descriptor instead.
+func (*DeleteFriendResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DeleteFriendResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeleteFriendResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 更新好友备注请求
+type UpdateFriendRemarkRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FriendId      string                 `protobuf:"bytes,1,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	Remark        string                 `protobuf:"bytes,2,opt,name=remark,proto3" json:"remark,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFriendRemarkRequest) Reset() {
+	*x = UpdateFriendRemarkRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFriendRemarkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFriendRemarkRequest) ProtoMessage() {}
+
+func (x *UpdateFriendRemarkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFriendRemarkRequest.ProtoReflect.Descriptor instead.
+func (*UpdateFriendRemarkRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *UpdateFriendRemarkRequest) GetFriendId() string {
+	if x != nil {
+		return x.FriendId
+	}
+	return ""
+}
+
+func (x *UpdateFriendRemarkRequest) GetRemark() string {
+	if x != nil {
+		return x.Remark
+	}
+	return ""
+}
+
+// 更新好友备注响应
+type UpdateFriendRemarkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFriendRemarkResponse) Reset() {
+	*x = UpdateFriendRemarkResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFriendRemarkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFriendRemarkResponse) ProtoMessage() {}
+
+func (x *UpdateFriendRemarkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFriendRemarkResponse.ProtoReflect.Descriptor instead.
+func (*UpdateFriendRemarkResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateFriendRemarkResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UpdateFriendRemarkResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取好友列表请求
+type GetFriendListRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       string                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	Page          int32                  `protobuf:"varint,2,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendListRequest) Reset() {
+	*x = GetFriendListRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendListRequest) ProtoMessage() {}
+
+func (x *GetFriendListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendListRequest.ProtoReflect.Descriptor instead.
+func (*GetFriendListRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *GetFriendListRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *GetFriendListRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *GetFriendListRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取好友列表响应
+type GetFriendListResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Friends       []*Friendship          `protobuf:"bytes,3,rep,name=friends,proto3" json:"friends,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendListResponse) Reset() {
+	*x = GetFriendListResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendListResponse) ProtoMessage() {}
+
+func (x *GetFriendListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendListResponse.ProtoReflect.Descriptor instead.
+func (*GetFriendListResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetFriendListResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetFriendListResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetFriendListResponse) GetFriends() []*Friendship {
 	if x != nil {
 		return x.Friends
 	}
 	return nil
 }
 
-type RemoveFriendReq struct {
+func (x *GetFriendListResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// 创建好友分组请求
+type CreateFriendGroupRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	FriendId      int64                  `protobuf:"varint,2,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	SortOrder     int32                  `protobuf:"varint,2,opt,name=sort_order,json=sortOrder,proto3" json:"sort_order,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *RemoveFriendReq) Reset() {
-	*x = RemoveFriendReq{}
-	mi := &file_messaging_contact_proto_msgTypes[5]
+func (x *CreateFriendGroupRequest) Reset() {
+	*x = CreateFriendGroupRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *RemoveFriendReq) String() string {
+func (x *CreateFriendGroupRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*RemoveFriendReq) ProtoMessage() {}
+func (*CreateFriendGroupRequest) ProtoMessage() {}
 
-func (x *RemoveFriendReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_contact_proto_msgTypes[5]
+func (x *CreateFriendGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -355,47 +1133,473 @@ func (x *RemoveFriendReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use RemoveFriendReq.ProtoReflect.Descriptor instead.
-func (*RemoveFriendReq) Descriptor() ([]byte, []int) {
-	return file_messaging_contact_proto_rawDescGZIP(), []int{5}
+// Deprecated: Use CreateFriendGroupRequest.ProtoReflect.Descriptor instead.
+func (*CreateFriendGroupRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{16}
 }
 
-func (x *RemoveFriendReq) GetUserId() int64 {
+func (x *CreateFriendGroupRequest) GetName() string {
 	if x != nil {
-		return x.UserId
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateFriendGroupRequest) GetSortOrder() int32 {
+	if x != nil {
+		return x.SortOrder
 	}
 	return 0
 }
 
-func (x *RemoveFriendReq) GetFriendId() int64 {
+// 创建好友分组响应
+type CreateFriendGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *FriendGroup           `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateFriendGroupResponse) Reset() {
+	*x = CreateFriendGroupResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateFriendGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateFriendGroupResponse) ProtoMessage() {}
+
+func (x *CreateFriendGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateFriendGroupResponse.ProtoReflect.Descriptor instead.
+func (*CreateFriendGroupResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CreateFriendGroupResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreateFriendGroupResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CreateFriendGroupResponse) GetData() *FriendGroup {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 删除好友分组请求
+type DeleteFriendGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       string                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFriendGroupRequest) Reset() {
+	*x = DeleteFriendGroupRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFriendGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFriendGroupRequest) ProtoMessage() {}
+
+func (x *DeleteFriendGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFriendGroupRequest.ProtoReflect.Descriptor instead.
+func (*DeleteFriendGroupRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *DeleteFriendGroupRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+// 删除好友分组响应
+type DeleteFriendGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFriendGroupResponse) Reset() {
+	*x = DeleteFriendGroupResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFriendGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFriendGroupResponse) ProtoMessage() {}
+
+func (x *DeleteFriendGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFriendGroupResponse.ProtoReflect.Descriptor instead.
+func (*DeleteFriendGroupResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *DeleteFriendGroupResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeleteFriendGroupResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 更新好友分组请求
+type UpdateFriendGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupId       string                 `protobuf:"bytes,1,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	SortOrder     int32                  `protobuf:"varint,3,opt,name=sort_order,json=sortOrder,proto3" json:"sort_order,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFriendGroupRequest) Reset() {
+	*x = UpdateFriendGroupRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFriendGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFriendGroupRequest) ProtoMessage() {}
+
+func (x *UpdateFriendGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFriendGroupRequest.ProtoReflect.Descriptor instead.
+func (*UpdateFriendGroupRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *UpdateFriendGroupRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+func (x *UpdateFriendGroupRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateFriendGroupRequest) GetSortOrder() int32 {
+	if x != nil {
+		return x.SortOrder
+	}
+	return 0
+}
+
+// 更新好友分组响应
+type UpdateFriendGroupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateFriendGroupResponse) Reset() {
+	*x = UpdateFriendGroupResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateFriendGroupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateFriendGroupResponse) ProtoMessage() {}
+
+func (x *UpdateFriendGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateFriendGroupResponse.ProtoReflect.Descriptor instead.
+func (*UpdateFriendGroupResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *UpdateFriendGroupResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UpdateFriendGroupResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取好友分组列表请求
+type GetFriendGroupsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendGroupsRequest) Reset() {
+	*x = GetFriendGroupsRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendGroupsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendGroupsRequest) ProtoMessage() {}
+
+func (x *GetFriendGroupsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendGroupsRequest.ProtoReflect.Descriptor instead.
+func (*GetFriendGroupsRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{22}
+}
+
+// 获取好友分组列表响应
+type GetFriendGroupsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Groups        []*FriendGroup         `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFriendGroupsResponse) Reset() {
+	*x = GetFriendGroupsResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFriendGroupsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFriendGroupsResponse) ProtoMessage() {}
+
+func (x *GetFriendGroupsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFriendGroupsResponse.ProtoReflect.Descriptor instead.
+func (*GetFriendGroupsResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *GetFriendGroupsResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetFriendGroupsResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetFriendGroupsResponse) GetGroups() []*FriendGroup {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+// 移动好友到分组请求
+type MoveFriendToGroupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FriendId      string                 `protobuf:"bytes,1,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	GroupId       string                 `protobuf:"bytes,2,opt,name=group_id,json=groupId,proto3" json:"group_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MoveFriendToGroupRequest) Reset() {
+	*x = MoveFriendToGroupRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MoveFriendToGroupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MoveFriendToGroupRequest) ProtoMessage() {}
+
+func (x *MoveFriendToGroupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MoveFriendToGroupRequest.ProtoReflect.Descriptor instead.
+func (*MoveFriendToGroupRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *MoveFriendToGroupRequest) GetFriendId() string {
 	if x != nil {
 		return x.FriendId
 	}
-	return 0
+	return ""
 }
 
-type GetByUserIdReq struct {
+func (x *MoveFriendToGroupRequest) GetGroupId() string {
+	if x != nil {
+		return x.GroupId
+	}
+	return ""
+}
+
+// 移动好友到分组响应
+type MoveFriendToGroupResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetByUserIdReq) Reset() {
-	*x = GetByUserIdReq{}
-	mi := &file_messaging_contact_proto_msgTypes[6]
+func (x *MoveFriendToGroupResponse) Reset() {
+	*x = MoveFriendToGroupResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetByUserIdReq) String() string {
+func (x *MoveFriendToGroupResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetByUserIdReq) ProtoMessage() {}
+func (*MoveFriendToGroupResponse) ProtoMessage() {}
 
-func (x *GetByUserIdReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_contact_proto_msgTypes[6]
+func (x *MoveFriendToGroupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -406,41 +1610,48 @@ func (x *GetByUserIdReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetByUserIdReq.ProtoReflect.Descriptor instead.
-func (*GetByUserIdReq) Descriptor() ([]byte, []int) {
-	return file_messaging_contact_proto_rawDescGZIP(), []int{6}
+// Deprecated: Use MoveFriendToGroupResponse.ProtoReflect.Descriptor instead.
+func (*MoveFriendToGroupResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{25}
 }
 
-func (x *GetByUserIdReq) GetUserId() int64 {
+func (x *MoveFriendToGroupResponse) GetCode() int32 {
 	if x != nil {
-		return x.UserId
+		return x.Code
 	}
 	return 0
 }
 
-type BlockUserReq struct {
+func (x *MoveFriendToGroupResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 拉黑用户请求
+type BlockUserRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	TargetId      int64                  `protobuf:"varint,2,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *BlockUserReq) Reset() {
-	*x = BlockUserReq{}
-	mi := &file_messaging_contact_proto_msgTypes[7]
+func (x *BlockUserRequest) Reset() {
+	*x = BlockUserRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *BlockUserReq) String() string {
+func (x *BlockUserRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*BlockUserReq) ProtoMessage() {}
+func (*BlockUserRequest) ProtoMessage() {}
 
-func (x *BlockUserReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_contact_proto_msgTypes[7]
+func (x *BlockUserRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -451,21 +1662,287 @@ func (x *BlockUserReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use BlockUserReq.ProtoReflect.Descriptor instead.
-func (*BlockUserReq) Descriptor() ([]byte, []int) {
-	return file_messaging_contact_proto_rawDescGZIP(), []int{7}
+// Deprecated: Use BlockUserRequest.ProtoReflect.Descriptor instead.
+func (*BlockUserRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{26}
 }
 
-func (x *BlockUserReq) GetUserId() int64 {
+func (x *BlockUserRequest) GetUserId() string {
 	if x != nil {
 		return x.UserId
+	}
+	return ""
+}
+
+// 拉黑用户响应
+type BlockUserResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BlockUserResponse) Reset() {
+	*x = BlockUserResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BlockUserResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BlockUserResponse) ProtoMessage() {}
+
+func (x *BlockUserResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BlockUserResponse.ProtoReflect.Descriptor instead.
+func (*BlockUserResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *BlockUserResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
 	}
 	return 0
 }
 
-func (x *BlockUserReq) GetTargetId() int64 {
+func (x *BlockUserResponse) GetMessage() string {
 	if x != nil {
-		return x.TargetId
+		return x.Message
+	}
+	return ""
+}
+
+// 取消拉黑请求
+type UnblockUserRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnblockUserRequest) Reset() {
+	*x = UnblockUserRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnblockUserRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnblockUserRequest) ProtoMessage() {}
+
+func (x *UnblockUserRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnblockUserRequest.ProtoReflect.Descriptor instead.
+func (*UnblockUserRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *UnblockUserRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+// 取消拉黑响应
+type UnblockUserResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnblockUserResponse) Reset() {
+	*x = UnblockUserResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnblockUserResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnblockUserResponse) ProtoMessage() {}
+
+func (x *UnblockUserResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnblockUserResponse.ProtoReflect.Descriptor instead.
+func (*UnblockUserResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *UnblockUserResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UnblockUserResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取黑名单请求
+type GetBlacklistRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Page          int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlacklistRequest) Reset() {
+	*x = GetBlacklistRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlacklistRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlacklistRequest) ProtoMessage() {}
+
+func (x *GetBlacklistRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlacklistRequest.ProtoReflect.Descriptor instead.
+func (*GetBlacklistRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *GetBlacklistRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *GetBlacklistRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取黑名单响应
+type GetBlacklistResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Records       []*BlacklistRecord     `protobuf:"bytes,3,rep,name=records,proto3" json:"records,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlacklistResponse) Reset() {
+	*x = GetBlacklistResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlacklistResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlacklistResponse) ProtoMessage() {}
+
+func (x *GetBlacklistResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlacklistResponse.ProtoReflect.Descriptor instead.
+func (*GetBlacklistResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *GetBlacklistResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetBlacklistResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetBlacklistResponse) GetRecords() []*BlacklistRecord {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+func (x *GetBlacklistResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
 	}
 	return 0
 }
@@ -474,50 +1951,159 @@ var File_messaging_contact_proto protoreflect.FileDescriptor
 
 const file_messaging_contact_proto_rawDesc = "" +
 	"\n" +
-	"\x17messaging/contact.proto\x12\acontact\x1a\fcommon.proto\"\xb1\x01\n" +
+	"\x17messaging/contact.proto\x12\x11messaging.contact\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfb\x01\n" +
 	"\n" +
 	"Friendship\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x17\n" +
-	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\tfriend_id\x18\x03 \x01(\x03R\bfriendId\x12\x16\n" +
-	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1b\n" +
-	"\x06remark\x18\x05 \x01(\tH\x00R\x06remark\x88\x01\x01\x12\x1d\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x1b\n" +
+	"\tfriend_id\x18\x03 \x01(\tR\bfriendId\x12\x16\n" +
+	"\x06remark\x18\x04 \x01(\tR\x06remark\x12\x19\n" +
+	"\bgroup_id\x18\x05 \x01(\tR\agroupId\x129\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAtB\t\n" +
-	"\a_remark\"o\n" +
-	"\fAddFriendReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\tfriend_id\x18\x02 \x01(\x03R\bfriendId\x12\x1d\n" +
-	"\amessage\x18\x03 \x01(\tH\x00R\amessage\x88\x01\x01B\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"\b_message\"s\n" +
-	"\rAddFriendResp\x12-\n" +
-	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x123\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xdf\x01\n" +
+	"\vFriendGroup\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"friendship\x18\x02 \x01(\v2\x13.contact.FriendshipR\n" +
-	"friendship\"N\n" +
-	"\x0fHandleFriendReq\x12#\n" +
-	"\rfriendship_id\x18\x01 \x01(\x03R\ffriendshipId\x12\x16\n" +
-	"\x06accept\x18\x02 \x01(\bR\x06accept\"g\n" +
-	"\x0eFriendListResp\x12-\n" +
-	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12&\n" +
-	"\afriends\x18\x02 \x03(\v2\f.common.UserR\afriends\"G\n" +
-	"\x0fRemoveFriendReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\tfriend_id\x18\x02 \x01(\x03R\bfriendId\")\n" +
-	"\x0eGetByUserIdReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\"D\n" +
-	"\fBlockUserReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\ttarget_id\x18\x02 \x01(\x03R\btargetId2\xc4\x03\n" +
-	"\x0eContactService\x12:\n" +
-	"\tAddFriend\x12\x15.contact.AddFriendReq\x1a\x16.contact.AddFriendResp\x12A\n" +
-	"\x13HandleFriendRequest\x12\x18.contact.HandleFriendReq\x1a\x10.common.BaseResp\x12:\n" +
-	"\fRemoveFriend\x12\x18.contact.RemoveFriendReq\x1a\x10.common.BaseResp\x12A\n" +
-	"\rGetFriendList\x12\x17.contact.GetByUserIdReq\x1a\x17.contact.FriendListResp\x12F\n" +
-	"\x12GetPendingRequests\x12\x17.contact.GetByUserIdReq\x1a\x17.contact.FriendListResp\x124\n" +
-	"\tBlockUser\x12\x15.contact.BlockUserReq\x1a\x10.common.BaseResp\x126\n" +
-	"\vUnblockUser\x12\x15.contact.BlockUserReq\x1a\x10.common.BaseRespB\x19Z\x17Logos/proto_gen/contactb\x06proto3"
+	"sort_order\x18\x04 \x01(\x05R\tsortOrder\x129\n" +
+	"\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\x9d\x01\n" +
+	"\x0fBlacklistRecord\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12&\n" +
+	"\x0fblocked_user_id\x18\x03 \x01(\tR\rblockedUserId\x129\n" +
+	"\n" +
+	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"]\n" +
+	"\x10AddFriendRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x16\n" +
+	"\x06remark\x18\x02 \x01(\tR\x06remark\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"A\n" +
+	"\x11AddFriendResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"{\n" +
+	"\x1aHandleFriendRequestRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\x12>\n" +
+	"\x06status\x18\x02 \x01(\x0e2&.messaging.contact.FriendRequestStatusR\x06status\"K\n" +
+	"\x1bHandleFriendRequestResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"K\n" +
+	"\x18GetFriendRequestsRequest\x12\x12\n" +
+	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\"\x9d\x01\n" +
+	"\x19GetFriendRequestsResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12<\n" +
+	"\brequests\x18\x03 \x03(\v2 .messaging.contact.FriendRequestR\brequests\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xc7\x02\n" +
+	"\rFriendRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12 \n" +
+	"\ffrom_user_id\x18\x02 \x01(\tR\n" +
+	"fromUserId\x12\x1c\n" +
+	"\n" +
+	"to_user_id\x18\x03 \x01(\tR\btoUserId\x12\x16\n" +
+	"\x06remark\x18\x04 \x01(\tR\x06remark\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12>\n" +
+	"\x06status\x18\x06 \x01(\x0e2&.messaging.contact.FriendRequestStatusR\x06status\x129\n" +
+	"\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"2\n" +
+	"\x13DeleteFriendRequest\x12\x1b\n" +
+	"\tfriend_id\x18\x01 \x01(\tR\bfriendId\"D\n" +
+	"\x14DeleteFriendResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"P\n" +
+	"\x19UpdateFriendRemarkRequest\x12\x1b\n" +
+	"\tfriend_id\x18\x01 \x01(\tR\bfriendId\x12\x16\n" +
+	"\x06remark\x18\x02 \x01(\tR\x06remark\"J\n" +
+	"\x1aUpdateFriendRemarkResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"b\n" +
+	"\x14GetFriendListRequest\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\x12\x12\n" +
+	"\x04page\x18\x02 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\"\x94\x01\n" +
+	"\x15GetFriendListResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x127\n" +
+	"\afriends\x18\x03 \x03(\v2\x1d.messaging.contact.FriendshipR\afriends\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"M\n" +
+	"\x18CreateFriendGroupRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"sort_order\x18\x02 \x01(\x05R\tsortOrder\"}\n" +
+	"\x19CreateFriendGroupResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x122\n" +
+	"\x04data\x18\x03 \x01(\v2\x1e.messaging.contact.FriendGroupR\x04data\"5\n" +
+	"\x18DeleteFriendGroupRequest\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\"I\n" +
+	"\x19DeleteFriendGroupResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"h\n" +
+	"\x18UpdateFriendGroupRequest\x12\x19\n" +
+	"\bgroup_id\x18\x01 \x01(\tR\agroupId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"sort_order\x18\x03 \x01(\x05R\tsortOrder\"I\n" +
+	"\x19UpdateFriendGroupResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x18\n" +
+	"\x16GetFriendGroupsRequest\"\x7f\n" +
+	"\x17GetFriendGroupsResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x126\n" +
+	"\x06groups\x18\x03 \x03(\v2\x1e.messaging.contact.FriendGroupR\x06groups\"R\n" +
+	"\x18MoveFriendToGroupRequest\x12\x1b\n" +
+	"\tfriend_id\x18\x01 \x01(\tR\bfriendId\x12\x19\n" +
+	"\bgroup_id\x18\x02 \x01(\tR\agroupId\"I\n" +
+	"\x19MoveFriendToGroupResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"+\n" +
+	"\x10BlockUserRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\"A\n" +
+	"\x11BlockUserResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"-\n" +
+	"\x12UnblockUserRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\"C\n" +
+	"\x13UnblockUserResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"F\n" +
+	"\x13GetBlacklistRequest\x12\x12\n" +
+	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\"\x98\x01\n" +
+	"\x14GetBlacklistResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12<\n" +
+	"\arecords\x18\x03 \x03(\v2\".messaging.contact.BlacklistRecordR\arecords\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total*\xa7\x01\n" +
+	"\x13FriendRequestStatus\x12%\n" +
+	"!FRIEND_REQUEST_STATUS_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dFRIEND_REQUEST_STATUS_PENDING\x10\x01\x12\"\n" +
+	"\x1eFRIEND_REQUEST_STATUS_ACCEPTED\x10\x02\x12\"\n" +
+	"\x1eFRIEND_REQUEST_STATUS_REJECTED\x10\x032\xc7\v\n" +
+	"\x0eContactService\x12V\n" +
+	"\tAddFriend\x12#.messaging.contact.AddFriendRequest\x1a$.messaging.contact.AddFriendResponse\x12t\n" +
+	"\x13HandleFriendRequest\x12-.messaging.contact.HandleFriendRequestRequest\x1a..messaging.contact.HandleFriendRequestResponse\x12n\n" +
+	"\x11GetFriendRequests\x12+.messaging.contact.GetFriendRequestsRequest\x1a,.messaging.contact.GetFriendRequestsResponse\x12_\n" +
+	"\fDeleteFriend\x12&.messaging.contact.DeleteFriendRequest\x1a'.messaging.contact.DeleteFriendResponse\x12q\n" +
+	"\x12UpdateFriendRemark\x12,.messaging.contact.UpdateFriendRemarkRequest\x1a-.messaging.contact.UpdateFriendRemarkResponse\x12b\n" +
+	"\rGetFriendList\x12'.messaging.contact.GetFriendListRequest\x1a(.messaging.contact.GetFriendListResponse\x12n\n" +
+	"\x11CreateFriendGroup\x12+.messaging.contact.CreateFriendGroupRequest\x1a,.messaging.contact.CreateFriendGroupResponse\x12n\n" +
+	"\x11DeleteFriendGroup\x12+.messaging.contact.DeleteFriendGroupRequest\x1a,.messaging.contact.DeleteFriendGroupResponse\x12n\n" +
+	"\x11UpdateFriendGroup\x12+.messaging.contact.UpdateFriendGroupRequest\x1a,.messaging.contact.UpdateFriendGroupResponse\x12h\n" +
+	"\x0fGetFriendGroups\x12).messaging.contact.GetFriendGroupsRequest\x1a*.messaging.contact.GetFriendGroupsResponse\x12n\n" +
+	"\x11MoveFriendToGroup\x12+.messaging.contact.MoveFriendToGroupRequest\x1a,.messaging.contact.MoveFriendToGroupResponse\x12V\n" +
+	"\tBlockUser\x12#.messaging.contact.BlockUserRequest\x1a$.messaging.contact.BlockUserResponse\x12\\\n" +
+	"\vUnblockUser\x12%.messaging.contact.UnblockUserRequest\x1a&.messaging.contact.UnblockUserResponse\x12_\n" +
+	"\fGetBlacklist\x12&.messaging.contact.GetBlacklistRequest\x1a'.messaging.contact.GetBlacklistResponseB\x19Z\x17Logos/proto_gen/contactb\x06proto3"
 
 var (
 	file_messaging_contact_proto_rawDescOnce sync.Once
@@ -531,43 +2117,92 @@ func file_messaging_contact_proto_rawDescGZIP() []byte {
 	return file_messaging_contact_proto_rawDescData
 }
 
-var file_messaging_contact_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_messaging_contact_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_messaging_contact_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_messaging_contact_proto_goTypes = []any{
-	(*Friendship)(nil),      // 0: contact.Friendship
-	(*AddFriendReq)(nil),    // 1: contact.AddFriendReq
-	(*AddFriendResp)(nil),   // 2: contact.AddFriendResp
-	(*HandleFriendReq)(nil), // 3: contact.HandleFriendReq
-	(*FriendListResp)(nil),  // 4: contact.FriendListResp
-	(*RemoveFriendReq)(nil), // 5: contact.RemoveFriendReq
-	(*GetByUserIdReq)(nil),  // 6: contact.GetByUserIdReq
-	(*BlockUserReq)(nil),    // 7: contact.BlockUserReq
-	(*common.BaseResp)(nil), // 8: common.BaseResp
-	(*common.User)(nil),     // 9: common.User
+	(FriendRequestStatus)(0),            // 0: messaging.contact.FriendRequestStatus
+	(*Friendship)(nil),                  // 1: messaging.contact.Friendship
+	(*FriendGroup)(nil),                 // 2: messaging.contact.FriendGroup
+	(*BlacklistRecord)(nil),             // 3: messaging.contact.BlacklistRecord
+	(*AddFriendRequest)(nil),            // 4: messaging.contact.AddFriendRequest
+	(*AddFriendResponse)(nil),           // 5: messaging.contact.AddFriendResponse
+	(*HandleFriendRequestRequest)(nil),  // 6: messaging.contact.HandleFriendRequestRequest
+	(*HandleFriendRequestResponse)(nil), // 7: messaging.contact.HandleFriendRequestResponse
+	(*GetFriendRequestsRequest)(nil),    // 8: messaging.contact.GetFriendRequestsRequest
+	(*GetFriendRequestsResponse)(nil),   // 9: messaging.contact.GetFriendRequestsResponse
+	(*FriendRequest)(nil),               // 10: messaging.contact.FriendRequest
+	(*DeleteFriendRequest)(nil),         // 11: messaging.contact.DeleteFriendRequest
+	(*DeleteFriendResponse)(nil),        // 12: messaging.contact.DeleteFriendResponse
+	(*UpdateFriendRemarkRequest)(nil),   // 13: messaging.contact.UpdateFriendRemarkRequest
+	(*UpdateFriendRemarkResponse)(nil),  // 14: messaging.contact.UpdateFriendRemarkResponse
+	(*GetFriendListRequest)(nil),        // 15: messaging.contact.GetFriendListRequest
+	(*GetFriendListResponse)(nil),       // 16: messaging.contact.GetFriendListResponse
+	(*CreateFriendGroupRequest)(nil),    // 17: messaging.contact.CreateFriendGroupRequest
+	(*CreateFriendGroupResponse)(nil),   // 18: messaging.contact.CreateFriendGroupResponse
+	(*DeleteFriendGroupRequest)(nil),    // 19: messaging.contact.DeleteFriendGroupRequest
+	(*DeleteFriendGroupResponse)(nil),   // 20: messaging.contact.DeleteFriendGroupResponse
+	(*UpdateFriendGroupRequest)(nil),    // 21: messaging.contact.UpdateFriendGroupRequest
+	(*UpdateFriendGroupResponse)(nil),   // 22: messaging.contact.UpdateFriendGroupResponse
+	(*GetFriendGroupsRequest)(nil),      // 23: messaging.contact.GetFriendGroupsRequest
+	(*GetFriendGroupsResponse)(nil),     // 24: messaging.contact.GetFriendGroupsResponse
+	(*MoveFriendToGroupRequest)(nil),    // 25: messaging.contact.MoveFriendToGroupRequest
+	(*MoveFriendToGroupResponse)(nil),   // 26: messaging.contact.MoveFriendToGroupResponse
+	(*BlockUserRequest)(nil),            // 27: messaging.contact.BlockUserRequest
+	(*BlockUserResponse)(nil),           // 28: messaging.contact.BlockUserResponse
+	(*UnblockUserRequest)(nil),          // 29: messaging.contact.UnblockUserRequest
+	(*UnblockUserResponse)(nil),         // 30: messaging.contact.UnblockUserResponse
+	(*GetBlacklistRequest)(nil),         // 31: messaging.contact.GetBlacklistRequest
+	(*GetBlacklistResponse)(nil),        // 32: messaging.contact.GetBlacklistResponse
+	(*timestamppb.Timestamp)(nil),       // 33: google.protobuf.Timestamp
 }
 var file_messaging_contact_proto_depIdxs = []int32{
-	8,  // 0: contact.AddFriendResp.base_resp:type_name -> common.BaseResp
-	0,  // 1: contact.AddFriendResp.friendship:type_name -> contact.Friendship
-	8,  // 2: contact.FriendListResp.base_resp:type_name -> common.BaseResp
-	9,  // 3: contact.FriendListResp.friends:type_name -> common.User
-	1,  // 4: contact.ContactService.AddFriend:input_type -> contact.AddFriendReq
-	3,  // 5: contact.ContactService.HandleFriendRequest:input_type -> contact.HandleFriendReq
-	5,  // 6: contact.ContactService.RemoveFriend:input_type -> contact.RemoveFriendReq
-	6,  // 7: contact.ContactService.GetFriendList:input_type -> contact.GetByUserIdReq
-	6,  // 8: contact.ContactService.GetPendingRequests:input_type -> contact.GetByUserIdReq
-	7,  // 9: contact.ContactService.BlockUser:input_type -> contact.BlockUserReq
-	7,  // 10: contact.ContactService.UnblockUser:input_type -> contact.BlockUserReq
-	2,  // 11: contact.ContactService.AddFriend:output_type -> contact.AddFriendResp
-	8,  // 12: contact.ContactService.HandleFriendRequest:output_type -> common.BaseResp
-	8,  // 13: contact.ContactService.RemoveFriend:output_type -> common.BaseResp
-	4,  // 14: contact.ContactService.GetFriendList:output_type -> contact.FriendListResp
-	4,  // 15: contact.ContactService.GetPendingRequests:output_type -> contact.FriendListResp
-	8,  // 16: contact.ContactService.BlockUser:output_type -> common.BaseResp
-	8,  // 17: contact.ContactService.UnblockUser:output_type -> common.BaseResp
-	11, // [11:18] is the sub-list for method output_type
-	4,  // [4:11] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	33, // 0: messaging.contact.Friendship.created_at:type_name -> google.protobuf.Timestamp
+	33, // 1: messaging.contact.Friendship.updated_at:type_name -> google.protobuf.Timestamp
+	33, // 2: messaging.contact.FriendGroup.created_at:type_name -> google.protobuf.Timestamp
+	33, // 3: messaging.contact.FriendGroup.updated_at:type_name -> google.protobuf.Timestamp
+	33, // 4: messaging.contact.BlacklistRecord.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 5: messaging.contact.HandleFriendRequestRequest.status:type_name -> messaging.contact.FriendRequestStatus
+	10, // 6: messaging.contact.GetFriendRequestsResponse.requests:type_name -> messaging.contact.FriendRequest
+	0,  // 7: messaging.contact.FriendRequest.status:type_name -> messaging.contact.FriendRequestStatus
+	33, // 8: messaging.contact.FriendRequest.created_at:type_name -> google.protobuf.Timestamp
+	33, // 9: messaging.contact.FriendRequest.updated_at:type_name -> google.protobuf.Timestamp
+	1,  // 10: messaging.contact.GetFriendListResponse.friends:type_name -> messaging.contact.Friendship
+	2,  // 11: messaging.contact.CreateFriendGroupResponse.data:type_name -> messaging.contact.FriendGroup
+	2,  // 12: messaging.contact.GetFriendGroupsResponse.groups:type_name -> messaging.contact.FriendGroup
+	3,  // 13: messaging.contact.GetBlacklistResponse.records:type_name -> messaging.contact.BlacklistRecord
+	4,  // 14: messaging.contact.ContactService.AddFriend:input_type -> messaging.contact.AddFriendRequest
+	6,  // 15: messaging.contact.ContactService.HandleFriendRequest:input_type -> messaging.contact.HandleFriendRequestRequest
+	8,  // 16: messaging.contact.ContactService.GetFriendRequests:input_type -> messaging.contact.GetFriendRequestsRequest
+	11, // 17: messaging.contact.ContactService.DeleteFriend:input_type -> messaging.contact.DeleteFriendRequest
+	13, // 18: messaging.contact.ContactService.UpdateFriendRemark:input_type -> messaging.contact.UpdateFriendRemarkRequest
+	15, // 19: messaging.contact.ContactService.GetFriendList:input_type -> messaging.contact.GetFriendListRequest
+	17, // 20: messaging.contact.ContactService.CreateFriendGroup:input_type -> messaging.contact.CreateFriendGroupRequest
+	19, // 21: messaging.contact.ContactService.DeleteFriendGroup:input_type -> messaging.contact.DeleteFriendGroupRequest
+	21, // 22: messaging.contact.ContactService.UpdateFriendGroup:input_type -> messaging.contact.UpdateFriendGroupRequest
+	23, // 23: messaging.contact.ContactService.GetFriendGroups:input_type -> messaging.contact.GetFriendGroupsRequest
+	25, // 24: messaging.contact.ContactService.MoveFriendToGroup:input_type -> messaging.contact.MoveFriendToGroupRequest
+	27, // 25: messaging.contact.ContactService.BlockUser:input_type -> messaging.contact.BlockUserRequest
+	29, // 26: messaging.contact.ContactService.UnblockUser:input_type -> messaging.contact.UnblockUserRequest
+	31, // 27: messaging.contact.ContactService.GetBlacklist:input_type -> messaging.contact.GetBlacklistRequest
+	5,  // 28: messaging.contact.ContactService.AddFriend:output_type -> messaging.contact.AddFriendResponse
+	7,  // 29: messaging.contact.ContactService.HandleFriendRequest:output_type -> messaging.contact.HandleFriendRequestResponse
+	9,  // 30: messaging.contact.ContactService.GetFriendRequests:output_type -> messaging.contact.GetFriendRequestsResponse
+	12, // 31: messaging.contact.ContactService.DeleteFriend:output_type -> messaging.contact.DeleteFriendResponse
+	14, // 32: messaging.contact.ContactService.UpdateFriendRemark:output_type -> messaging.contact.UpdateFriendRemarkResponse
+	16, // 33: messaging.contact.ContactService.GetFriendList:output_type -> messaging.contact.GetFriendListResponse
+	18, // 34: messaging.contact.ContactService.CreateFriendGroup:output_type -> messaging.contact.CreateFriendGroupResponse
+	20, // 35: messaging.contact.ContactService.DeleteFriendGroup:output_type -> messaging.contact.DeleteFriendGroupResponse
+	22, // 36: messaging.contact.ContactService.UpdateFriendGroup:output_type -> messaging.contact.UpdateFriendGroupResponse
+	24, // 37: messaging.contact.ContactService.GetFriendGroups:output_type -> messaging.contact.GetFriendGroupsResponse
+	26, // 38: messaging.contact.ContactService.MoveFriendToGroup:output_type -> messaging.contact.MoveFriendToGroupResponse
+	28, // 39: messaging.contact.ContactService.BlockUser:output_type -> messaging.contact.BlockUserResponse
+	30, // 40: messaging.contact.ContactService.UnblockUser:output_type -> messaging.contact.UnblockUserResponse
+	32, // 41: messaging.contact.ContactService.GetBlacklist:output_type -> messaging.contact.GetBlacklistResponse
+	28, // [28:42] is the sub-list for method output_type
+	14, // [14:28] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_messaging_contact_proto_init() }
@@ -575,20 +2210,19 @@ func file_messaging_contact_proto_init() {
 	if File_messaging_contact_proto != nil {
 		return
 	}
-	file_messaging_contact_proto_msgTypes[0].OneofWrappers = []any{}
-	file_messaging_contact_proto_msgTypes[1].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messaging_contact_proto_rawDesc), len(file_messaging_contact_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      1,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_messaging_contact_proto_goTypes,
 		DependencyIndexes: file_messaging_contact_proto_depIdxs,
+		EnumInfos:         file_messaging_contact_proto_enumTypes,
 		MessageInfos:      file_messaging_contact_proto_msgTypes,
 	}.Build()
 	File_messaging_contact_proto = out.File

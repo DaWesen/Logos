@@ -2,10 +2,10 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/knowledge/dao"
-	"Logos/internal/ai/knowledge/handler"
-	"Logos/internal/ai/knowledge/model"
-	"Logos/internal/ai/knowledge/service"
+	"Logos/internal/service/ai/knowledge/dao"
+	"Logos/internal/service/ai/knowledge/handler"
+	"Logos/internal/service/ai/knowledge/model"
+	"Logos/internal/service/ai/knowledge/service"
 	"Logos/pkg/cache"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/es"

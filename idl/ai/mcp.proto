@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package ai.mcp;
+
+option go_package = "Logos/proto_gen/mcp";
+
+import "google/protobuf/timestamp.proto";
+
+// 工具类型
+enum ToolType {
+  TOOL_TYPE_UNSPECIFIED = 0;
+  TOOL_TYPE_WEB_SEARCH = 1;
+  TOOL_TYPE_CODE_EXECUTION = 2;
+  TOOL_TYPE_WEATHER = 3;
+  TOOL_TYPE_FILE_SYSTEM = 4;
+  TOOL_TYPE_CUSTOM = 5;
+}
+
+// 工具
+message Tool {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  ToolType type = 4;
+  map<string, string> config = 5;
+  bool enabled = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// 工具参数
+message ToolParameter {
+  string name = 1;
+  string type = 2;
+  string description = 3;
+  bool required = 4;
+  string default_value = 5;
+}
+
+// 调用工具请求
+message CallToolRequest {
+  string tool_id = 1;
+  string tool_name = 2;
+  map<string, string> parameters = 3;
+}
+
+// 调用工具响应
+message CallToolResponse {
+  int32 code = 1;
+  string message = 2;
+  string result = 3;
+  map<string, string> metadata = 4;
+}
+
+// 注册工具请求
+message RegisterToolRequest {
+  string name = 1;
+  string description = 2;
+  ToolType type = 3;
+  repeated ToolParameter parameters = 4;
+  map<string, string> config = 5;
+}
+
+// 注册工具响应
+message RegisterToolResponse {
+  int32 code = 1;
+  string message = 2;
+  Tool data = 3;
+}
+
+// 获取工具列表请求
+message ListToolsRequest {
+  ToolType type = 1;
+  bool enabled_only = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// 获取工具列表响应
+message ListToolsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Tool tools = 3;
+  int32 total = 4;
+}
+
+// 获取工具详情请求
+message GetToolRequest {
+  string tool_id = 1;
+}
+
+// 获取工具详情响应
+message GetToolResponse {
+  int32 code = 1;
+  string message = 2;
+  Tool data = 3;
+}
+
+// 更新工具请求
+message UpdateToolRequest {
+  string tool_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated ToolParameter parameters = 4;
+  map<string, string> config = 5;
+  bool enabled = 6;
+}
+
+// 更新工具响应
+message UpdateToolResponse {
+  int32 code = 1;
+  string message = 2;
+  Tool data = 3;
+}
+
+// 删除工具请求
+message DeleteToolRequest {
+  string tool_id = 1;
+}
+
+// 删除工具响应
+message DeleteToolResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// MCP 服务
+service MCPService {
+  // 调用工具
+  rpc CallTool(CallToolRequest) returns (CallToolResponse);
+  
+  // 注册工具
+  rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
+  
+  // 获取工具列表
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+  
+  // 获取工具详情
+  rpc GetTool(GetToolRequest) returns (GetToolResponse);
+  
+  // 更新工具
+  rpc UpdateTool(UpdateToolRequest) returns (UpdateToolResponse);
+  
+  // 删除工具
+  rpc DeleteTool(DeleteToolRequest) returns (DeleteToolResponse);
+}

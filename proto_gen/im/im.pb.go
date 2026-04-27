@@ -7,9 +7,10 @@
 package im
 
 import (
-	common "Logos/proto_gen/common"
+	chat "Logos/proto_gen/chat"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -22,141 +23,138 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ConnectReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	DeviceId      string                 `protobuf:"bytes,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
+// 在线状态
+type OnlineStatus int32
 
-func (x *ConnectReq) Reset() {
-	*x = ConnectReq{}
-	mi := &file_messaging_im_proto_msgTypes[0]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
+const (
+	OnlineStatus_ONLINE_STATUS_UNSPECIFIED OnlineStatus = 0
+	OnlineStatus_ONLINE_STATUS_ONLINE      OnlineStatus = 1
+	OnlineStatus_ONLINE_STATUS_OFFLINE     OnlineStatus = 2
+	OnlineStatus_ONLINE_STATUS_AWAY        OnlineStatus = 3
+	OnlineStatus_ONLINE_STATUS_BUSY        OnlineStatus = 4
+)
 
-func (x *ConnectReq) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ConnectReq) ProtoMessage() {}
-
-func (x *ConnectReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_im_proto_msgTypes[0]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+// Enum value maps for OnlineStatus.
+var (
+	OnlineStatus_name = map[int32]string{
+		0: "ONLINE_STATUS_UNSPECIFIED",
+		1: "ONLINE_STATUS_ONLINE",
+		2: "ONLINE_STATUS_OFFLINE",
+		3: "ONLINE_STATUS_AWAY",
+		4: "ONLINE_STATUS_BUSY",
 	}
-	return mi.MessageOf(x)
+	OnlineStatus_value = map[string]int32{
+		"ONLINE_STATUS_UNSPECIFIED": 0,
+		"ONLINE_STATUS_ONLINE":      1,
+		"ONLINE_STATUS_OFFLINE":     2,
+		"ONLINE_STATUS_AWAY":        3,
+		"ONLINE_STATUS_BUSY":        4,
+	}
+)
+
+func (x OnlineStatus) Enum() *OnlineStatus {
+	p := new(OnlineStatus)
+	*p = x
+	return p
 }
 
-// Deprecated: Use ConnectReq.ProtoReflect.Descriptor instead.
-func (*ConnectReq) Descriptor() ([]byte, []int) {
+func (x OnlineStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OnlineStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_messaging_im_proto_enumTypes[0].Descriptor()
+}
+
+func (OnlineStatus) Type() protoreflect.EnumType {
+	return &file_messaging_im_proto_enumTypes[0]
+}
+
+func (x OnlineStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OnlineStatus.Descriptor instead.
+func (OnlineStatus) EnumDescriptor() ([]byte, []int) {
 	return file_messaging_im_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ConnectReq) GetUserId() int64 {
-	if x != nil {
-		return x.UserId
+// 输入状态
+type TypingStatus int32
+
+const (
+	TypingStatus_TYPING_STATUS_UNSPECIFIED TypingStatus = 0
+	TypingStatus_TYPING_STATUS_TYPING      TypingStatus = 1
+	TypingStatus_TYPING_STATUS_NOT_TYPING  TypingStatus = 2
+)
+
+// Enum value maps for TypingStatus.
+var (
+	TypingStatus_name = map[int32]string{
+		0: "TYPING_STATUS_UNSPECIFIED",
+		1: "TYPING_STATUS_TYPING",
+		2: "TYPING_STATUS_NOT_TYPING",
 	}
-	return 0
-}
-
-func (x *ConnectReq) GetDeviceId() string {
-	if x != nil {
-		return x.DeviceId
+	TypingStatus_value = map[string]int32{
+		"TYPING_STATUS_UNSPECIFIED": 0,
+		"TYPING_STATUS_TYPING":      1,
+		"TYPING_STATUS_NOT_TYPING":  2,
 	}
-	return ""
+)
+
+func (x TypingStatus) Enum() *TypingStatus {
+	p := new(TypingStatus)
+	*p = x
+	return p
 }
 
-type OnlineStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Online        bool                   `protobuf:"varint,2,opt,name=online,proto3" json:"online,omitempty"`
-	LastSeen      int64                  `protobuf:"varint,3,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+func (x TypingStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
 }
 
-func (x *OnlineStatus) Reset() {
-	*x = OnlineStatus{}
-	mi := &file_messaging_im_proto_msgTypes[1]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
+func (TypingStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_messaging_im_proto_enumTypes[1].Descriptor()
 }
 
-func (x *OnlineStatus) String() string {
-	return protoimpl.X.MessageStringOf(x)
+func (TypingStatus) Type() protoreflect.EnumType {
+	return &file_messaging_im_proto_enumTypes[1]
 }
 
-func (*OnlineStatus) ProtoMessage() {}
-
-func (x *OnlineStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_im_proto_msgTypes[1]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
+func (x TypingStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
 }
 
-// Deprecated: Use OnlineStatus.ProtoReflect.Descriptor instead.
-func (*OnlineStatus) Descriptor() ([]byte, []int) {
+// Deprecated: Use TypingStatus.Descriptor instead.
+func (TypingStatus) EnumDescriptor() ([]byte, []int) {
 	return file_messaging_im_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *OnlineStatus) GetUserId() int64 {
-	if x != nil {
-		return x.UserId
-	}
-	return 0
-}
-
-func (x *OnlineStatus) GetOnline() bool {
-	if x != nil {
-		return x.Online
-	}
-	return false
-}
-
-func (x *OnlineStatus) GetLastSeen() int64 {
-	if x != nil {
-		return x.LastSeen
-	}
-	return 0
-}
-
-type OnlineStatusResp struct {
+// 实时消息
+type RealtimeMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
-	Statuses      []*OnlineStatus        `protobuf:"bytes,2,rep,name=statuses,proto3" json:"statuses,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"`
+	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *OnlineStatusResp) Reset() {
-	*x = OnlineStatusResp{}
-	mi := &file_messaging_im_proto_msgTypes[2]
+func (x *RealtimeMessage) Reset() {
+	*x = RealtimeMessage{}
+	mi := &file_messaging_im_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *OnlineStatusResp) String() string {
+func (x *RealtimeMessage) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*OnlineStatusResp) ProtoMessage() {}
+func (*RealtimeMessage) ProtoMessage() {}
 
-func (x *OnlineStatusResp) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_im_proto_msgTypes[2]
+func (x *RealtimeMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -167,48 +165,64 @@ func (x *OnlineStatusResp) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use OnlineStatusResp.ProtoReflect.Descriptor instead.
-func (*OnlineStatusResp) Descriptor() ([]byte, []int) {
-	return file_messaging_im_proto_rawDescGZIP(), []int{2}
+// Deprecated: Use RealtimeMessage.ProtoReflect.Descriptor instead.
+func (*RealtimeMessage) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *OnlineStatusResp) GetBaseResp() *common.BaseResp {
+func (x *RealtimeMessage) GetId() string {
 	if x != nil {
-		return x.BaseResp
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RealtimeMessage) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *RealtimeMessage) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
 	}
 	return nil
 }
 
-func (x *OnlineStatusResp) GetStatuses() []*OnlineStatus {
+func (x *RealtimeMessage) GetTimestamp() *timestamppb.Timestamp {
 	if x != nil {
-		return x.Statuses
+		return x.Timestamp
 	}
 	return nil
 }
 
-type HeartbeatReq struct {
+// 连接请求
+type ConnectRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	DeviceId      string                 `protobuf:"bytes,2,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *HeartbeatReq) Reset() {
-	*x = HeartbeatReq{}
-	mi := &file_messaging_im_proto_msgTypes[3]
+func (x *ConnectRequest) Reset() {
+	*x = ConnectRequest{}
+	mi := &file_messaging_im_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *HeartbeatReq) String() string {
+func (x *ConnectRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*HeartbeatReq) ProtoMessage() {}
+func (*ConnectRequest) ProtoMessage() {}
 
-func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
-	mi := &file_messaging_im_proto_msgTypes[3]
+func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -219,46 +233,161 @@ func (x *HeartbeatReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use HeartbeatReq.ProtoReflect.Descriptor instead.
-func (*HeartbeatReq) Descriptor() ([]byte, []int) {
-	return file_messaging_im_proto_rawDescGZIP(), []int{3}
+// Deprecated: Use ConnectRequest.ProtoReflect.Descriptor instead.
+func (*ConnectRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *HeartbeatReq) GetUserId() int64 {
+func (x *ConnectRequest) GetUserId() string {
 	if x != nil {
 		return x.UserId
 	}
-	return 0
+	return ""
 }
 
-func (x *HeartbeatReq) GetDeviceId() string {
+func (x *ConnectRequest) GetDeviceId() string {
 	if x != nil {
 		return x.DeviceId
 	}
 	return ""
 }
 
-type GetUserStatusReq struct {
+func (x *ConnectRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+// 连接响应
+type ConnectResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserIds       []int64                `protobuf:"varint,1,rep,packed,name=user_ids,json=userIds,proto3" json:"user_ids,omitempty"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetUserStatusReq) Reset() {
-	*x = GetUserStatusReq{}
+func (x *ConnectResponse) Reset() {
+	*x = ConnectResponse{}
+	mi := &file_messaging_im_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectResponse) ProtoMessage() {}
+
+func (x *ConnectResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectResponse.ProtoReflect.Descriptor instead.
+func (*ConnectResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ConnectResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *ConnectResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ConnectResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// 断开连接请求
+type DisconnectRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisconnectRequest) Reset() {
+	*x = DisconnectRequest{}
+	mi := &file_messaging_im_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DisconnectRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DisconnectRequest) ProtoMessage() {}
+
+func (x *DisconnectRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DisconnectRequest.ProtoReflect.Descriptor instead.
+func (*DisconnectRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *DisconnectRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// 断开连接响应
+type DisconnectResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DisconnectResponse) Reset() {
+	*x = DisconnectResponse{}
 	mi := &file_messaging_im_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetUserStatusReq) String() string {
+func (x *DisconnectResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetUserStatusReq) ProtoMessage() {}
+func (*DisconnectResponse) ProtoMessage() {}
 
-func (x *GetUserStatusReq) ProtoReflect() protoreflect.Message {
+func (x *DisconnectResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_messaging_im_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -270,45 +399,777 @@ func (x *GetUserStatusReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetUserStatusReq.ProtoReflect.Descriptor instead.
-func (*GetUserStatusReq) Descriptor() ([]byte, []int) {
+// Deprecated: Use DisconnectResponse.ProtoReflect.Descriptor instead.
+func (*DisconnectResponse) Descriptor() ([]byte, []int) {
 	return file_messaging_im_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *GetUserStatusReq) GetUserIds() []int64 {
+func (x *DisconnectResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DisconnectResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取在线状态请求
+type GetOnlineStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserIds       []string               `protobuf:"bytes,1,rep,name=user_ids,json=userIds,proto3" json:"user_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetOnlineStatusRequest) Reset() {
+	*x = GetOnlineStatusRequest{}
+	mi := &file_messaging_im_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetOnlineStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetOnlineStatusRequest) ProtoMessage() {}
+
+func (x *GetOnlineStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetOnlineStatusRequest.ProtoReflect.Descriptor instead.
+func (*GetOnlineStatusRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetOnlineStatusRequest) GetUserIds() []string {
 	if x != nil {
 		return x.UserIds
 	}
 	return nil
 }
 
+// 获取在线状态响应
+type GetOnlineStatusResponse struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Code          int32                   `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                  `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Statuses      map[string]OnlineStatus `protobuf:"bytes,3,rep,name=statuses,proto3" json:"statuses,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value,enum=messaging.im.OnlineStatus"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetOnlineStatusResponse) Reset() {
+	*x = GetOnlineStatusResponse{}
+	mi := &file_messaging_im_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetOnlineStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetOnlineStatusResponse) ProtoMessage() {}
+
+func (x *GetOnlineStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetOnlineStatusResponse.ProtoReflect.Descriptor instead.
+func (*GetOnlineStatusResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetOnlineStatusResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetOnlineStatusResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetOnlineStatusResponse) GetStatuses() map[string]OnlineStatus {
+	if x != nil {
+		return x.Statuses
+	}
+	return nil
+}
+
+// 设置在线状态请求
+type SetOnlineStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        OnlineStatus           `protobuf:"varint,1,opt,name=status,proto3,enum=messaging.im.OnlineStatus" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetOnlineStatusRequest) Reset() {
+	*x = SetOnlineStatusRequest{}
+	mi := &file_messaging_im_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetOnlineStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetOnlineStatusRequest) ProtoMessage() {}
+
+func (x *SetOnlineStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetOnlineStatusRequest.ProtoReflect.Descriptor instead.
+func (*SetOnlineStatusRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SetOnlineStatusRequest) GetStatus() OnlineStatus {
+	if x != nil {
+		return x.Status
+	}
+	return OnlineStatus_ONLINE_STATUS_UNSPECIFIED
+}
+
+// 设置在线状态响应
+type SetOnlineStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetOnlineStatusResponse) Reset() {
+	*x = SetOnlineStatusResponse{}
+	mi := &file_messaging_im_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetOnlineStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetOnlineStatusResponse) ProtoMessage() {}
+
+func (x *SetOnlineStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetOnlineStatusResponse.ProtoReflect.Descriptor instead.
+func (*SetOnlineStatusResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SetOnlineStatusResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SetOnlineStatusResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 心跳请求
+type HeartbeatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatRequest) Reset() {
+	*x = HeartbeatRequest{}
+	mi := &file_messaging_im_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatRequest) ProtoMessage() {}
+
+func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
+func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *HeartbeatRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+// 心跳响应
+type HeartbeatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatResponse) Reset() {
+	*x = HeartbeatResponse{}
+	mi := &file_messaging_im_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatResponse) ProtoMessage() {}
+
+func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
+func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *HeartbeatResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *HeartbeatResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 发送输入状态请求
+type SendTypingStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChatId        string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	ChatType      chat.ChatType          `protobuf:"varint,2,opt,name=chat_type,json=chatType,proto3,enum=messaging.chat.ChatType" json:"chat_type,omitempty"`
+	Status        TypingStatus           `protobuf:"varint,3,opt,name=status,proto3,enum=messaging.im.TypingStatus" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendTypingStatusRequest) Reset() {
+	*x = SendTypingStatusRequest{}
+	mi := &file_messaging_im_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendTypingStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendTypingStatusRequest) ProtoMessage() {}
+
+func (x *SendTypingStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendTypingStatusRequest.ProtoReflect.Descriptor instead.
+func (*SendTypingStatusRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SendTypingStatusRequest) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
+func (x *SendTypingStatusRequest) GetChatType() chat.ChatType {
+	if x != nil {
+		return x.ChatType
+	}
+	return chat.ChatType(0)
+}
+
+func (x *SendTypingStatusRequest) GetStatus() TypingStatus {
+	if x != nil {
+		return x.Status
+	}
+	return TypingStatus_TYPING_STATUS_UNSPECIFIED
+}
+
+// 发送输入状态响应
+type SendTypingStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SendTypingStatusResponse) Reset() {
+	*x = SendTypingStatusResponse{}
+	mi := &file_messaging_im_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SendTypingStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SendTypingStatusResponse) ProtoMessage() {}
+
+func (x *SendTypingStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SendTypingStatusResponse.ProtoReflect.Descriptor instead.
+func (*SendTypingStatusResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SendTypingStatusResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SendTypingStatusResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 广播消息请求
+type BroadcastMessageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	MessageType   chat.MessageType       `protobuf:"varint,2,opt,name=message_type,json=messageType,proto3,enum=messaging.chat.MessageType" json:"message_type,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BroadcastMessageRequest) Reset() {
+	*x = BroadcastMessageRequest{}
+	mi := &file_messaging_im_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BroadcastMessageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BroadcastMessageRequest) ProtoMessage() {}
+
+func (x *BroadcastMessageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BroadcastMessageRequest.ProtoReflect.Descriptor instead.
+func (*BroadcastMessageRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *BroadcastMessageRequest) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *BroadcastMessageRequest) GetMessageType() chat.MessageType {
+	if x != nil {
+		return x.MessageType
+	}
+	return chat.MessageType(0)
+}
+
+func (x *BroadcastMessageRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// 广播消息响应
+type BroadcastMessageResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *chat.Message          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BroadcastMessageResponse) Reset() {
+	*x = BroadcastMessageResponse{}
+	mi := &file_messaging_im_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BroadcastMessageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BroadcastMessageResponse) ProtoMessage() {}
+
+func (x *BroadcastMessageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BroadcastMessageResponse.ProtoReflect.Descriptor instead.
+func (*BroadcastMessageResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *BroadcastMessageResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *BroadcastMessageResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *BroadcastMessageResponse) GetData() *chat.Message {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 离线消息同步请求
+type SyncOfflineMessagesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LastSyncTime  *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=last_sync_time,json=lastSyncTime,proto3" json:"last_sync_time,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncOfflineMessagesRequest) Reset() {
+	*x = SyncOfflineMessagesRequest{}
+	mi := &file_messaging_im_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncOfflineMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncOfflineMessagesRequest) ProtoMessage() {}
+
+func (x *SyncOfflineMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncOfflineMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SyncOfflineMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *SyncOfflineMessagesRequest) GetLastSyncTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastSyncTime
+	}
+	return nil
+}
+
+func (x *SyncOfflineMessagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+// 离线消息同步响应
+type SyncOfflineMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Messages      []*chat.Message        `protobuf:"bytes,3,rep,name=messages,proto3" json:"messages,omitempty"`
+	HasMore       bool                   `protobuf:"varint,4,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncOfflineMessagesResponse) Reset() {
+	*x = SyncOfflineMessagesResponse{}
+	mi := &file_messaging_im_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncOfflineMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncOfflineMessagesResponse) ProtoMessage() {}
+
+func (x *SyncOfflineMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_im_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncOfflineMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SyncOfflineMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_im_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SyncOfflineMessagesResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SyncOfflineMessagesResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SyncOfflineMessagesResponse) GetMessages() []*chat.Message {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
+func (x *SyncOfflineMessagesResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
 var File_messaging_im_proto protoreflect.FileDescriptor
 
 const file_messaging_im_proto_rawDesc = "" +
 	"\n" +
-	"\x12messaging/im.proto\x12\x02im\x1a\fcommon.proto\"B\n" +
+	"\x12messaging/im.proto\x12\fmessaging.im\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x14messaging/chat.proto\"\x89\x01\n" +
+	"\x0fRealtimeMessage\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x18\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\x128\n" +
+	"\ttimestamp\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\\\n" +
+	"\x0eConnectRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1b\n" +
+	"\tdevice_id\x18\x02 \x01(\tR\bdeviceId\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"^\n" +
+	"\x0fConnectResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1d\n" +
 	"\n" +
-	"ConnectReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\tdevice_id\x18\x02 \x01(\tR\bdeviceId\"\\\n" +
-	"\fOnlineStatus\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x16\n" +
-	"\x06online\x18\x02 \x01(\bR\x06online\x12\x1b\n" +
-	"\tlast_seen\x18\x03 \x01(\x03R\blastSeen\"o\n" +
-	"\x10OnlineStatusResp\x12-\n" +
-	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12,\n" +
-	"\bstatuses\x18\x02 \x03(\v2\x10.im.OnlineStatusR\bstatuses\"D\n" +
-	"\fHeartbeatReq\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1b\n" +
-	"\tdevice_id\x18\x02 \x01(\tR\bdeviceId\"-\n" +
-	"\x10GetUserStatusReq\x12\x19\n" +
-	"\buser_ids\x18\x01 \x03(\x03R\auserIds2\xd8\x01\n" +
-	"\tIMService\x12+\n" +
-	"\aConnect\x12\x0e.im.ConnectReq\x1a\x10.common.BaseResp\x12.\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\"2\n" +
+	"\x11DisconnectRequest\x12\x1d\n" +
 	"\n" +
-	"Disconnect\x12\x0e.im.ConnectReq\x1a\x10.common.BaseResp\x12=\n" +
-	"\x0fGetOnlineStatus\x12\x14.im.GetUserStatusReq\x1a\x14.im.OnlineStatusResp\x12/\n" +
-	"\tHeartbeat\x12\x10.im.HeartbeatReq\x1a\x10.common.BaseRespB\x14Z\x12Logos/proto_gen/imb\x06proto3"
+	"session_id\x18\x01 \x01(\tR\tsessionId\"B\n" +
+	"\x12DisconnectResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +
+	"\x16GetOnlineStatusRequest\x12\x19\n" +
+	"\buser_ids\x18\x01 \x03(\tR\auserIds\"\xf1\x01\n" +
+	"\x17GetOnlineStatusResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12O\n" +
+	"\bstatuses\x18\x03 \x03(\v23.messaging.im.GetOnlineStatusResponse.StatusesEntryR\bstatuses\x1aW\n" +
+	"\rStatusesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
+	"\x05value\x18\x02 \x01(\x0e2\x1a.messaging.im.OnlineStatusR\x05value:\x028\x01\"L\n" +
+	"\x16SetOnlineStatusRequest\x122\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x1a.messaging.im.OnlineStatusR\x06status\"G\n" +
+	"\x17SetOnlineStatusResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"1\n" +
+	"\x10HeartbeatRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"A\n" +
+	"\x11HeartbeatResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x9d\x01\n" +
+	"\x17SendTypingStatusRequest\x12\x17\n" +
+	"\achat_id\x18\x01 \x01(\tR\x06chatId\x125\n" +
+	"\tchat_type\x18\x02 \x01(\x0e2\x18.messaging.chat.ChatTypeR\bchatType\x122\n" +
+	"\x06status\x18\x03 \x01(\x0e2\x1a.messaging.im.TypingStatusR\x06status\"H\n" +
+	"\x18SendTypingStatusResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x81\x02\n" +
+	"\x17BroadcastMessageRequest\x12\x18\n" +
+	"\acontent\x18\x01 \x01(\tR\acontent\x12>\n" +
+	"\fmessage_type\x18\x02 \x01(\x0e2\x1b.messaging.chat.MessageTypeR\vmessageType\x12O\n" +
+	"\bmetadata\x18\x03 \x03(\v23.messaging.im.BroadcastMessageRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"u\n" +
+	"\x18BroadcastMessageResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12+\n" +
+	"\x04data\x18\x03 \x01(\v2\x17.messaging.chat.MessageR\x04data\"t\n" +
+	"\x1aSyncOfflineMessagesRequest\x12@\n" +
+	"\x0elast_sync_time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\flastSyncTime\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\x9b\x01\n" +
+	"\x1bSyncOfflineMessagesResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x123\n" +
+	"\bmessages\x18\x03 \x03(\v2\x17.messaging.chat.MessageR\bmessages\x12\x19\n" +
+	"\bhas_more\x18\x04 \x01(\bR\ahasMore*\x92\x01\n" +
+	"\fOnlineStatus\x12\x1d\n" +
+	"\x19ONLINE_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14ONLINE_STATUS_ONLINE\x10\x01\x12\x19\n" +
+	"\x15ONLINE_STATUS_OFFLINE\x10\x02\x12\x16\n" +
+	"\x12ONLINE_STATUS_AWAY\x10\x03\x12\x16\n" +
+	"\x12ONLINE_STATUS_BUSY\x10\x04*e\n" +
+	"\fTypingStatus\x12\x1d\n" +
+	"\x19TYPING_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14TYPING_STATUS_TYPING\x10\x01\x12\x1c\n" +
+	"\x18TYPING_STATUS_NOT_TYPING\x10\x022\xb5\x06\n" +
+	"\tIMService\x12F\n" +
+	"\aConnect\x12\x1c.messaging.im.ConnectRequest\x1a\x1d.messaging.im.ConnectResponse\x12O\n" +
+	"\n" +
+	"Disconnect\x12\x1f.messaging.im.DisconnectRequest\x1a .messaging.im.DisconnectResponse\x12^\n" +
+	"\x0fGetOnlineStatus\x12$.messaging.im.GetOnlineStatusRequest\x1a%.messaging.im.GetOnlineStatusResponse\x12^\n" +
+	"\x0fSetOnlineStatus\x12$.messaging.im.SetOnlineStatusRequest\x1a%.messaging.im.SetOnlineStatusResponse\x12L\n" +
+	"\tHeartbeat\x12\x1e.messaging.im.HeartbeatRequest\x1a\x1f.messaging.im.HeartbeatResponse\x12a\n" +
+	"\x10SendTypingStatus\x12%.messaging.im.SendTypingStatusRequest\x1a&.messaging.im.SendTypingStatusResponse\x12a\n" +
+	"\x10BroadcastMessage\x12%.messaging.im.BroadcastMessageRequest\x1a&.messaging.im.BroadcastMessageResponse\x12j\n" +
+	"\x13SyncOfflineMessages\x12(.messaging.im.SyncOfflineMessagesRequest\x1a).messaging.im.SyncOfflineMessagesResponse\x12O\n" +
+	"\x0eStreamMessages\x12\x1c.messaging.im.ConnectRequest\x1a\x1d.messaging.im.RealtimeMessage0\x01B\x14Z\x12Logos/proto_gen/imb\x06proto3"
 
 var (
 	file_messaging_im_proto_rawDescOnce sync.Once
@@ -322,31 +1183,70 @@ func file_messaging_im_proto_rawDescGZIP() []byte {
 	return file_messaging_im_proto_rawDescData
 }
 
-var file_messaging_im_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_messaging_im_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_messaging_im_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_messaging_im_proto_goTypes = []any{
-	(*ConnectReq)(nil),       // 0: im.ConnectReq
-	(*OnlineStatus)(nil),     // 1: im.OnlineStatus
-	(*OnlineStatusResp)(nil), // 2: im.OnlineStatusResp
-	(*HeartbeatReq)(nil),     // 3: im.HeartbeatReq
-	(*GetUserStatusReq)(nil), // 4: im.GetUserStatusReq
-	(*common.BaseResp)(nil),  // 5: common.BaseResp
+	(OnlineStatus)(0),                   // 0: messaging.im.OnlineStatus
+	(TypingStatus)(0),                   // 1: messaging.im.TypingStatus
+	(*RealtimeMessage)(nil),             // 2: messaging.im.RealtimeMessage
+	(*ConnectRequest)(nil),              // 3: messaging.im.ConnectRequest
+	(*ConnectResponse)(nil),             // 4: messaging.im.ConnectResponse
+	(*DisconnectRequest)(nil),           // 5: messaging.im.DisconnectRequest
+	(*DisconnectResponse)(nil),          // 6: messaging.im.DisconnectResponse
+	(*GetOnlineStatusRequest)(nil),      // 7: messaging.im.GetOnlineStatusRequest
+	(*GetOnlineStatusResponse)(nil),     // 8: messaging.im.GetOnlineStatusResponse
+	(*SetOnlineStatusRequest)(nil),      // 9: messaging.im.SetOnlineStatusRequest
+	(*SetOnlineStatusResponse)(nil),     // 10: messaging.im.SetOnlineStatusResponse
+	(*HeartbeatRequest)(nil),            // 11: messaging.im.HeartbeatRequest
+	(*HeartbeatResponse)(nil),           // 12: messaging.im.HeartbeatResponse
+	(*SendTypingStatusRequest)(nil),     // 13: messaging.im.SendTypingStatusRequest
+	(*SendTypingStatusResponse)(nil),    // 14: messaging.im.SendTypingStatusResponse
+	(*BroadcastMessageRequest)(nil),     // 15: messaging.im.BroadcastMessageRequest
+	(*BroadcastMessageResponse)(nil),    // 16: messaging.im.BroadcastMessageResponse
+	(*SyncOfflineMessagesRequest)(nil),  // 17: messaging.im.SyncOfflineMessagesRequest
+	(*SyncOfflineMessagesResponse)(nil), // 18: messaging.im.SyncOfflineMessagesResponse
+	nil,                                 // 19: messaging.im.GetOnlineStatusResponse.StatusesEntry
+	nil,                                 // 20: messaging.im.BroadcastMessageRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),       // 21: google.protobuf.Timestamp
+	(chat.ChatType)(0),                  // 22: messaging.chat.ChatType
+	(chat.MessageType)(0),               // 23: messaging.chat.MessageType
+	(*chat.Message)(nil),                // 24: messaging.chat.Message
 }
 var file_messaging_im_proto_depIdxs = []int32{
-	5, // 0: im.OnlineStatusResp.base_resp:type_name -> common.BaseResp
-	1, // 1: im.OnlineStatusResp.statuses:type_name -> im.OnlineStatus
-	0, // 2: im.IMService.Connect:input_type -> im.ConnectReq
-	0, // 3: im.IMService.Disconnect:input_type -> im.ConnectReq
-	4, // 4: im.IMService.GetOnlineStatus:input_type -> im.GetUserStatusReq
-	3, // 5: im.IMService.Heartbeat:input_type -> im.HeartbeatReq
-	5, // 6: im.IMService.Connect:output_type -> common.BaseResp
-	5, // 7: im.IMService.Disconnect:output_type -> common.BaseResp
-	2, // 8: im.IMService.GetOnlineStatus:output_type -> im.OnlineStatusResp
-	5, // 9: im.IMService.Heartbeat:output_type -> common.BaseResp
-	6, // [6:10] is the sub-list for method output_type
-	2, // [2:6] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	21, // 0: messaging.im.RealtimeMessage.timestamp:type_name -> google.protobuf.Timestamp
+	19, // 1: messaging.im.GetOnlineStatusResponse.statuses:type_name -> messaging.im.GetOnlineStatusResponse.StatusesEntry
+	0,  // 2: messaging.im.SetOnlineStatusRequest.status:type_name -> messaging.im.OnlineStatus
+	22, // 3: messaging.im.SendTypingStatusRequest.chat_type:type_name -> messaging.chat.ChatType
+	1,  // 4: messaging.im.SendTypingStatusRequest.status:type_name -> messaging.im.TypingStatus
+	23, // 5: messaging.im.BroadcastMessageRequest.message_type:type_name -> messaging.chat.MessageType
+	20, // 6: messaging.im.BroadcastMessageRequest.metadata:type_name -> messaging.im.BroadcastMessageRequest.MetadataEntry
+	24, // 7: messaging.im.BroadcastMessageResponse.data:type_name -> messaging.chat.Message
+	21, // 8: messaging.im.SyncOfflineMessagesRequest.last_sync_time:type_name -> google.protobuf.Timestamp
+	24, // 9: messaging.im.SyncOfflineMessagesResponse.messages:type_name -> messaging.chat.Message
+	0,  // 10: messaging.im.GetOnlineStatusResponse.StatusesEntry.value:type_name -> messaging.im.OnlineStatus
+	3,  // 11: messaging.im.IMService.Connect:input_type -> messaging.im.ConnectRequest
+	5,  // 12: messaging.im.IMService.Disconnect:input_type -> messaging.im.DisconnectRequest
+	7,  // 13: messaging.im.IMService.GetOnlineStatus:input_type -> messaging.im.GetOnlineStatusRequest
+	9,  // 14: messaging.im.IMService.SetOnlineStatus:input_type -> messaging.im.SetOnlineStatusRequest
+	11, // 15: messaging.im.IMService.Heartbeat:input_type -> messaging.im.HeartbeatRequest
+	13, // 16: messaging.im.IMService.SendTypingStatus:input_type -> messaging.im.SendTypingStatusRequest
+	15, // 17: messaging.im.IMService.BroadcastMessage:input_type -> messaging.im.BroadcastMessageRequest
+	17, // 18: messaging.im.IMService.SyncOfflineMessages:input_type -> messaging.im.SyncOfflineMessagesRequest
+	3,  // 19: messaging.im.IMService.StreamMessages:input_type -> messaging.im.ConnectRequest
+	4,  // 20: messaging.im.IMService.Connect:output_type -> messaging.im.ConnectResponse
+	6,  // 21: messaging.im.IMService.Disconnect:output_type -> messaging.im.DisconnectResponse
+	8,  // 22: messaging.im.IMService.GetOnlineStatus:output_type -> messaging.im.GetOnlineStatusResponse
+	10, // 23: messaging.im.IMService.SetOnlineStatus:output_type -> messaging.im.SetOnlineStatusResponse
+	12, // 24: messaging.im.IMService.Heartbeat:output_type -> messaging.im.HeartbeatResponse
+	14, // 25: messaging.im.IMService.SendTypingStatus:output_type -> messaging.im.SendTypingStatusResponse
+	16, // 26: messaging.im.IMService.BroadcastMessage:output_type -> messaging.im.BroadcastMessageResponse
+	18, // 27: messaging.im.IMService.SyncOfflineMessages:output_type -> messaging.im.SyncOfflineMessagesResponse
+	2,  // 28: messaging.im.IMService.StreamMessages:output_type -> messaging.im.RealtimeMessage
+	20, // [20:29] is the sub-list for method output_type
+	11, // [11:20] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_messaging_im_proto_init() }
@@ -359,13 +1259,14 @@ func file_messaging_im_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messaging_im_proto_rawDesc), len(file_messaging_im_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   5,
+			NumEnums:      2,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_messaging_im_proto_goTypes,
 		DependencyIndexes: file_messaging_im_proto_depIdxs,
+		EnumInfos:         file_messaging_im_proto_enumTypes,
 		MessageInfos:      file_messaging_im_proto_msgTypes,
 	}.Build()
 	File_messaging_im_proto = out.File

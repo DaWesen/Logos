@@ -2,10 +2,10 @@ package main
 
 import (
 	"Logos/config"
-	"Logos/internal/ai/extraction/dao"
-	"Logos/internal/ai/extraction/handler"
-	"Logos/internal/ai/extraction/model"
-	"Logos/internal/ai/extraction/service"
+	"Logos/internal/service/ai/extraction/dao"
+	"Logos/internal/service/ai/extraction/handler"
+	"Logos/internal/service/ai/extraction/model"
+	"Logos/internal/service/ai/extraction/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"

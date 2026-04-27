@@ -7,7 +7,6 @@
 package im
 
 import (
-	common "Logos/proto_gen/common"
 	context "context"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
@@ -20,20 +19,41 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IMService_Connect_FullMethodName         = "/im.IMService/Connect"
-	IMService_Disconnect_FullMethodName      = "/im.IMService/Disconnect"
-	IMService_GetOnlineStatus_FullMethodName = "/im.IMService/GetOnlineStatus"
-	IMService_Heartbeat_FullMethodName       = "/im.IMService/Heartbeat"
+	IMService_Connect_FullMethodName             = "/messaging.im.IMService/Connect"
+	IMService_Disconnect_FullMethodName          = "/messaging.im.IMService/Disconnect"
+	IMService_GetOnlineStatus_FullMethodName     = "/messaging.im.IMService/GetOnlineStatus"
+	IMService_SetOnlineStatus_FullMethodName     = "/messaging.im.IMService/SetOnlineStatus"
+	IMService_Heartbeat_FullMethodName           = "/messaging.im.IMService/Heartbeat"
+	IMService_SendTypingStatus_FullMethodName    = "/messaging.im.IMService/SendTypingStatus"
+	IMService_BroadcastMessage_FullMethodName    = "/messaging.im.IMService/BroadcastMessage"
+	IMService_SyncOfflineMessages_FullMethodName = "/messaging.im.IMService/SyncOfflineMessages"
+	IMService_StreamMessages_FullMethodName      = "/messaging.im.IMService/StreamMessages"
 )
 
 // IMServiceClient is the client API for IMService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// IM 服务
 type IMServiceClient interface {
-	Connect(ctx context.Context, in *ConnectReq, opts ...grpc.CallOption) (*common.BaseResp, error)
-	Disconnect(ctx context.Context, in *ConnectReq, opts ...grpc.CallOption) (*common.BaseResp, error)
-	GetOnlineStatus(ctx context.Context, in *GetUserStatusReq, opts ...grpc.CallOption) (*OnlineStatusResp, error)
-	Heartbeat(ctx context.Context, in *HeartbeatReq, opts ...grpc.CallOption) (*common.BaseResp, error)
+	// 连接
+	Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error)
+	// 断开连接
+	Disconnect(ctx context.Context, in *DisconnectRequest, opts ...grpc.CallOption) (*DisconnectResponse, error)
+	// 获取在线状态
+	GetOnlineStatus(ctx context.Context, in *GetOnlineStatusRequest, opts ...grpc.CallOption) (*GetOnlineStatusResponse, error)
+	// 设置在线状态
+	SetOnlineStatus(ctx context.Context, in *SetOnlineStatusRequest, opts ...grpc.CallOption) (*SetOnlineStatusResponse, error)
+	// 心跳
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
+	// 发送输入状态
+	SendTypingStatus(ctx context.Context, in *SendTypingStatusRequest, opts ...grpc.CallOption) (*SendTypingStatusResponse, error)
+	// 广播消息
+	BroadcastMessage(ctx context.Context, in *BroadcastMessageRequest, opts ...grpc.CallOption) (*BroadcastMessageResponse, error)
+	// 同步离线消息
+	SyncOfflineMessages(ctx context.Context, in *SyncOfflineMessagesRequest, opts ...grpc.CallOption) (*SyncOfflineMessagesResponse, error)
+	// 实时消息流
+	StreamMessages(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RealtimeMessage], error)
 }
 
 type iMServiceClient struct {
@@ -44,9 +64,9 @@ func NewIMServiceClient(cc grpc.ClientConnInterface) IMServiceClient {
 	return &iMServiceClient{cc}
 }
 
-func (c *iMServiceClient) Connect(ctx context.Context, in *ConnectReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *iMServiceClient) Connect(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (*ConnectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(ConnectResponse)
 	err := c.cc.Invoke(ctx, IMService_Connect_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -54,9 +74,9 @@ func (c *iMServiceClient) Connect(ctx context.Context, in *ConnectReq, opts ...g
 	return out, nil
 }
 
-func (c *iMServiceClient) Disconnect(ctx context.Context, in *ConnectReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *iMServiceClient) Disconnect(ctx context.Context, in *DisconnectRequest, opts ...grpc.CallOption) (*DisconnectResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(DisconnectResponse)
 	err := c.cc.Invoke(ctx, IMService_Disconnect_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -64,9 +84,9 @@ func (c *iMServiceClient) Disconnect(ctx context.Context, in *ConnectReq, opts .
 	return out, nil
 }
 
-func (c *iMServiceClient) GetOnlineStatus(ctx context.Context, in *GetUserStatusReq, opts ...grpc.CallOption) (*OnlineStatusResp, error) {
+func (c *iMServiceClient) GetOnlineStatus(ctx context.Context, in *GetOnlineStatusRequest, opts ...grpc.CallOption) (*GetOnlineStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(OnlineStatusResp)
+	out := new(GetOnlineStatusResponse)
 	err := c.cc.Invoke(ctx, IMService_GetOnlineStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -74,9 +94,19 @@ func (c *iMServiceClient) GetOnlineStatus(ctx context.Context, in *GetUserStatus
 	return out, nil
 }
 
-func (c *iMServiceClient) Heartbeat(ctx context.Context, in *HeartbeatReq, opts ...grpc.CallOption) (*common.BaseResp, error) {
+func (c *iMServiceClient) SetOnlineStatus(ctx context.Context, in *SetOnlineStatusRequest, opts ...grpc.CallOption) (*SetOnlineStatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(common.BaseResp)
+	out := new(SetOnlineStatusResponse)
+	err := c.cc.Invoke(ctx, IMService_SetOnlineStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iMServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
 	err := c.cc.Invoke(ctx, IMService_Heartbeat_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -84,14 +114,79 @@ func (c *iMServiceClient) Heartbeat(ctx context.Context, in *HeartbeatReq, opts 
 	return out, nil
 }
 
+func (c *iMServiceClient) SendTypingStatus(ctx context.Context, in *SendTypingStatusRequest, opts ...grpc.CallOption) (*SendTypingStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SendTypingStatusResponse)
+	err := c.cc.Invoke(ctx, IMService_SendTypingStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iMServiceClient) BroadcastMessage(ctx context.Context, in *BroadcastMessageRequest, opts ...grpc.CallOption) (*BroadcastMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BroadcastMessageResponse)
+	err := c.cc.Invoke(ctx, IMService_BroadcastMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iMServiceClient) SyncOfflineMessages(ctx context.Context, in *SyncOfflineMessagesRequest, opts ...grpc.CallOption) (*SyncOfflineMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncOfflineMessagesResponse)
+	err := c.cc.Invoke(ctx, IMService_SyncOfflineMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iMServiceClient) StreamMessages(ctx context.Context, in *ConnectRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RealtimeMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &IMService_ServiceDesc.Streams[0], IMService_StreamMessages_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ConnectRequest, RealtimeMessage]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type IMService_StreamMessagesClient = grpc.ServerStreamingClient[RealtimeMessage]
+
 // IMServiceServer is the server API for IMService service.
 // All implementations must embed UnimplementedIMServiceServer
 // for forward compatibility.
+//
+// IM 服务
 type IMServiceServer interface {
-	Connect(context.Context, *ConnectReq) (*common.BaseResp, error)
-	Disconnect(context.Context, *ConnectReq) (*common.BaseResp, error)
-	GetOnlineStatus(context.Context, *GetUserStatusReq) (*OnlineStatusResp, error)
-	Heartbeat(context.Context, *HeartbeatReq) (*common.BaseResp, error)
+	// 连接
+	Connect(context.Context, *ConnectRequest) (*ConnectResponse, error)
+	// 断开连接
+	Disconnect(context.Context, *DisconnectRequest) (*DisconnectResponse, error)
+	// 获取在线状态
+	GetOnlineStatus(context.Context, *GetOnlineStatusRequest) (*GetOnlineStatusResponse, error)
+	// 设置在线状态
+	SetOnlineStatus(context.Context, *SetOnlineStatusRequest) (*SetOnlineStatusResponse, error)
+	// 心跳
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
+	// 发送输入状态
+	SendTypingStatus(context.Context, *SendTypingStatusRequest) (*SendTypingStatusResponse, error)
+	// 广播消息
+	BroadcastMessage(context.Context, *BroadcastMessageRequest) (*BroadcastMessageResponse, error)
+	// 同步离线消息
+	SyncOfflineMessages(context.Context, *SyncOfflineMessagesRequest) (*SyncOfflineMessagesResponse, error)
+	// 实时消息流
+	StreamMessages(*ConnectRequest, grpc.ServerStreamingServer[RealtimeMessage]) error
 	mustEmbedUnimplementedIMServiceServer()
 }
 
@@ -102,17 +197,32 @@ type IMServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedIMServiceServer struct{}
 
-func (UnimplementedIMServiceServer) Connect(context.Context, *ConnectReq) (*common.BaseResp, error) {
+func (UnimplementedIMServiceServer) Connect(context.Context, *ConnectRequest) (*ConnectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Connect not implemented")
 }
-func (UnimplementedIMServiceServer) Disconnect(context.Context, *ConnectReq) (*common.BaseResp, error) {
+func (UnimplementedIMServiceServer) Disconnect(context.Context, *DisconnectRequest) (*DisconnectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Disconnect not implemented")
 }
-func (UnimplementedIMServiceServer) GetOnlineStatus(context.Context, *GetUserStatusReq) (*OnlineStatusResp, error) {
+func (UnimplementedIMServiceServer) GetOnlineStatus(context.Context, *GetOnlineStatusRequest) (*GetOnlineStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetOnlineStatus not implemented")
 }
-func (UnimplementedIMServiceServer) Heartbeat(context.Context, *HeartbeatReq) (*common.BaseResp, error) {
+func (UnimplementedIMServiceServer) SetOnlineStatus(context.Context, *SetOnlineStatusRequest) (*SetOnlineStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetOnlineStatus not implemented")
+}
+func (UnimplementedIMServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedIMServiceServer) SendTypingStatus(context.Context, *SendTypingStatusRequest) (*SendTypingStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendTypingStatus not implemented")
+}
+func (UnimplementedIMServiceServer) BroadcastMessage(context.Context, *BroadcastMessageRequest) (*BroadcastMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BroadcastMessage not implemented")
+}
+func (UnimplementedIMServiceServer) SyncOfflineMessages(context.Context, *SyncOfflineMessagesRequest) (*SyncOfflineMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncOfflineMessages not implemented")
+}
+func (UnimplementedIMServiceServer) StreamMessages(*ConnectRequest, grpc.ServerStreamingServer[RealtimeMessage]) error {
+	return status.Error(codes.Unimplemented, "method StreamMessages not implemented")
 }
 func (UnimplementedIMServiceServer) mustEmbedUnimplementedIMServiceServer() {}
 func (UnimplementedIMServiceServer) testEmbeddedByValue()                   {}
@@ -136,7 +246,7 @@ func RegisterIMServiceServer(s grpc.ServiceRegistrar, srv IMServiceServer) {
 }
 
 func _IMService_Connect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConnectReq)
+	in := new(ConnectRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -148,13 +258,13 @@ func _IMService_Connect_Handler(srv interface{}, ctx context.Context, dec func(i
 		FullMethod: IMService_Connect_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IMServiceServer).Connect(ctx, req.(*ConnectReq))
+		return srv.(IMServiceServer).Connect(ctx, req.(*ConnectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _IMService_Disconnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConnectReq)
+	in := new(DisconnectRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -166,13 +276,13 @@ func _IMService_Disconnect_Handler(srv interface{}, ctx context.Context, dec fun
 		FullMethod: IMService_Disconnect_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IMServiceServer).Disconnect(ctx, req.(*ConnectReq))
+		return srv.(IMServiceServer).Disconnect(ctx, req.(*DisconnectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _IMService_GetOnlineStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetUserStatusReq)
+	in := new(GetOnlineStatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -184,13 +294,31 @@ func _IMService_GetOnlineStatus_Handler(srv interface{}, ctx context.Context, de
 		FullMethod: IMService_GetOnlineStatus_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IMServiceServer).GetOnlineStatus(ctx, req.(*GetUserStatusReq))
+		return srv.(IMServiceServer).GetOnlineStatus(ctx, req.(*GetOnlineStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IMService_SetOnlineStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetOnlineStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IMServiceServer).SetOnlineStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IMService_SetOnlineStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IMServiceServer).SetOnlineStatus(ctx, req.(*SetOnlineStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _IMService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(HeartbeatReq)
+	in := new(HeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -202,16 +330,81 @@ func _IMService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func
 		FullMethod: IMService_Heartbeat_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IMServiceServer).Heartbeat(ctx, req.(*HeartbeatReq))
+		return srv.(IMServiceServer).Heartbeat(ctx, req.(*HeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _IMService_SendTypingStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SendTypingStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IMServiceServer).SendTypingStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IMService_SendTypingStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IMServiceServer).SendTypingStatus(ctx, req.(*SendTypingStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IMService_BroadcastMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BroadcastMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IMServiceServer).BroadcastMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IMService_BroadcastMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IMServiceServer).BroadcastMessage(ctx, req.(*BroadcastMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IMService_SyncOfflineMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncOfflineMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IMServiceServer).SyncOfflineMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IMService_SyncOfflineMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IMServiceServer).SyncOfflineMessages(ctx, req.(*SyncOfflineMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IMService_StreamMessages_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ConnectRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(IMServiceServer).StreamMessages(m, &grpc.GenericServerStream[ConnectRequest, RealtimeMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type IMService_StreamMessagesServer = grpc.ServerStreamingServer[RealtimeMessage]
 
 // IMService_ServiceDesc is the grpc.ServiceDesc for IMService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var IMService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "im.IMService",
+	ServiceName: "messaging.im.IMService",
 	HandlerType: (*IMServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -227,10 +420,32 @@ var IMService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _IMService_GetOnlineStatus_Handler,
 		},
 		{
+			MethodName: "SetOnlineStatus",
+			Handler:    _IMService_SetOnlineStatus_Handler,
+		},
+		{
 			MethodName: "Heartbeat",
 			Handler:    _IMService_Heartbeat_Handler,
 		},
+		{
+			MethodName: "SendTypingStatus",
+			Handler:    _IMService_SendTypingStatus_Handler,
+		},
+		{
+			MethodName: "BroadcastMessage",
+			Handler:    _IMService_BroadcastMessage_Handler,
+		},
+		{
+			MethodName: "SyncOfflineMessages",
+			Handler:    _IMService_SyncOfflineMessages_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamMessages",
+			Handler:       _IMService_StreamMessages_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "messaging/im.proto",
 }
