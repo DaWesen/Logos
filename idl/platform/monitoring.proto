@@ -1,0 +1,185 @@
+syntax = "proto3";
+
+package monitoring;
+
+option go_package = "Logos/proto_gen/monitoring";
+
+import "common.proto";
+
+// 监控指标类型
+enum MetricType {
+  METRIC_TYPE_UNSPECIFIED = 0;
+  METRIC_TYPE_CPU = 1;
+  METRIC_TYPE_MEMORY = 2;
+  METRIC_TYPE_DISK = 3;
+  METRIC_TYPE_NETWORK = 4;
+  METRIC_TYPE_REQUEST = 5;
+  METRIC_TYPE_ERROR = 6;
+  METRIC_TYPE_LATENCY = 7;
+  METRIC_TYPE_THROUGHPUT = 8;
+}
+
+// 告警级别
+enum AlertLevel {
+  ALERT_LEVEL_UNSPECIFIED = 0;
+  ALERT_LEVEL_INFO = 1;
+  ALERT_LEVEL_WARNING = 2;
+  ALERT_LEVEL_ERROR = 3;
+  ALERT_LEVEL_CRITICAL = 4;
+}
+
+// 监控指标
+message Metric {
+  string id = 1;
+  string service_name = 2;
+  MetricType type = 3;
+  double value = 4;
+  string unit = 5;
+  int64 timestamp = 6;
+  map<string, string> tags = 7;
+}
+
+// 告警
+message Alert {
+  string id = 1;
+  string service_name = 2;
+  AlertLevel level = 3;
+  string message = 4;
+  string metric_name = 5;
+  double metric_value = 6;
+  double threshold = 7;
+  int64 timestamp = 8;
+  bool resolved = 9;
+  optional string resolution_time = 10;
+}
+
+// 日志
+message Log {
+  string id = 1;
+  string service_name = 2;
+  string level = 3;
+  string message = 4;
+  int64 timestamp = 5;
+  map<string, string> fields = 6;
+}
+
+// 服务状�?
+message ServiceStatus {
+  string service_name = 1;
+  string status = 2; // UP, DOWN, DEGRADED
+  int64 last_check_time = 3;
+  optional string error_message = 4;
+  map<string, string> metadata = 5;
+}
+
+// 记录指标请求
+message RecordMetricReq {
+  string service_name = 1;
+  MetricType type = 2;
+  double value = 3;
+  string unit = 4;
+  map<string, string> tags = 5;
+}
+
+// 批量记录指标请求
+message BatchRecordMetricReq {
+  repeated RecordMetricReq metrics = 1;
+}
+
+// 记录日志请求
+message RecordLogReq {
+  string service_name = 1;
+  string level = 2;
+  string message = 3;
+  map<string, string> fields = 4;
+}
+
+// 批量记录日志请求
+message BatchRecordLogReq {
+  repeated RecordLogReq logs = 1;
+}
+
+// 查询指标请求
+message QueryMetricReq {
+  string service_name = 1;
+  MetricType type = 2;
+  int64 start_time = 3;
+  int64 end_time = 4;
+  map<string, string> tags = 5;
+}
+
+// 指标响应
+message MetricResp {
+  common.BaseResp base_resp = 1;
+  repeated Metric metrics = 2;
+  int64 total = 3;
+}
+
+// 查询告警请求
+message QueryAlertReq {
+  optional string service_name = 1;
+  optional AlertLevel level = 2;
+  optional bool resolved = 3;
+  int64 start_time = 4;
+  int64 end_time = 5;
+}
+
+// 告警响应
+message AlertResp {
+  common.BaseResp base_resp = 1;
+  repeated Alert alerts = 2;
+  int64 total = 3;
+}
+
+// 查询日志请求
+message QueryLogReq {
+  optional string service_name = 1;
+  optional string level = 2;
+  optional string query = 3;
+  int64 start_time = 4;
+  int64 end_time = 5;
+  int32 page = 6;
+  int32 page_size = 7;
+}
+
+// 日志响应
+message LogResp {
+  common.BaseResp base_resp = 1;
+  repeated Log logs = 2;
+  int64 total = 3;
+}
+
+// 按服务名请求
+message GetByServiceNameReq {
+  string service_name = 1;
+}
+
+// 按告警ID请求
+message GetByAlertIdReq {
+  string alert_id = 1;
+}
+
+// 空请�?
+message EmptyReq {}
+
+// 监控服务接口
+service MonitoringService {
+  // 指标管理
+  rpc RecordMetric(RecordMetricReq) returns (common.BaseResp);
+  rpc BatchRecordMetric(BatchRecordMetricReq) returns (common.BaseResp);
+  rpc QueryMetrics(QueryMetricReq) returns (MetricResp);
+
+  // 日志管理
+  rpc RecordLog(RecordLogReq) returns (common.BaseResp);
+  rpc BatchRecordLog(BatchRecordLogReq) returns (common.BaseResp);
+  rpc QueryLogs(QueryLogReq) returns (LogResp);
+
+  // 告警管理
+  rpc QueryAlerts(QueryAlertReq) returns (AlertResp);
+  rpc ResolveAlert(GetByAlertIdReq) returns (common.BaseResp);
+
+  // 服务状�?
+  rpc UpdateServiceStatus(ServiceStatus) returns (common.BaseResp);
+  rpc GetServiceStatus(GetByServiceNameReq) returns (common.BaseResp);
+  rpc ListServiceStatus(EmptyReq) returns (common.BaseResp);
+}

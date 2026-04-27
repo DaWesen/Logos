@@ -1,4 +1,4 @@
-package es
+﻿package es
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sync"
 
-	"Noah/config"
+	"Logos/config"
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/elastic/go-elasticsearch/v8/esapi"

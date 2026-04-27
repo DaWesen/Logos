@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package message;
+
+option go_package = "Logos/proto_gen/message";
+
+import "common.proto";
+
+enum Topic {
+  DATA_COLLECTION = 0;
+  KNOWLEDGE_EXTRACTION = 1;
+  VECTOR_PROCESSING = 2;
+  QA_REQUEST = 3;
+  RECOMMENDATION = 4;
+  USER_ACTIVITY = 5;
+  SYSTEM_EVENT = 6;
+}
+
+enum Priority {
+  LOW = 0;
+  NORMAL = 1;
+  HIGH = 2;
+  URGENT = 3;
+}
+
+message Message {
+  string id = 1;
+  Topic topic = 2;
+  string content = 3;
+  Priority priority = 4;
+  map<string, string> headers = 5;
+  int64 timestamp = 6;
+  optional string correlation_id = 7;
+}
+
+message SendMessageReq {
+  Topic topic = 1;
+  string content = 2;
+  optional Priority priority = 3;
+  map<string, string> headers = 4;
+  optional string correlation_id = 5;
+}
+
+message BatchSendMessageReq {
+  repeated SendMessageReq messages = 1;
+}
+
+message MessageResp {
+  common.BaseResp base_resp = 1;
+  string message_id = 2;
+  Topic topic = 3;
+  int64 timestamp = 4;
+}
+
+message BatchMessageResp {
+  common.BaseResp base_resp = 1;
+  repeated MessageResp responses = 2;
+}
+
+message SubscribeReq {
+  Topic topic = 1;
+  string consumer_group = 2;
+  map<string, string> config = 3;
+}
+
+message ConsumeMessageReq {
+  string consumer_group = 1;
+  Topic topic = 2;
+  int32 max_messages = 3;
+  int32 timeout_ms = 4;
+}
+
+message ConsumeMessageResp {
+  common.BaseResp base_resp = 1;
+  repeated Message messages = 2;
+  int32 message_count = 3;
+}
+
+message AcknowledgeMessageReq {
+  string consumer_group = 1;
+  string message_id = 2;
+  Topic topic = 3;
+}
+
+message BatchAcknowledgeMessageReq {
+  string consumer_group = 1;
+  repeated string message_ids = 2;
+  Topic topic = 3;
+}
+
+message MessageStats {
+  Topic topic = 1;
+  int64 total_messages = 2;
+  int64 pending_messages = 3;
+  int64 processed_messages = 4;
+  int64 error_messages = 5;
+}
+
+message MessageStatsResp {
+  common.BaseResp base_resp = 1;
+  repeated MessageStats stats = 2;
+}
+
+message GetByTopicReq {
+  Topic topic = 1;
+}
+
+message EmptyReq {}
+
+service MessageService {
+  rpc SendMessage(SendMessageReq) returns (MessageResp);
+  rpc BatchSendMessage(BatchSendMessageReq) returns (BatchMessageResp);
+  rpc Subscribe(SubscribeReq) returns (common.BaseResp);
+  rpc ConsumeMessages(ConsumeMessageReq) returns (ConsumeMessageResp);
+  rpc AcknowledgeMessage(AcknowledgeMessageReq) returns (common.BaseResp);
+  rpc BatchAcknowledgeMessages(BatchAcknowledgeMessageReq) returns (common.BaseResp);
+  rpc GetMessageStats(EmptyReq) returns (MessageStatsResp);
+  rpc CreateTopic(GetByTopicReq) returns (common.BaseResp);
+  rpc DeleteTopic(GetByTopicReq) returns (common.BaseResp);
+  rpc ClearMessages(GetByTopicReq) returns (common.BaseResp);
+}

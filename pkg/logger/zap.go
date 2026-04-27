@@ -1,7 +1,7 @@
-package logger
+﻿package logger
 
 import (
-	"Noah/config"
+	"Logos/config"
 	"os"
 	"sync"
 	"time"
@@ -181,6 +181,11 @@ func IntField(key string, value int) zapcore.Field {
 // 创建int64字段
 func Int64Field(key string, value int64) zapcore.Field {
 	return zap.Int64(key, value)
+}
+
+// 创建float64字段
+func Float64Field(key string, value float64) zapcore.Field {
+	return zap.Float64(key, value)
 }
 
 // 创建布尔字段

@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+package vector;
+
+option go_package = "Logos/proto_gen/vector";
+
+import "common.proto";
+
+enum VectorModelType {
+  BERT = 0;
+  Word2Vec = 1;
+  GloVe = 2;
+  fastText = 3;
+  SentenceBERT = 4;
+  Custom = 5;
+}
+
+enum IndexType {
+  FLAT = 0;
+  IVF_FLAT = 1;
+  IVF_PQ = 2;
+  HNSW = 3;
+}
+
+message Vector {
+  string id = 1;
+  repeated double values = 2;
+  map<string, string> metadata = 3;
+  int64 created_at = 4;
+}
+
+message VectorCollection {
+  string id = 1;
+  string name = 2;
+  VectorModelType model_type = 3;
+  IndexType index_type = 4;
+  int32 dimension = 5;
+  map<string, string> parameters = 6;
+  int64 size = 7;
+  int64 created_at = 8;
+  int64 updated_at = 9;
+}
+
+message CreateCollectionReq {
+  string name = 1;
+  VectorModelType model_type = 2;
+  IndexType index_type = 3;
+  int32 dimension = 4;
+  map<string, string> parameters = 5;
+}
+
+message UpdateCollectionReq {
+  string id = 1;
+  optional string name = 2;
+  map<string, string> parameters = 3;
+}
+
+message DeleteCollectionReq {
+  string id = 1;
+}
+
+message CollectionResp {
+  common.BaseResp base_resp = 1;
+  VectorCollection collection = 2;
+}
+
+message BatchCollectionResp {
+  common.BaseResp base_resp = 1;
+  repeated VectorCollection collections = 2;
+}
+
+message VectorizeReq {
+  string text = 1;
+  string collection_id = 2;
+  map<string, string> metadata = 3;
+}
+
+message MapWrapper {
+  map<string, string> data = 1;
+}
+
+message BatchVectorizeReq {
+  repeated string texts = 1;
+  string collection_id = 2;
+  repeated MapWrapper metadata_list = 3;
+}
+
+message VectorizeResp {
+  common.BaseResp base_resp = 1;
+  Vector vector = 2;
+}
+
+message BatchVectorizeResp {
+  common.BaseResp base_resp = 1;
+  repeated Vector vectors = 2;
+}
+
+message SearchReq {
+  string collection_id = 1;
+  repeated double query_vector = 2;
+  int32 top_k = 3;
+  optional double threshold = 4;
+  map<string, string> filter = 5;
+}
+
+message SearchResultItem {
+  string vector_id = 1;
+  double score = 2;
+  map<string, string> metadata = 3;
+}
+
+message SearchResp {
+  common.BaseResp base_resp = 1;
+  repeated SearchResultItem results = 2;
+  int64 search_time = 3;
+}
+
+message TextSearchReq {
+  string collection_id = 1;
+  string text = 2;
+  int32 top_k = 3;
+  optional double threshold = 4;
+  map<string, string> filter = 5;
+}
+
+message DeleteVectorReq {
+  string collection_id = 1;
+  string vector_id = 2;
+}
+
+message BatchDeleteVectorReq {
+  string collection_id = 1;
+  repeated string vector_ids = 2;
+}
+
+message GetByIdReq {
+  string id = 1;
+}
+
+message EmptyReq {}
+
+service VectorService {
+  rpc CreateCollection(CreateCollectionReq) returns (CollectionResp);
+  rpc UpdateCollection(UpdateCollectionReq) returns (CollectionResp);
+  rpc DeleteCollection(DeleteCollectionReq) returns (common.BaseResp);
+  rpc GetCollection(GetByIdReq) returns (CollectionResp);
+  rpc ListCollections(EmptyReq) returns (BatchCollectionResp);
+  rpc Vectorize(VectorizeReq) returns (VectorizeResp);
+  rpc BatchVectorize(BatchVectorizeReq) returns (BatchVectorizeResp);
+  rpc Search(SearchReq) returns (SearchResp);
+  rpc TextSearch(TextSearchReq) returns (SearchResp);
+  rpc DeleteVector(DeleteVectorReq) returns (common.BaseResp);
+  rpc BatchDeleteVector(BatchDeleteVectorReq) returns (common.BaseResp);
+}

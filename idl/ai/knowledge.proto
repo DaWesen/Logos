@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package knowledge;
+
+option go_package = "Logos/proto_gen/knowledge";
+
+import "common.proto";
+
+message Entity {
+  string id = 1;
+  string type = 2;
+  string name = 3;
+  map<string, string> properties = 4;
+  optional string description = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+}
+
+message Relation {
+  string id = 1;
+  string type = 2;
+  string source_id = 3;
+  string target_id = 4;
+  map<string, string> properties = 5;
+  optional string description = 6;
+  int64 created_at = 7;
+  int64 updated_at = 8;
+}
+
+message AddEntityReq {
+  string type = 1;
+  string name = 2;
+  map<string, string> properties = 3;
+  optional string description = 4;
+}
+
+message UpdateEntityReq {
+  string id = 1;
+  optional string type = 2;
+  optional string name = 3;
+  map<string, string> properties = 4;
+  optional string description = 5;
+}
+
+message DeleteEntityReq {
+  string id = 1;
+}
+
+message EntityResp {
+  common.BaseResp base_resp = 1;
+  Entity entity = 2;
+}
+
+message BatchEntityResp {
+  common.BaseResp base_resp = 1;
+  repeated Entity entities = 2;
+}
+
+message AddRelationReq {
+  string type = 1;
+  string source_id = 2;
+  string target_id = 3;
+  map<string, string> properties = 4;
+  optional string description = 5;
+}
+
+message UpdateRelationReq {
+  string id = 1;
+  optional string type = 2;
+  optional string source_id = 3;
+  optional string target_id = 4;
+  map<string, string> properties = 5;
+  optional string description = 6;
+}
+
+message DeleteRelationReq {
+  string id = 1;
+}
+
+message RelationResp {
+  common.BaseResp base_resp = 1;
+  Relation relation = 2;
+}
+
+message BatchRelationResp {
+  common.BaseResp base_resp = 1;
+  repeated Relation relations = 2;
+}
+
+message QueryEntityReq {
+  optional string type = 1;
+  optional string name = 2;
+  map<string, string> properties = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+message QueryRelationReq {
+  optional string type = 1;
+  optional string source_id = 2;
+  optional string target_id = 3;
+  int32 page = 4;
+  int32 page_size = 5;
+}
+
+message GraphStatsResp {
+  common.BaseResp base_resp = 1;
+  int64 entity_count = 2;
+  int64 relation_count = 3;
+  map<string, int64> entity_type_count = 4;
+  map<string, int64> relation_type_count = 5;
+}
+
+message ImportDataReq {
+  string data_type = 1;
+  repeated string data = 2;
+}
+
+message SearchEntityReq {
+  string keyword = 1;
+  optional string type = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message GetByIdReq {
+  string id = 1;
+}
+
+message GetRelatedEntitiesReq {
+  string entity_id = 1;
+  optional string relation_type = 2;
+}
+
+message EmptyReq {}
+
+service KnowledgeService {
+  rpc AddEntity(AddEntityReq) returns (EntityResp);
+  rpc UpdateEntity(UpdateEntityReq) returns (EntityResp);
+  rpc DeleteEntity(DeleteEntityReq) returns (common.BaseResp);
+  rpc GetEntity(GetByIdReq) returns (EntityResp);
+  rpc QueryEntities(QueryEntityReq) returns (BatchEntityResp);
+  rpc SearchEntities(SearchEntityReq) returns (BatchEntityResp);
+  rpc AddRelation(AddRelationReq) returns (RelationResp);
+  rpc UpdateRelation(UpdateRelationReq) returns (RelationResp);
+  rpc DeleteRelation(DeleteRelationReq) returns (common.BaseResp);
+  rpc GetRelation(GetByIdReq) returns (RelationResp);
+  rpc QueryRelations(QueryRelationReq) returns (BatchRelationResp);
+  rpc GetGraphStats(EmptyReq) returns (GraphStatsResp);
+  rpc GetRelatedEntities(GetRelatedEntitiesReq) returns (BatchEntityResp);
+  rpc ImportData(ImportDataReq) returns (common.BaseResp);
+}

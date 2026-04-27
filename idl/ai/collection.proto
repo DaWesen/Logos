@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+package collection;
+
+option go_package = "Logos/proto_gen/collection";
+
+import "common.proto";
+
+enum DataSourceType {
+  INTERNAL_SYSTEM = 0;
+  DOCUMENT = 1;
+  API = 2;
+  DATABASE = 3;
+  WEBSITE = 4;
+}
+
+enum DataFormat {
+  JSON = 0;
+  CSV = 1;
+  XML = 2;
+  TXT = 3;
+  PDF = 4;
+  WORD = 5;
+  EXCEL = 6;
+}
+
+message DataSource {
+  string id = 1;
+  string name = 2;
+  DataSourceType type = 3;
+  string url = 4;
+  map<string, string> config = 5;
+  optional string description = 6;
+  int64 created_at = 7;
+  int64 updated_at = 8;
+}
+
+message AddDataSourceReq {
+  string name = 1;
+  DataSourceType type = 2;
+  string url = 3;
+  map<string, string> config = 4;
+  optional string description = 5;
+}
+
+message UpdateDataSourceReq {
+  string id = 1;
+  optional string name = 2;
+  optional DataSourceType type = 3;
+  optional string url = 4;
+  map<string, string> config = 5;
+  optional string description = 6;
+}
+
+message DeleteDataSourceReq {
+  string id = 1;
+}
+
+message DataSourceResp {
+  common.BaseResp base_resp = 1;
+  DataSource data_source = 2;
+}
+
+message BatchDataSourceResp {
+  common.BaseResp base_resp = 1;
+  repeated DataSource data_sources = 2;
+}
+
+message CollectionTask {
+  string id = 1;
+  string data_source_id = 2;
+  string name = 3;
+  DataFormat format = 4;
+  string status = 5;
+  optional string schedule = 6;
+  optional string last_run_time = 7;
+  optional string next_run_time = 8;
+  int64 created_at = 9;
+  int64 updated_at = 10;
+}
+
+message CreateTaskReq {
+  string data_source_id = 1;
+  string name = 2;
+  DataFormat format = 3;
+  optional string schedule = 4;
+}
+
+message UpdateTaskReq {
+  string id = 1;
+  optional string name = 2;
+  optional DataFormat format = 3;
+  optional string schedule = 4;
+}
+
+message ExecuteTaskReq {
+  string task_id = 1;
+}
+
+message TaskResp {
+  common.BaseResp base_resp = 1;
+  CollectionTask task = 2;
+}
+
+message BatchTaskResp {
+  common.BaseResp base_resp = 1;
+  repeated CollectionTask tasks = 2;
+}
+
+message CollectionResult {
+  string id = 1;
+  string task_id = 2;
+  string status = 3;
+  int64 collected_count = 4;
+  int64 processed_count = 5;
+  optional string error_message = 6;
+  int64 start_time = 7;
+  int64 end_time = 8;
+}
+
+message CollectionResultResp {
+  common.BaseResp base_resp = 1;
+  CollectionResult result = 2;
+}
+
+message BatchCollectionResultResp {
+  common.BaseResp base_resp = 1;
+  repeated CollectionResult results = 2;
+}
+
+message GetByIdReq {
+  string id = 1;
+}
+
+message GetByTaskIdReq {
+  string task_id = 1;
+}
+
+message StopByTaskIdReq {
+  string task_id = 1;
+}
+
+message EmptyReq {}
+
+service DataCollectionService {
+  rpc AddDataSource(AddDataSourceReq) returns (DataSourceResp);
+  rpc UpdateDataSource(UpdateDataSourceReq) returns (DataSourceResp);
+  rpc DeleteDataSource(DeleteDataSourceReq) returns (common.BaseResp);
+  rpc GetDataSource(GetByIdReq) returns (DataSourceResp);
+  rpc ListDataSources(EmptyReq) returns (BatchDataSourceResp);
+  rpc CreateTask(CreateTaskReq) returns (TaskResp);
+  rpc UpdateTask(UpdateTaskReq) returns (TaskResp);
+  rpc DeleteTask(GetByIdReq) returns (common.BaseResp);
+  rpc GetTask(GetByIdReq) returns (TaskResp);
+  rpc ListTasks(EmptyReq) returns (BatchTaskResp);
+  rpc ExecuteTask(ExecuteTaskReq) returns (CollectionResultResp);
+  rpc StopTask(StopByTaskIdReq) returns (common.BaseResp);
+  rpc GetCollectionResult(GetByIdReq) returns (CollectionResultResp);
+  rpc ListCollectionResults(GetByTaskIdReq) returns (BatchCollectionResultResp);
+}

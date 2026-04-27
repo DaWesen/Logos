@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package question;
+
+option go_package = "Logos/proto_gen/question";
+
+import "common.proto";
+
+// 问题请求
+message QuestionReq {
+  string content = 1;
+  int64 user_id = 2;
+  map<string, string> context = 3;
+}
+
+// 回答响应
+message AnswerResp {
+  common.BaseResp base_resp = 1;
+  string answer = 2;
+  double confidence = 3;
+  repeated string sources = 4;
+  string question_id = 5;
+  int64 timestamp = 6;
+}
+
+// 问答历史
+message QARecord {
+  string id = 1;
+  string question = 2;
+  string answer = 3;
+  double confidence = 4;
+  int64 user_id = 5;
+  int64 timestamp = 6;
+  optional string feedback = 7;
+  optional int32 rating = 8;
+}
+
+// 历史记录请求
+message HistoryReq {
+  int64 user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// 历史记录响应
+message HistoryResp {
+  common.BaseResp base_resp = 1;
+  repeated QARecord records = 2;
+  int64 total = 3;
+}
+
+// 反馈请求
+message FeedbackReq {
+  string question_id = 1;
+  string feedback = 2;
+  optional int32 rating = 3;
+}
+
+// 批量问题请求
+message BatchQuestionReq {
+  repeated string questions = 1;
+  int64 user_id = 2;
+}
+
+// 批量回答响应
+message BatchAnswerResp {
+  common.BaseResp base_resp = 1;
+  map<string, string> answers = 2;
+}
+
+// 获取推荐问题请求
+message GetRecommendedQuestionsReq {
+  int64 user_id = 1;
+}
+
+// 问答服务接口
+service QAService {
+  // 处理单个问题
+  rpc AskQuestion(QuestionReq) returns (AnswerResp);
+
+  // 批量处理问题
+  rpc BatchAskQuestions(BatchQuestionReq) returns (BatchAnswerResp);
+
+  // 获取问答历史
+  rpc GetHistory(HistoryReq) returns (HistoryResp);
+
+  // 提交反馈
+  rpc SubmitFeedback(FeedbackReq) returns (common.BaseResp);
+
+  // 获取推荐问题
+  rpc GetRecommendedQuestions(GetRecommendedQuestionsReq) returns (common.BaseResp);
+}

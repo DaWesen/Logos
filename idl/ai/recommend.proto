@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package recommend;
+
+option go_package = "Logos/proto_gen/recommend";
+
+import "common.proto";
+
+message RecommendationItem {
+  string id = 1;
+  string type = 2;
+  string title = 3;
+  string description = 4;
+  double score = 5;
+  string entity_id = 6;
+  optional string image_url = 7;
+  int64 created_at = 8;
+}
+
+message RecommendationReq {
+  int64 user_id = 1;
+  optional string type = 2;
+  optional int32 limit = 3;
+  map<string, string> context = 4;
+}
+
+message RecommendationResp {
+  common.BaseResp base_resp = 1;
+  repeated RecommendationItem items = 2;
+  int64 total = 3;
+}
+
+message RelatedRecommendationReq {
+  string entity_id = 1;
+  optional string type = 2;
+  optional int32 limit = 3;
+}
+
+message FeedbackReq {
+  string item_id = 1;
+  int64 user_id = 2;
+  string action = 3;
+  int64 timestamp = 4;
+}
+
+message HistoryReq {
+  int64 user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message HistoryItem {
+  string id = 1;
+  string item_id = 2;
+  string item_type = 3;
+  string title = 4;
+  string action = 5;
+  int64 timestamp = 6;
+}
+
+message HistoryResp {
+  common.BaseResp base_resp = 1;
+  repeated HistoryItem items = 2;
+  int64 total = 3;
+}
+
+message BatchRecommendationReq {
+  repeated int64 user_ids = 1;
+  optional string type = 2;
+  optional int32 limit = 3;
+}
+
+message RecommendationList {
+  repeated RecommendationItem items = 1;
+}
+
+message BatchRecommendationResp {
+  common.BaseResp base_resp = 1;
+  map<int64, RecommendationList> recommendations = 2;
+}
+
+service RecommendationService {
+  rpc GetRecommendations(RecommendationReq) returns (RecommendationResp);
+  rpc GetRelatedRecommendations(RelatedRecommendationReq) returns (RecommendationResp);
+  rpc SubmitFeedback(FeedbackReq) returns (common.BaseResp);
+  rpc GetRecommendationHistory(HistoryReq) returns (HistoryResp);
+  rpc BatchGetRecommendations(BatchRecommendationReq) returns (BatchRecommendationResp);
+}

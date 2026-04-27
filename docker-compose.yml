@@ -1,0 +1,536 @@
+﻿﻿# Logos - AI-Powered Instant Messaging Platform
+# Docker Compose 编排文件
+# 架构: Platform / Messaging / AI 三大领域
+
+services:
+  # ==================== 基础设施层 ====================
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    container_name: logos-zookeeper
+    ports:
+      - "2182:2181"
+    volumes:
+      - zk_data:/data
+    networks:
+      - logos-network
+
+  etcd:
+    image: docker.1panel.live/bitnami/etcd:latest
+    container_name: logos-etcd
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - etcd_data:/default.etcd
+    networks:
+      - logos-network
+
+  postgres:
+    image: docker.1ms.run/library/postgres:latest
+    container_name: logos-postgres
+    environment:
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - logos-network
+
+  redis:
+    image: docker.1ms.run/library/redis:latest
+    container_name: logos-redis
+    command: redis-server --requirepass redis123456 --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - logos-network
+
+  minio:
+    image: docker.1panel.live/minio/minio:latest
+    container_name: logos-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - logos-network
+
+  milvus:
+    image: registry.cn-hangzhou.aliyuncs.com/zilliztech/milvus:v2.5.4
+    container_name: logos-milvus
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    mem_limit: 8192m
+    memswap_limit: 8192m
+    shm_size: 2048m
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      - etcd
+      - minio
+    networks:
+      - logos-network
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    container_name: logos-kafka
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 7
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    ports:
+      - "9093:9092"
+    volumes:
+      - kafka_data:/kafka
+    depends_on:
+      - zookeeper
+    networks:
+      - logos-network
+
+  elasticsearch:
+    image: docker.m.daocloud.io/elasticsearch:8.19.5
+    container_name: logos-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=logos-es
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - logos-network
+
+  neo4j:
+    image: docker.1ms.run/neo4j:latest
+    container_name: logos-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/neo4j123456
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: "512m"
+      NEO4J_dbms_memory_heap_max__size: "512m"
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - logos-network
+
+  # ==================== 可观测性 ====================
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: logos-otel-collector
+    command: ["--config=/etc/otelcol-config.yaml"]
+    volumes:
+      - ./config/otelcol-config.yaml:/etc/otelcol-config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8889:8889"
+    depends_on:
+      - jaeger
+    networks:
+      - logos-network
+
+  prometheus:
+    image: docker.m.daocloud.io/prom/prometheus:v2.47.2
+    container_name: logos-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - logos-network
+
+  grafana:
+    image: docker.m.daocloud.io/grafana/grafana-enterprise:latest
+    container_name: logos-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - logos-network
+
+  kiali:
+    image: m.daocloud.io/quay.io/kiali/kiali:latest
+    container_name: logos-kiali
+    ports:
+      - "20001:20001"
+    environment:
+      - PROMETHEUS_SERVICE_URL=http://prometheus:9090
+    depends_on:
+      - prometheus
+    networks:
+      - logos-network
+
+  nginx:
+    image: docker.1ms.run/library/nginx:latest
+    container_name: logos-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - nginx_logs:/var/log/nginx
+    networks:
+      - logos-network
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: logos-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks:
+      - logos-network
+
+  # ==================== Platform 领域 ====================
+  # 网关 / 用户 / 监控 — 平台基础设施
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-gateway
+    environment:
+      GIN_MODE: release
+      ETCD_ENDPOINTS: etcd:2379
+      JWT_SECRET: your-secret-key-change-in-production
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    ports:
+      - "8080:8080"
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-user
+    command: ["./user"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  monitoring-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-monitoring
+    command: ["./monitoring"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  # ==================== Messaging 领域 ====================
+  # IM / Chat / Contact / Message — 即时通讯核心
+
+  im-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-im
+    command: ["./im"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - redis
+    networks:
+      - logos-network
+
+  chat-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-chat
+    command: ["./chat"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - kafka
+      - redis
+    networks:
+      - logos-network
+
+  contact-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-contact
+    command: ["./contact"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  message-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-message
+    command: ["./message"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - kafka
+      - redis
+    networks:
+      - logos-network
+
+  # ==================== AI 领域 ====================
+  # 知识库 / 搜索 / 向量 / 问答 / 推荐 / 提取 / 集合 — AI 能力
+
+  knowledge-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-knowledge
+    command: ["./knowledge"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: neo4j123456
+      ES_ADDRESSES: http://elasticsearch:9200
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - neo4j
+      - elasticsearch
+      - redis
+    networks:
+      - logos-network
+
+  search-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-search
+    command: ["./search"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      ES_ADDRESSES: http://elasticsearch:9200
+    depends_on:
+      - etcd
+      - elasticsearch
+    networks:
+      - logos-network
+
+  vector-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-vector
+    command: ["./vector"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MILVUS_ADDRESS: milvus:19530
+    depends_on:
+      - etcd
+      - milvus
+    networks:
+      - logos-network
+
+  question-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-question
+    command: ["./question"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MILVUS_ADDRESS: milvus:19530
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+      EMBEDDING_MODEL: embedding-3
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - milvus
+      - redis
+    networks:
+      - logos-network
+
+  recommend-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-recommend
+    command: ["./recommend"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  extraction-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-extraction
+    command: ["./extraction"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - kafka
+      - redis
+    networks:
+      - logos-network
+
+  collection-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-collection
+    command: ["./collection"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      ES_ADDRESSES: http://elasticsearch:9200
+    depends_on:
+      - etcd
+      - kafka
+      - postgres
+      - elasticsearch
+    networks:
+      - logos-network
+
+networks:
+  logos-network:
+    driver: bridge
+
+volumes:
+  etcd_data:
+  postgres_data:
+  redis_data:
+  milvus_data:
+  kafka_data:
+  es_data:
+  neo4j_data:
+  zk_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  nginx_logs:

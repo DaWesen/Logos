@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package user;
+
+option go_package = "Logos/proto_gen/user";
+
+import "common.proto";
+
+message RegisterReq {
+  string username = 1;
+  string password = 2;
+  optional string email = 3;
+  optional string phone = 4;
+}
+
+message LoginReq {
+  string account = 1;
+  string password = 2;
+}
+
+message LoginRegisterResp {
+  common.BaseResp base_resp = 1;
+  common.User user = 2;
+  string token = 3;
+  int64 expire_at = 4;
+}
+
+message UserInfoReq {
+  int64 user_id = 1;
+}
+
+message UserInfoResp {
+  common.BaseResp base_resp = 1;
+  common.User user = 2;
+}
+
+message BatchUserInfoReq {
+  repeated int64 user_ids = 1;
+}
+
+message BatchUserInfoResp {
+  common.BaseResp base_resp = 1;
+  map<int64, common.User> users = 2;
+}
+
+message UpdateUserReq {
+  int64 user_id = 1;
+  optional string email = 2;
+  optional string phone = 3;
+  optional string avatar = 4;
+  map<string, string> preferences = 5;
+  repeated string interests = 6;
+  optional string old_password = 7;
+  optional string new_password = 8;
+}
+
+message CheckUsernameReq {
+  string username = 1;
+}
+
+message CheckUsernameResp {
+  bool available = 1;
+  common.BaseResp base_resp = 2;
+}
+
+message UserStatsReq {
+  int64 user_id = 1;
+}
+
+message UserStats {
+  int64 user_id = 1;
+  int64 question_count = 2;
+  int64 answer_count = 3;
+  int64 recommendation_count = 4;
+}
+
+message UserStatsResp {
+  common.BaseResp base_resp = 1;
+  UserStats stats = 2;
+  int64 total_user_count = 3;
+}
+
+message UserInfoByUsernameReq {
+  string username = 1;
+}
+
+message UpdateAvatarReq {
+  int64 user_id = 1;
+  bytes avatar_data = 2;
+}
+
+message BatchCheckUsernamesReq {
+  repeated string usernames = 1;
+}
+
+message BatchCheckUsernamesResp {
+  common.BaseResp base_resp = 1;
+  map<string, bool> available_map = 2;
+}
+
+message SearchUsersReq {
+  string keyword = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message SearchUsersResp {
+  common.BaseResp base_resp = 1;
+  repeated common.User users = 2;
+  int64 total = 3;
+}
+
+message VerifyTokenReq {
+  string token = 1;
+}
+
+message VerifyTokenResp {
+  bool valid = 1;
+}
+
+service UserService {
+  rpc Register(RegisterReq) returns (LoginRegisterResp);
+  rpc Login(LoginReq) returns (LoginRegisterResp);
+  rpc GetUserInfo(UserInfoReq) returns (UserInfoResp);
+  rpc GetUserInfoByUsername(UserInfoByUsernameReq) returns (UserInfoResp);
+  rpc BatchGetUserInfo(BatchUserInfoReq) returns (BatchUserInfoResp);
+  rpc UpdateUser(UpdateUserReq) returns (common.BaseResp);
+  rpc UpdateAvatar(UpdateAvatarReq) returns (common.BaseResp);
+  rpc CheckUsername(CheckUsernameReq) returns (CheckUsernameResp);
+  rpc BatchCheckUsernames(BatchCheckUsernamesReq) returns (BatchCheckUsernamesResp);
+  rpc GetUserStats(UserStatsReq) returns (UserStatsResp);
+  rpc SearchUsers(SearchUsersReq) returns (SearchUsersResp);
+  rpc VerifyToken(VerifyTokenReq) returns (VerifyTokenResp);
+}

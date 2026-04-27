@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package contact;
+
+option go_package = "Logos/proto_gen/contact";
+
+import "common.proto";
+
+message Friendship {
+  int64 id = 1;
+  int64 user_id = 2;
+  int64 friend_id = 3;
+  string status = 4;
+  optional string remark = 5;
+  int64 created_at = 6;
+}
+
+message AddFriendReq {
+  int64 user_id = 1;
+  int64 friend_id = 2;
+  optional string message = 3;
+}
+
+message AddFriendResp {
+  common.BaseResp base_resp = 1;
+  Friendship friendship = 2;
+}
+
+message HandleFriendReq {
+  int64 friendship_id = 1;
+  bool accept = 2;
+}
+
+message FriendListResp {
+  common.BaseResp base_resp = 1;
+  repeated common.User friends = 2;
+}
+
+message RemoveFriendReq {
+  int64 user_id = 1;
+  int64 friend_id = 2;
+}
+
+message GetByUserIdReq {
+  int64 user_id = 1;
+}
+
+message BlockUserReq {
+  int64 user_id = 1;
+  int64 target_id = 2;
+}
+
+service ContactService {
+  rpc AddFriend(AddFriendReq) returns (AddFriendResp);
+  rpc HandleFriendRequest(HandleFriendReq) returns (common.BaseResp);
+  rpc RemoveFriend(RemoveFriendReq) returns (common.BaseResp);
+  rpc GetFriendList(GetByUserIdReq) returns (FriendListResp);
+  rpc GetPendingRequests(GetByUserIdReq) returns (FriendListResp);
+  rpc BlockUser(BlockUserReq) returns (common.BaseResp);
+  rpc UnblockUser(BlockUserReq) returns (common.BaseResp);
+}

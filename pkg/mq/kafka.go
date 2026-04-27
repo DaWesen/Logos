@@ -1,4 +1,4 @@
-package mq
+﻿package mq
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"Noah/config"
-	"Noah/pkg/logger"
+	"Logos/config"
+	"Logos/pkg/logger"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -30,6 +30,17 @@ type Message struct {
 }
 
 type MessageHandler func(msg *Message) error
+
+type KafkaManager struct {
+	brokers []string
+}
+
+func NewKafkaManager(brokers []string) (*KafkaManager, error) {
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("brokers cannot be empty")
+	}
+	return &KafkaManager{brokers: brokers}, nil
+}
 
 var (
 	producerInstance *Producer
@@ -94,6 +105,44 @@ func (p *Producer) Send(ctx context.Context, topic string, key string, value []b
 	if err != nil {
 		return fmt.Errorf("发送消息失败: %w", err)
 	}
+
+	return nil
+}
+
+const (
+	TopicDataCollection      = "data_collection"
+	TopicKnowledgeExtraction = "knowledge_extraction"
+	TopicVectorProcessing    = "vector_processing"
+	TopicQARequest           = "qa_request"
+	TopicRecommendation      = "recommendation"
+	TopicUserActivity        = "user_activity"
+	TopicSystemEvent         = "system_event"
+)
+
+func (m *KafkaManager) CreateTopic(topic string) error {
+	if m == nil {
+		return fmt.Errorf("kafka manager is nil")
+	}
+	conn, err := kafka.Dial("tcp", m.brokers[0])
+	if err != nil {
+		return fmt.Errorf("连接Kafka失败: %w", err)
+	}
+	defer conn.Close()
+
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     3,
+		ReplicationFactor: 1,
+	})
+	if err != nil {
+		logger.Warn("创建主题失败",
+			logger.StringField("topic", topic),
+			logger.ErrorField(err))
+		return err
+	}
+
+	logger.Info("创建Kafka主题成功",
+		logger.StringField("topic", topic))
 
 	return nil
 }

@@ -1,12 +1,12 @@
-package graph
+﻿package graph
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	"Noah/config"
-	"Noah/pkg/logger"
+	"Logos/config"
+	"Logos/pkg/logger"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )

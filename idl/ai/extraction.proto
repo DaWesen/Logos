@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package extraction;
+
+option go_package = "Logos/proto_gen/extraction";
+
+import "common.proto";
+
+enum ExtractionTaskType {
+  ENTITY_RECOGNITION = 0;
+  RELATION_EXTRACTION = 1;
+  TRIPLE_EXTRACTION = 2;
+  SUMMARIZATION = 3;
+  KEYPHRASE_EXTRACTION = 4;
+}
+
+enum TaskStatus {
+  PENDING = 0;
+  RUNNING = 1;
+  SUCCESS = 2;
+  FAILED = 3;
+  CANCELLED = 4;
+}
+
+message ExtractedEntity {
+  string id = 1;
+  string text = 2;
+  string type = 3;
+  double confidence = 4;
+  int32 start_pos = 5;
+  int32 end_pos = 6;
+}
+
+message ExtractedRelation {
+  string id = 1;
+  string type = 2;
+  string source_id = 3;
+  string target_id = 4;
+  double confidence = 5;
+  string text = 6;
+}
+
+message Triple {
+  string id = 1;
+  string subject = 2;
+  string predicate = 3;
+  string object = 4;
+  double confidence = 5;
+}
+
+message ExtractionResult {
+  string id = 1;
+  string task_id = 2;
+  TaskStatus status = 3;
+  repeated ExtractedEntity entities = 4;
+  repeated ExtractedRelation relations = 5;
+  repeated Triple triples = 6;
+  optional string summary = 7;
+  repeated string keyphrases = 8;
+  optional string error_message = 9;
+  int64 start_time = 10;
+  int64 end_time = 11;
+}
+
+message ExtractionTask {
+  string id = 1;
+  ExtractionTaskType type = 2;
+  string data_id = 3;
+  string data_type = 4;
+  TaskStatus status = 5;
+  map<string, string> parameters = 6;
+  optional string scheduled_time = 7;
+  optional string start_time = 8;
+  optional string end_time = 9;
+  int64 created_at = 10;
+  int64 updated_at = 11;
+}
+
+message CreateExtractionTaskReq {
+  ExtractionTaskType type = 1;
+  string data_id = 2;
+  string data_type = 3;
+  map<string, string> parameters = 4;
+  optional string scheduled_time = 5;
+}
+
+message UpdateExtractionTaskReq {
+  string id = 1;
+  optional ExtractionTaskType type = 2;
+  map<string, string> parameters = 3;
+  optional string scheduled_time = 4;
+}
+
+message ExecuteExtractionTaskReq {
+  string task_id = 1;
+}
+
+message ExtractionTaskResp {
+  common.BaseResp base_resp = 1;
+  ExtractionTask task = 2;
+}
+
+message BatchExtractionTaskResp {
+  common.BaseResp base_resp = 1;
+  repeated ExtractionTask tasks = 2;
+}
+
+message ExtractionResultResp {
+  common.BaseResp base_resp = 1;
+  ExtractionResult result = 2;
+}
+
+message BatchExtractionResultResp {
+  common.BaseResp base_resp = 1;
+  repeated ExtractionResult results = 2;
+}
+
+message TextExtractionReq {
+  string text = 1;
+  ExtractionTaskType type = 2;
+  map<string, string> parameters = 3;
+}
+
+message TextExtractionResp {
+  common.BaseResp base_resp = 1;
+  repeated ExtractedEntity entities = 2;
+  repeated ExtractedRelation relations = 3;
+  repeated Triple triples = 4;
+  optional string summary = 5;
+  repeated string keyphrases = 6;
+}
+
+message GetByIdReq {
+  string id = 1;
+}
+
+message GetByTaskIdReq {
+  string task_id = 1;
+}
+
+message CancelByTaskIdReq {
+  string task_id = 1;
+}
+
+message EmptyReq {}
+
+service KnowledgeExtractionService {
+  rpc CreateTask(CreateExtractionTaskReq) returns (ExtractionTaskResp);
+  rpc UpdateTask(UpdateExtractionTaskReq) returns (ExtractionTaskResp);
+  rpc DeleteTask(GetByIdReq) returns (common.BaseResp);
+  rpc GetTask(GetByIdReq) returns (ExtractionTaskResp);
+  rpc ListTasks(EmptyReq) returns (BatchExtractionTaskResp);
+  rpc ExecuteTask(ExecuteExtractionTaskReq) returns (ExtractionResultResp);
+  rpc CancelTask(CancelByTaskIdReq) returns (common.BaseResp);
+  rpc GetExtractionResult(GetByIdReq) returns (ExtractionResultResp);
+  rpc ListExtractionResults(GetByTaskIdReq) returns (BatchExtractionResultResp);
+  rpc ExtractFromText(TextExtractionReq) returns (TextExtractionResp);
+}

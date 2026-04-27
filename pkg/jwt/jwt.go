@@ -1,10 +1,10 @@
-package jwt
+﻿package jwt
 
 import (
 	"errors"
 	"time"
 
-	"Noah/config"
+	"Logos/config"
 
 	"github.com/golang-jwt/jwt/v5"
 )

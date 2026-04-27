@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package common;
+
+option go_package = "Logos/proto_gen/common";
+
+// 基础响应结构
+message BaseResp {
+  int32 status_code = 1;
+  string status_message = 2;
+  int64 service_time = 3;
+}
+
+// 用户信息
+message User {
+  int64 id = 1;
+  string username = 2;
+  optional string email = 3;
+  optional string phone = 4;
+  optional string avatar = 5;
+  map<string, string> preferences = 6;
+  repeated string interests = 7;
+  int64 created_at = 8;
+  int64 updated_at = 9;
+}

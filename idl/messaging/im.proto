@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package im;
+
+option go_package = "Logos/proto_gen/im";
+
+import "common.proto";
+
+message ConnectReq {
+  int64 user_id = 1;
+  string device_id = 2;
+}
+
+message OnlineStatus {
+  int64 user_id = 1;
+  bool online = 2;
+  int64 last_seen = 3;
+}
+
+message OnlineStatusResp {
+  common.BaseResp base_resp = 1;
+  repeated OnlineStatus statuses = 2;
+}
+
+message HeartbeatReq {
+  int64 user_id = 1;
+  string device_id = 2;
+}
+
+message GetUserStatusReq {
+  repeated int64 user_ids = 1;
+}
+
+service IMService {
+  rpc Connect(ConnectReq) returns (common.BaseResp);
+  rpc Disconnect(ConnectReq) returns (common.BaseResp);
+  rpc GetOnlineStatus(GetUserStatusReq) returns (OnlineStatusResp);
+  rpc Heartbeat(HeartbeatReq) returns (common.BaseResp);
+}

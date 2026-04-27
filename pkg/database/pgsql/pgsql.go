@@ -1,45 +1,40 @@
-package pgsql
+﻿package pgsql
 
 import (
-	"sync"
+	"fmt"
 	"time"
 
-	"Noah/config"
+	"Logos/config"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-var (
-	db     *gorm.DB
-	dbOnce sync.Once
-)
-
 func InitPostgres() (*gorm.DB, error) {
-	var err error
-	dbOnce.Do(func() {
-		cfg := config.GetConfig()
-		postgresConfig := cfg.Database.Postgres
+	cfg := config.GetConfig()
+	postgresConfig := cfg.Database.Postgres
 
-		dsn := cfg.GetPostgresDSN()
+	dsn := cfg.GetPostgresDSN()
 
-		db, openErr := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-		if openErr != nil {
-			err = openErr
-			return
-		}
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to open postgres: %w", err)
+	}
 
-		// 配置连接池
-		sqlDB, dbErr := db.DB()
-		if dbErr != nil {
-			err = dbErr
-			return
-		}
+	// 配置连接池
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
 
-		sqlDB.SetMaxOpenConns(postgresConfig.MaxOpenConns)
-		sqlDB.SetMaxIdleConns(postgresConfig.MaxIdleConns)
-		sqlDB.SetConnMaxLifetime(time.Duration(postgresConfig.ConnMaxLifetime) * time.Second)
-	})
+	sqlDB.SetMaxOpenConns(postgresConfig.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(postgresConfig.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(postgresConfig.ConnMaxLifetime) * time.Second)
 
-	return db, err
+	// 验证数据库连接
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping postgres: %w", err)
+	}
+
+	return db, nil
 }

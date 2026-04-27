@@ -23,12 +23,12 @@ type Config struct {
 	Elasticsearch Elasticsearch `mapstructure:"elasticsearch"`
 	Neo4j         Neo4j         `mapstructure:"neo4j"`
 	Milvus        Milvus        `mapstructure:"milvus"`
+	Minio         Minio         `mapstructure:"minio"`
 	Log           Log           `mapstructure:"log"`
-	JWT           JWT           `mapstructure:"jwt"`
-	Prometheus    Prometheus    `mapstructure:"prometheus"`
-	Tracing       Tracing       `mapstructure:"tracing"`
+	JWT           JWT     `mapstructure:"jwt"`
+	Tracing       Tracing `mapstructure:"tracing"`
 	Etcd          Etcd          `mapstructure:"etcd"`
-	Kitex         Kitex         `mapstructure:"kitex"`
+	GRPC          GRPC          `mapstructure:"grpc"`
 	Eino          Eino          `mapstructure:"eino"`
 }
 
@@ -45,6 +45,9 @@ type Ports struct {
 	Extraction int `mapstructure:"extraction"`
 	Message    int `mapstructure:"message"`
 	Monitoring int `mapstructure:"monitoring"`
+	IM         int `mapstructure:"im"`
+	Chat       int `mapstructure:"chat"`
+	Contact    int `mapstructure:"contact"`
 }
 
 // ServiceConfig 单个服务配置
@@ -64,6 +67,9 @@ type Services struct {
 	Extraction ServiceConfig `mapstructure:"extraction"`
 	Message    ServiceConfig `mapstructure:"message"`
 	Monitoring ServiceConfig `mapstructure:"monitoring"`
+	IM         ServiceConfig `mapstructure:"im"`
+	Chat       ServiceConfig `mapstructure:"chat"`
+	Contact    ServiceConfig `mapstructure:"contact"`
 }
 
 // Database 数据库配置
@@ -120,6 +126,15 @@ type Milvus struct {
 	Port int    `mapstructure:"port"`
 }
 
+// Minio Minio配置
+type Minio struct {
+	Endpoint  string `mapstructure:"endpoint"`
+	AccessKey string `mapstructure:"access_key"`
+	SecretKey string `mapstructure:"secret_key"`
+	Bucket    string `mapstructure:"bucket"`
+	Secure    bool   `mapstructure:"secure"`
+}
+
 // Log 日志配置
 type Log struct {
 	Level    string `mapstructure:"level"`
@@ -134,29 +149,11 @@ type JWT struct {
 	ExpireHours int    `mapstructure:"expire_hours"`
 }
 
-// Prometheus 配置
-type Prometheus struct {
-	Enable         bool   `mapstructure:"enable"`
-	Port           int    `mapstructure:"port"`
-	Path           string `mapstructure:"path"`
-	UserPort       int    `mapstructure:"user_port"`
-	KnowledgePort  int    `mapstructure:"knowledge_port"`
-	QuestionPort   int    `mapstructure:"question_port"`
-	RecommendPort  int    `mapstructure:"recommend_port"`
-	CollectionPort int    `mapstructure:"collection_port"`
-	VectorPort     int    `mapstructure:"vector_port"`
-	SearchPort     int    `mapstructure:"search_port"`
-	ExtractionPort int    `mapstructure:"extraction_port"`
-	MessagePort    int    `mapstructure:"message_port"`
-	MonitoringPort int    `mapstructure:"monitoring_port"`
-	GatewayPort    int    `mapstructure:"gateway_port"`
-}
-
-// Tracing 追踪配置
+// Tracing 追踪配置（基于 OpenTelemetry）
 type Tracing struct {
-	Enable         bool    `mapstructure:"enable"`
-	JaegerEndpoint string  `mapstructure:"jaeger_endpoint"`
-	SampleRate     float64 `mapstructure:"sample_rate"`
+	Enable        bool    `mapstructure:"enable"`
+	OtelEndpoint  string  `mapstructure:"otel_endpoint"`
+	SampleRate    float64 `mapstructure:"sample_rate"`
 }
 
 // Etcd 配置
@@ -169,35 +166,28 @@ type Etcd struct {
 	EnableSecure bool     `mapstructure:"enable_secure"`
 }
 
-// Kitex 配置
-type Kitex struct {
-	Client KitexClient `mapstructure:"client"`
-	Server KitexServer `mapstructure:"server"`
+// GRPC gRPC配置
+type GRPC struct {
+	Client GRPCClient `mapstructure:"client"`
+	Server GRPCServer `mapstructure:"server"`
 }
 
-// KitexClient Kitex客户端配置
-type KitexClient struct {
-	Timeout             string `mapstructure:"timeout"`
-	ConnTimeout         string `mapstructure:"conn_timeout"`
-	RetryTimes          int    `mapstructure:"retry_times"`
-	MaxIdleConns        int    `mapstructure:"max_idle_conns"`
-	MaxIdleConnsPerHost int    `mapstructure:"max_idle_conns_per_host"`
+// GRPCClient gRPC客户端配置
+type GRPCClient struct {
+	Timeout         string `mapstructure:"timeout"`
+	ConnTimeout     string `mapstructure:"conn_timeout"`
+	MaxRecvMsgSize  int    `mapstructure:"max_recv_msg_size"`
+	MaxSendMsgSize  int    `mapstructure:"max_send_msg_size"`
 }
 
-// KitexServer Kitex服务器配置
-type KitexServer struct {
-	Timeout            string         `mapstructure:"timeout"`
-	MaxConns           int            `mapstructure:"max_conns"`
-	MaxPendingRequests int            `mapstructure:"max_pending_requests"`
-	IdleTimeout        string         `mapstructure:"idle_timeout"`
-	Keepalive          KitexKeepalive `mapstructure:"keepalive"`
-}
-
-// KitexKeepalive Kitex心跳配置
-type KitexKeepalive struct {
-	Enable   bool   `mapstructure:"enable"`
-	Interval string `mapstructure:"interval"`
-	Timeout  string `mapstructure:"timeout"`
+// GRPCServer gRPC服务器配置
+type GRPCServer struct {
+	Timeout          string `mapstructure:"timeout"`
+	MaxConns         int    `mapstructure:"max_conns"`
+	MaxRecvMsgSize   int    `mapstructure:"max_recv_msg_size"`
+	MaxSendMsgSize   int    `mapstructure:"max_send_msg_size"`
+	KeepaliveTime    string `mapstructure:"keepalive_time"`
+	KeepaliveTimeout string `mapstructure:"keepalive_timeout"`
 }
 
 // Eino Eino配置
@@ -277,6 +267,12 @@ func (c *Config) GetServiceTimeout(service string) (time.Duration, error) {
 		timeoutStr = c.Services.Message.Timeout
 	case "monitoring":
 		timeoutStr = c.Services.Monitoring.Timeout
+	case "im":
+		timeoutStr = c.Services.IM.Timeout
+	case "chat":
+		timeoutStr = c.Services.Chat.Timeout
+	case "contact":
+		timeoutStr = c.Services.Contact.Timeout
 	default:
 		return 0, fmt.Errorf("unknown service: %s", service)
 	}
@@ -289,34 +285,19 @@ func (c *Config) GetEtcdDialTimeout() (time.Duration, error) {
 	return time.ParseDuration(c.Etcd.DialTimeout)
 }
 
-// GetKitexClientTimeout 获取Kitex客户端超时时间
-func (c *Config) GetKitexClientTimeout() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Client.Timeout)
+// GetGRPCClientTimeout 获取gRPC客户端超时时间
+func (c *Config) GetGRPCClientTimeout() (time.Duration, error) {
+	return time.ParseDuration(c.GRPC.Client.Timeout)
 }
 
-// GetKitexClientConnTimeout 获取Kitex客户端连接超时时间
-func (c *Config) GetKitexClientConnTimeout() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Client.ConnTimeout)
+// GetGRPCClientConnTimeout 获取gRPC客户端连接超时时间
+func (c *Config) GetGRPCClientConnTimeout() (time.Duration, error) {
+	return time.ParseDuration(c.GRPC.Client.ConnTimeout)
 }
 
-// GetKitexServerTimeout 获取Kitex服务器超时时间
-func (c *Config) GetKitexServerTimeout() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Server.Timeout)
-}
-
-// GetKitexServerIdleTimeout 获取Kitex服务器空闲超时时间
-func (c *Config) GetKitexServerIdleTimeout() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Server.IdleTimeout)
-}
-
-// GetKitexKeepaliveInterval 获取Kitex心跳间隔
-func (c *Config) GetKitexKeepaliveInterval() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Server.Keepalive.Interval)
-}
-
-// GetKitexKeepaliveTimeout 获取Kitex心跳超时时间
-func (c *Config) GetKitexKeepaliveTimeout() (time.Duration, error) {
-	return time.ParseDuration(c.Kitex.Server.Keepalive.Timeout)
+// GetGRPCServerTimeout 获取gRPC服务器超时时间
+func (c *Config) GetGRPCServerTimeout() (time.Duration, error) {
+	return time.ParseDuration(c.GRPC.Server.Timeout)
 }
 
 // GetUserServerAddr 获取用户服务地址
@@ -332,6 +313,31 @@ func (c *Config) GetKnowledgeServerAddr() string {
 // GetSearchServerAddr 获取搜索服务地址
 func (c *Config) GetSearchServerAddr() string {
 	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Search)
+}
+
+// GetVectorServerAddr 获取向量服务地址
+func (c *Config) GetVectorServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Vector)
+}
+
+// GetGatewayAddr 获取网关地址
+func (c *Config) GetGatewayAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Gateway)
+}
+
+// GetIMServerAddr 获取IM服务地址
+func (c *Config) GetIMServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.IM)
+}
+
+// GetChatServerAddr 获取聊天服务地址
+func (c *Config) GetChatServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Chat)
+}
+
+// GetContactServerAddr 获取联系人服务地址
+func (c *Config) GetContactServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Contact)
 }
 
 // GetConfig 获取应用配置（单例模式）

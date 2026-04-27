@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package search;
+
+option go_package = "Logos/proto_gen/search";
+
+import "common.proto";
+
+enum IndexType {
+  ENTITY = 0;
+  RELATION = 1;
+  QUESTION = 2;
+  ANSWER = 3;
+  DOCUMENT = 4;
+  USER = 5;
+}
+
+message SearchCondition {
+  string field = 1;
+  string value = 2;
+  string operator = 3;
+}
+
+message SortCondition {
+  string field = 1;
+  string order = 2;
+}
+
+message SearchReq {
+  string query = 1;
+  IndexType index_type = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+  repeated SearchCondition conditions = 5;
+  repeated SortCondition sorts = 6;
+  map<string, string> filters = 7;
+}
+
+message SearchResultItem {
+  string id = 1;
+  string type = 2;
+  string title = 3;
+  string content = 4;
+  double score = 5;
+  map<string, string> metadata = 6;
+  map<string, bytes> fields = 7;
+}
+
+message SearchResp {
+  common.BaseResp base_resp = 1;
+  repeated SearchResultItem results = 2;
+  int64 total = 3;
+  int64 search_time = 4;
+}
+
+message IndexDocument {
+  string id = 1;
+  IndexType type = 2;
+  string title = 3;
+  string content = 4;
+  map<string, string> metadata = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+  map<string, bytes> fields = 8;
+}
+
+message AddDocumentReq {
+  IndexType type = 1;
+  string title = 2;
+  string content = 3;
+  map<string, string> metadata = 4;
+  map<string, bytes> fields = 5;
+}
+
+message UpdateDocumentReq {
+  string id = 1;
+  optional string title = 2;
+  optional string content = 3;
+  map<string, string> metadata = 4;
+  map<string, bytes> fields = 5;
+}
+
+message DeleteDocumentReq {
+  string id = 1;
+}
+
+message DocumentResp {
+  common.BaseResp base_resp = 1;
+  IndexDocument document = 2;
+}
+
+message BatchAddDocumentReq {
+  repeated AddDocumentReq documents = 1;
+}
+
+message BatchDeleteDocumentReq {
+  repeated string ids = 1;
+}
+
+message IndexStats {
+  IndexType type = 1;
+  int64 document_count = 2;
+  int64 size_in_bytes = 3;
+  string last_updated = 4;
+}
+
+message IndexStatsResp {
+  common.BaseResp base_resp = 1;
+  repeated IndexStats stats = 2;
+}
+
+message GetByIdReq {
+  string id = 1;
+}
+
+message GetByIndexTypeReq {
+  IndexType type = 1;
+}
+
+message EmptyReq {}
+
+service SearchService {
+  rpc Search(SearchReq) returns (SearchResp);
+  rpc AddDocument(AddDocumentReq) returns (DocumentResp);
+  rpc UpdateDocument(UpdateDocumentReq) returns (DocumentResp);
+  rpc DeleteDocument(DeleteDocumentReq) returns (common.BaseResp);
+  rpc GetDocument(GetByIdReq) returns (DocumentResp);
+  rpc BatchAddDocuments(BatchAddDocumentReq) returns (common.BaseResp);
+  rpc BatchDeleteDocuments(BatchDeleteDocumentReq) returns (common.BaseResp);
+  rpc CreateIndex(GetByIndexTypeReq) returns (common.BaseResp);
+  rpc DeleteIndex(GetByIndexTypeReq) returns (common.BaseResp);
+  rpc RefreshIndex(GetByIndexTypeReq) returns (common.BaseResp);
+  rpc GetIndexStats(EmptyReq) returns (IndexStatsResp);
+}
