@@ -1,4 +1,4 @@
-﻿package eino
+package eino
 
 import (
 	"context"
@@ -39,6 +39,18 @@ func InitEino() (*EinoManager, error) {
 		)
 	})
 	return einoInstance, err
+}
+
+func GetEinoManager() *EinoManager {
+	if einoInstance == nil {
+		einoManager, err := InitEino()
+		if err != nil {
+			logger.Warn("获取 EinoManager 失败", logger.ErrorField(err))
+			return &EinoManager{}
+		}
+		return einoManager
+	}
+	return einoInstance
 }
 
 func NewEinoManager(apiKey, modelName, baseURL, embeddingModel string) (*EinoManager, error) {
@@ -208,4 +220,12 @@ func (e *EinoManager) HasChatModel() bool {
 
 func (e *EinoManager) HasEmbedder() bool {
 	return e.embedder != nil
+}
+
+func (e *EinoManager) GetChatModel() model.BaseChatModel {
+	return e.chatModel
+}
+
+func (e *EinoManager) GetEmbedder() embedding.Embedder {
+	return e.embedder
 }

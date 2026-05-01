@@ -1,4 +1,4 @@
-﻿package mq
+package mq
 
 import (
 	"context"
@@ -117,6 +117,10 @@ const (
 	TopicRecommendation      = "recommendation"
 	TopicUserActivity        = "user_activity"
 	TopicSystemEvent         = "system_event"
+	TopicIM                  = "im_messages"
+	TopicChat                = "chat_messages"
+	TopicNotification        = "notifications"
+	TopicDocumentProcessed   = "document_processed"
 )
 
 func (m *KafkaManager) CreateTopic(topic string) error {
@@ -170,6 +174,33 @@ func (p *Producer) SendQuestionEvent(ctx context.Context, key string, value []by
 	topic := cfg.Kafka.Topics["question_events"]
 	if topic == "" {
 		topic = "question_events"
+	}
+	return p.Send(ctx, topic, key, value)
+}
+
+func (p *Producer) SendIMEvent(ctx context.Context, key string, value []byte) error {
+	cfg := config.GetConfig()
+	topic := cfg.Kafka.Topics["im_messages"]
+	if topic == "" {
+		topic = "im_messages"
+	}
+	return p.Send(ctx, topic, key, value)
+}
+
+func (p *Producer) SendChatEvent(ctx context.Context, key string, value []byte) error {
+	cfg := config.GetConfig()
+	topic := cfg.Kafka.Topics["chat_messages"]
+	if topic == "" {
+		topic = "chat_messages"
+	}
+	return p.Send(ctx, topic, key, value)
+}
+
+func (p *Producer) SendNotification(ctx context.Context, key string, value []byte) error {
+	cfg := config.GetConfig()
+	topic := cfg.Kafka.Topics["notifications"]
+	if topic == "" {
+		topic = "notifications"
 	}
 	return p.Send(ctx, topic, key, value)
 }
@@ -268,6 +299,26 @@ func CreateTopics(ctx context.Context) error {
 		},
 		{
 			Topic:             "question_events",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "im_messages",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "chat_messages",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "notifications",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             TopicDocumentProcessed,
 			NumPartitions:     3,
 			ReplicationFactor: 1,
 		},

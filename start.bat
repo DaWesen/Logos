@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul 2>&1
 title Logos - AI-Powered Instant Messaging
 
@@ -12,7 +12,7 @@ echo  ╠═══════════════════════�
 echo  ║                                                    ║
 echo  ║   [1] 启动基础设施 (etcd, PG, Redis, Kafka...)     ║
 echo  ║   [2] 启动监控栈 (Prometheus, Jaeger)              ║
-echo  ║   [3] 启动所有微服务 (14个服务)                     ║
+echo  ║   [3] 启动所有微服务 (17个服务)                     ║
 echo  ║   [4] 启动完整系统 (全部服务)                       ║
 echo  ║   [5] 停止所有服务                                  ║
 echo  ║   [6] 重启所有服务                                  ║
@@ -77,7 +77,7 @@ goto wait
 :::services
 echo.
 echo [*] 正在启动所有微服务...
-docker-compose up -d gateway user-service monitoring-service im-service chat-service contact-service message-service knowledge-service search-service vector-service question-service recommend-service extraction-service collection-service
+docker-compose up -d gateway user-service monitoring-service billing-service im-service chat-service contact-service message-service knowledge-service search-service vector-service question-service recommend-service extraction-service collection-service bot-service process-service
 echo.
 echo ✓ 所有微服务启动完成！
 echo.
@@ -85,6 +85,7 @@ echo [Platform 领域]
 echo   - Gateway:       :8888 (API入口)
 echo   - User:          :9001
 echo   - Monitoring:    :9010
+echo   - Billing:       :9015 (计费)
 echo.
 echo [Messaging 领域]
 echo   - IM:            :9011 (连接管理)
@@ -100,6 +101,8 @@ echo   - Question:      :9005 (智能问答)
 echo   - Recommend:     :9006 (推荐)
 echo   - Extraction:    :9007 (文档提取)
 echo   - Collection:    :9008 (知识集合)
+echo   - Bot:           :9014 (AI助手)
+echo   - Process:       :8090 (文档处理)
 goto wait
 
 :::all

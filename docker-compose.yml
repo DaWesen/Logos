@@ -1,4 +1,4 @@
-﻿﻿# Logos - AI-Powered Instant Messaging Platform
+# Logos - AI-Powered Instant Messaging Platform
 # Docker Compose 编排文件
 # 架构: Platform / Messaging / AI 三大领域
 
@@ -40,14 +40,13 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./script/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - logos-network
 
   redis:
     image: docker.1ms.run/library/redis:latest
     container_name: logos-redis
-    command: redis-server --requirepass redis123456 --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass redis123456 --maxmemory 256MB --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -76,9 +75,9 @@ services:
     command: ["milvus", "run", "standalone"]
     security_opt:
       - seccomp:unconfined
-    mem_limit: 8192m
-    memswap_limit: 8192m
-    shm_size: 2048m
+    mem_limit: 8192MB
+    memswap_limit: 8192MB
+    shm_size: 2048MB
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
@@ -226,7 +225,7 @@ services:
       - logos-network
 
   # ==================== Platform 领域 ====================
-  # 网关 / 用户 / 监控 — 平台基础设施
+  # 网关 / 用户 / 监控 / 计费 — 平台基础设施
 
   gateway:
     build:
@@ -240,7 +239,7 @@ services:
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     ports:
-      - "8080:8080"
+      - "8888:8888"
     depends_on:
       - etcd
       - postgres
@@ -276,6 +275,28 @@ services:
       dockerfile: Dockerfile
     container_name: logos-monitoring
     command: ["./monitoring"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  billing-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-billing
+    command: ["./billing"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -376,7 +397,7 @@ services:
       - logos-network
 
   # ==================== AI 领域 ====================
-  # 知识库 / 搜索 / 向量 / 问答 / 推荐 / 提取 / 集合 — AI 能力
+  # 知识库 / 搜索 / 向量 / 问答 / 推荐 / 提取 / 集合 / Bot / Process — AI 能力
 
   knowledge-service:
     build:
@@ -394,7 +415,6 @@ services:
       REDIS_PASSWORD: redis123456
     depends_on:
       - etcd
-      - postgres
       - neo4j
       - elasticsearch
       - redis
@@ -514,6 +534,58 @@ services:
       - kafka
       - postgres
       - elasticsearch
+    networks:
+      - logos-network
+
+  bot-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-bot
+    command: ["./bot"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+    depends_on:
+      - etcd
+      - postgres
+      - redis
+    networks:
+      - logos-network
+
+  process-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-process
+    command: ["./process"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: logos-documents
+    ports:
+      - "8090:8090"
+    depends_on:
+      - etcd
+      - postgres
+      - minio
     networks:
       - logos-network
 

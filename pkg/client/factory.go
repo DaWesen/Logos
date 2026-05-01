@@ -4,6 +4,7 @@ import (
 	"Logos/config"
 
 	"Logos/pkg/grpcserver"
+	pbBilling "Logos/proto_gen/billing"
 	pbKnowledge "Logos/proto_gen/knowledge"
 	pbSearch "Logos/proto_gen/search"
 	pbVector "Logos/proto_gen/vector"
@@ -34,4 +35,13 @@ func NewVectorClientFromConfig(cfg *config.Config) (*VectorClient, error) {
 	}
 	client := pbVector.NewVectorServiceClient(conn)
 	return NewVectorClient(client, conn), nil
+}
+
+func NewBillingClientFromConfig(cfg *config.Config) (*BillingClient, error) {
+	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.billing")
+	if err != nil {
+		return nil, err
+	}
+	client := pbBilling.NewBillingServiceClient(conn)
+	return NewBillingClient(client, conn), nil
 }

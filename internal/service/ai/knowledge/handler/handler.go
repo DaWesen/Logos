@@ -6,9 +6,9 @@ import (
 
 	"Logos/internal/service/ai/knowledge/model"
 	"Logos/internal/service/ai/knowledge/service"
-	pb "Logos/proto_gen/knowledge"
-	pbCommon "Logos/proto_gen/common"
 	"Logos/pkg/logger"
+	pbCommon "Logos/proto_gen/common"
+	pb "Logos/proto_gen/knowledge"
 )
 
 // KnowledgeServiceImpl implements the KnowledgeService interface.

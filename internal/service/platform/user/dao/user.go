@@ -168,11 +168,21 @@ func (r *userRepositoryImpl) Count(ctx context.Context) (int64, error) {
 
 func (r *userRepositoryImpl) GetStats(ctx context.Context, userID int64) (*model.UserStats, error) {
 	stats := &model.UserStats{
-		UserID:              userID,
-		QuestionCount:       0,
-		AnswerCount:         0,
-		RecommendationCount: 0,
+		UserID: userID,
 	}
+
+	var questionCount int64
+	r.db.WithContext(ctx).Table("questions").Where("user_id = ?", userID).Count(&questionCount)
+	stats.QuestionCount = questionCount
+
+	var answerCount int64
+	r.db.WithContext(ctx).Table("messages").Where("user_id = ? AND role = ?", userID, "assistant").Count(&answerCount)
+	stats.AnswerCount = answerCount
+
+	var recCount int64
+	r.db.WithContext(ctx).Table("recommendations").Where("user_id = ?", userID).Count(&recCount)
+	stats.RecommendationCount = recCount
+
 	return stats, nil
 }
 

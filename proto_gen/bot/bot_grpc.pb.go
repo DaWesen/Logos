@@ -19,13 +19,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BotService_CreateBot_FullMethodName      = "/ai.bot.BotService/CreateBot"
-	BotService_UpdateBot_FullMethodName      = "/ai.bot.BotService/UpdateBot"
-	BotService_DeleteBot_FullMethodName      = "/ai.bot.BotService/DeleteBot"
-	BotService_GetBot_FullMethodName         = "/ai.bot.BotService/GetBot"
-	BotService_ListBots_FullMethodName       = "/ai.bot.BotService/ListBots"
-	BotService_SendBotMessage_FullMethodName = "/ai.bot.BotService/SendBotMessage"
-	BotService_GetBotHistory_FullMethodName  = "/ai.bot.BotService/GetBotHistory"
+	BotService_CreateBot_FullMethodName          = "/ai.bot.BotService/CreateBot"
+	BotService_UpdateBot_FullMethodName          = "/ai.bot.BotService/UpdateBot"
+	BotService_DeleteBot_FullMethodName          = "/ai.bot.BotService/DeleteBot"
+	BotService_GetBot_FullMethodName             = "/ai.bot.BotService/GetBot"
+	BotService_ListBots_FullMethodName           = "/ai.bot.BotService/ListBots"
+	BotService_SendBotMessage_FullMethodName     = "/ai.bot.BotService/SendBotMessage"
+	BotService_GetBotHistory_FullMethodName      = "/ai.bot.BotService/GetBotHistory"
+	BotService_CreateConversation_FullMethodName = "/ai.bot.BotService/CreateConversation"
+	BotService_UpdateConversation_FullMethodName = "/ai.bot.BotService/UpdateConversation"
+	BotService_DeleteConversation_FullMethodName = "/ai.bot.BotService/DeleteConversation"
+	BotService_ListConversations_FullMethodName  = "/ai.bot.BotService/ListConversations"
+	BotService_StreamBotMessage_FullMethodName   = "/ai.bot.BotService/StreamBotMessage"
+	BotService_GetUserMemory_FullMethodName      = "/ai.bot.BotService/GetUserMemory"
+	BotService_SetUserMemory_FullMethodName      = "/ai.bot.BotService/SetUserMemory"
+	BotService_CreatePrompt_FullMethodName       = "/ai.bot.BotService/CreatePrompt"
+	BotService_UpdatePrompt_FullMethodName       = "/ai.bot.BotService/UpdatePrompt"
+	BotService_DeletePrompt_FullMethodName       = "/ai.bot.BotService/DeletePrompt"
+	BotService_GetPrompt_FullMethodName          = "/ai.bot.BotService/GetPrompt"
+	BotService_ListPrompts_FullMethodName        = "/ai.bot.BotService/ListPrompts"
 )
 
 // BotServiceClient is the client API for BotService service.
@@ -48,6 +60,29 @@ type BotServiceClient interface {
 	SendBotMessage(ctx context.Context, in *SendBotMessageRequest, opts ...grpc.CallOption) (*StreamBotResponse, error)
 	// 获取对话历史
 	GetBotHistory(ctx context.Context, in *GetBotHistoryRequest, opts ...grpc.CallOption) (*GetBotHistoryResponse, error)
+	// 创建对话
+	CreateConversation(ctx context.Context, in *CreateConversationRequest, opts ...grpc.CallOption) (*CreateConversationResponse, error)
+	// 更新对话
+	UpdateConversation(ctx context.Context, in *UpdateConversationRequest, opts ...grpc.CallOption) (*UpdateConversationResponse, error)
+	// 删除对话
+	DeleteConversation(ctx context.Context, in *DeleteConversationRequest, opts ...grpc.CallOption) (*DeleteConversationResponse, error)
+	// 获取对话列表
+	ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error)
+	// 流式发送消息给 Bot
+	StreamBotMessage(ctx context.Context, in *SendBotMessageRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamBotResponse], error)
+	// 获取/设置用户记忆
+	GetUserMemory(ctx context.Context, in *GetUserMemoryRequest, opts ...grpc.CallOption) (*GetUserMemoryResponse, error)
+	SetUserMemory(ctx context.Context, in *SetUserMemoryRequest, opts ...grpc.CallOption) (*SetUserMemoryResponse, error)
+	// 创建 Prompt
+	CreatePrompt(ctx context.Context, in *CreatePromptRequest, opts ...grpc.CallOption) (*CreatePromptResponse, error)
+	// 更新 Prompt
+	UpdatePrompt(ctx context.Context, in *UpdatePromptRequest, opts ...grpc.CallOption) (*UpdatePromptResponse, error)
+	// 删除 Prompt
+	DeletePrompt(ctx context.Context, in *DeletePromptRequest, opts ...grpc.CallOption) (*DeletePromptResponse, error)
+	// 获取 Prompt
+	GetPrompt(ctx context.Context, in *GetPromptRequest, opts ...grpc.CallOption) (*GetPromptResponse, error)
+	// 获取 Prompt 列表
+	ListPrompts(ctx context.Context, in *ListPromptsRequest, opts ...grpc.CallOption) (*ListPromptsResponse, error)
 }
 
 type botServiceClient struct {
@@ -128,6 +163,135 @@ func (c *botServiceClient) GetBotHistory(ctx context.Context, in *GetBotHistoryR
 	return out, nil
 }
 
+func (c *botServiceClient) CreateConversation(ctx context.Context, in *CreateConversationRequest, opts ...grpc.CallOption) (*CreateConversationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateConversationResponse)
+	err := c.cc.Invoke(ctx, BotService_CreateConversation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) UpdateConversation(ctx context.Context, in *UpdateConversationRequest, opts ...grpc.CallOption) (*UpdateConversationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateConversationResponse)
+	err := c.cc.Invoke(ctx, BotService_UpdateConversation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) DeleteConversation(ctx context.Context, in *DeleteConversationRequest, opts ...grpc.CallOption) (*DeleteConversationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteConversationResponse)
+	err := c.cc.Invoke(ctx, BotService_DeleteConversation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) ListConversations(ctx context.Context, in *ListConversationsRequest, opts ...grpc.CallOption) (*ListConversationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListConversationsResponse)
+	err := c.cc.Invoke(ctx, BotService_ListConversations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) StreamBotMessage(ctx context.Context, in *SendBotMessageRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamBotResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &BotService_ServiceDesc.Streams[0], BotService_StreamBotMessage_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SendBotMessageRequest, StreamBotResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BotService_StreamBotMessageClient = grpc.ServerStreamingClient[StreamBotResponse]
+
+func (c *botServiceClient) GetUserMemory(ctx context.Context, in *GetUserMemoryRequest, opts ...grpc.CallOption) (*GetUserMemoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetUserMemoryResponse)
+	err := c.cc.Invoke(ctx, BotService_GetUserMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) SetUserMemory(ctx context.Context, in *SetUserMemoryRequest, opts ...grpc.CallOption) (*SetUserMemoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetUserMemoryResponse)
+	err := c.cc.Invoke(ctx, BotService_SetUserMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) CreatePrompt(ctx context.Context, in *CreatePromptRequest, opts ...grpc.CallOption) (*CreatePromptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreatePromptResponse)
+	err := c.cc.Invoke(ctx, BotService_CreatePrompt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) UpdatePrompt(ctx context.Context, in *UpdatePromptRequest, opts ...grpc.CallOption) (*UpdatePromptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdatePromptResponse)
+	err := c.cc.Invoke(ctx, BotService_UpdatePrompt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) DeletePrompt(ctx context.Context, in *DeletePromptRequest, opts ...grpc.CallOption) (*DeletePromptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeletePromptResponse)
+	err := c.cc.Invoke(ctx, BotService_DeletePrompt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) GetPrompt(ctx context.Context, in *GetPromptRequest, opts ...grpc.CallOption) (*GetPromptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPromptResponse)
+	err := c.cc.Invoke(ctx, BotService_GetPrompt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *botServiceClient) ListPrompts(ctx context.Context, in *ListPromptsRequest, opts ...grpc.CallOption) (*ListPromptsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPromptsResponse)
+	err := c.cc.Invoke(ctx, BotService_ListPrompts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BotServiceServer is the server API for BotService service.
 // All implementations must embed UnimplementedBotServiceServer
 // for forward compatibility.
@@ -148,6 +312,29 @@ type BotServiceServer interface {
 	SendBotMessage(context.Context, *SendBotMessageRequest) (*StreamBotResponse, error)
 	// 获取对话历史
 	GetBotHistory(context.Context, *GetBotHistoryRequest) (*GetBotHistoryResponse, error)
+	// 创建对话
+	CreateConversation(context.Context, *CreateConversationRequest) (*CreateConversationResponse, error)
+	// 更新对话
+	UpdateConversation(context.Context, *UpdateConversationRequest) (*UpdateConversationResponse, error)
+	// 删除对话
+	DeleteConversation(context.Context, *DeleteConversationRequest) (*DeleteConversationResponse, error)
+	// 获取对话列表
+	ListConversations(context.Context, *ListConversationsRequest) (*ListConversationsResponse, error)
+	// 流式发送消息给 Bot
+	StreamBotMessage(*SendBotMessageRequest, grpc.ServerStreamingServer[StreamBotResponse]) error
+	// 获取/设置用户记忆
+	GetUserMemory(context.Context, *GetUserMemoryRequest) (*GetUserMemoryResponse, error)
+	SetUserMemory(context.Context, *SetUserMemoryRequest) (*SetUserMemoryResponse, error)
+	// 创建 Prompt
+	CreatePrompt(context.Context, *CreatePromptRequest) (*CreatePromptResponse, error)
+	// 更新 Prompt
+	UpdatePrompt(context.Context, *UpdatePromptRequest) (*UpdatePromptResponse, error)
+	// 删除 Prompt
+	DeletePrompt(context.Context, *DeletePromptRequest) (*DeletePromptResponse, error)
+	// 获取 Prompt
+	GetPrompt(context.Context, *GetPromptRequest) (*GetPromptResponse, error)
+	// 获取 Prompt 列表
+	ListPrompts(context.Context, *ListPromptsRequest) (*ListPromptsResponse, error)
 	mustEmbedUnimplementedBotServiceServer()
 }
 
@@ -178,6 +365,42 @@ func (UnimplementedBotServiceServer) SendBotMessage(context.Context, *SendBotMes
 }
 func (UnimplementedBotServiceServer) GetBotHistory(context.Context, *GetBotHistoryRequest) (*GetBotHistoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBotHistory not implemented")
+}
+func (UnimplementedBotServiceServer) CreateConversation(context.Context, *CreateConversationRequest) (*CreateConversationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateConversation not implemented")
+}
+func (UnimplementedBotServiceServer) UpdateConversation(context.Context, *UpdateConversationRequest) (*UpdateConversationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateConversation not implemented")
+}
+func (UnimplementedBotServiceServer) DeleteConversation(context.Context, *DeleteConversationRequest) (*DeleteConversationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteConversation not implemented")
+}
+func (UnimplementedBotServiceServer) ListConversations(context.Context, *ListConversationsRequest) (*ListConversationsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListConversations not implemented")
+}
+func (UnimplementedBotServiceServer) StreamBotMessage(*SendBotMessageRequest, grpc.ServerStreamingServer[StreamBotResponse]) error {
+	return status.Error(codes.Unimplemented, "method StreamBotMessage not implemented")
+}
+func (UnimplementedBotServiceServer) GetUserMemory(context.Context, *GetUserMemoryRequest) (*GetUserMemoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserMemory not implemented")
+}
+func (UnimplementedBotServiceServer) SetUserMemory(context.Context, *SetUserMemoryRequest) (*SetUserMemoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetUserMemory not implemented")
+}
+func (UnimplementedBotServiceServer) CreatePrompt(context.Context, *CreatePromptRequest) (*CreatePromptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePrompt not implemented")
+}
+func (UnimplementedBotServiceServer) UpdatePrompt(context.Context, *UpdatePromptRequest) (*UpdatePromptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdatePrompt not implemented")
+}
+func (UnimplementedBotServiceServer) DeletePrompt(context.Context, *DeletePromptRequest) (*DeletePromptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePrompt not implemented")
+}
+func (UnimplementedBotServiceServer) GetPrompt(context.Context, *GetPromptRequest) (*GetPromptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPrompt not implemented")
+}
+func (UnimplementedBotServiceServer) ListPrompts(context.Context, *ListPromptsRequest) (*ListPromptsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPrompts not implemented")
 }
 func (UnimplementedBotServiceServer) mustEmbedUnimplementedBotServiceServer() {}
 func (UnimplementedBotServiceServer) testEmbeddedByValue()                    {}
@@ -326,6 +549,215 @@ func _BotService_GetBotHistory_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BotService_CreateConversation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateConversationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).CreateConversation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_CreateConversation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).CreateConversation(ctx, req.(*CreateConversationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_UpdateConversation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateConversationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).UpdateConversation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_UpdateConversation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).UpdateConversation(ctx, req.(*UpdateConversationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_DeleteConversation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteConversationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).DeleteConversation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_DeleteConversation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).DeleteConversation(ctx, req.(*DeleteConversationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_ListConversations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListConversationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).ListConversations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_ListConversations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).ListConversations(ctx, req.(*ListConversationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_StreamBotMessage_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SendBotMessageRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(BotServiceServer).StreamBotMessage(m, &grpc.GenericServerStream[SendBotMessageRequest, StreamBotResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BotService_StreamBotMessageServer = grpc.ServerStreamingServer[StreamBotResponse]
+
+func _BotService_GetUserMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserMemoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).GetUserMemory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_GetUserMemory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).GetUserMemory(ctx, req.(*GetUserMemoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_SetUserMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetUserMemoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).SetUserMemory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_SetUserMemory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).SetUserMemory(ctx, req.(*SetUserMemoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_CreatePrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePromptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).CreatePrompt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_CreatePrompt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).CreatePrompt(ctx, req.(*CreatePromptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_UpdatePrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdatePromptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).UpdatePrompt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_UpdatePrompt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).UpdatePrompt(ctx, req.(*UpdatePromptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_DeletePrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePromptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).DeletePrompt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_DeletePrompt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).DeletePrompt(ctx, req.(*DeletePromptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_GetPrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPromptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).GetPrompt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_GetPrompt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).GetPrompt(ctx, req.(*GetPromptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BotService_ListPrompts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPromptsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).ListPrompts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_ListPrompts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).ListPrompts(ctx, req.(*ListPromptsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // BotService_ServiceDesc is the grpc.ServiceDesc for BotService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -361,7 +793,57 @@ var BotService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetBotHistory",
 			Handler:    _BotService_GetBotHistory_Handler,
 		},
+		{
+			MethodName: "CreateConversation",
+			Handler:    _BotService_CreateConversation_Handler,
+		},
+		{
+			MethodName: "UpdateConversation",
+			Handler:    _BotService_UpdateConversation_Handler,
+		},
+		{
+			MethodName: "DeleteConversation",
+			Handler:    _BotService_DeleteConversation_Handler,
+		},
+		{
+			MethodName: "ListConversations",
+			Handler:    _BotService_ListConversations_Handler,
+		},
+		{
+			MethodName: "GetUserMemory",
+			Handler:    _BotService_GetUserMemory_Handler,
+		},
+		{
+			MethodName: "SetUserMemory",
+			Handler:    _BotService_SetUserMemory_Handler,
+		},
+		{
+			MethodName: "CreatePrompt",
+			Handler:    _BotService_CreatePrompt_Handler,
+		},
+		{
+			MethodName: "UpdatePrompt",
+			Handler:    _BotService_UpdatePrompt_Handler,
+		},
+		{
+			MethodName: "DeletePrompt",
+			Handler:    _BotService_DeletePrompt_Handler,
+		},
+		{
+			MethodName: "GetPrompt",
+			Handler:    _BotService_GetPrompt_Handler,
+		},
+		{
+			MethodName: "ListPrompts",
+			Handler:    _BotService_ListPrompts_Handler,
+		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamBotMessage",
+			Handler:       _BotService_StreamBotMessage_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "ai/bot.proto",
 }

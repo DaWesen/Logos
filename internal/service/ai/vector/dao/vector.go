@@ -240,6 +240,14 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 
 	vectorID := fmt.Sprintf("%d", time.Now().UnixNano())
 
+	// 把 content 存到 metadata 里，方便 RAG 查询
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if _, hasContent := metadata["content"]; !hasContent {
+		metadata["content"] = text
+	}
+
 	collectionName := "vector_" + collectionID
 	_ = r.milvus.Insert(ctx, collectionName, []string{vectorID}, [][]float32{embeddings})
 
@@ -291,7 +299,13 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 	for i := range texts {
 		metadata := map[string]string{}
 		if i < len(metadataList) {
-			metadata = metadataList[i]
+			for k, v := range metadataList[i] {
+				metadata[k] = v
+			}
+		}
+		// 把 content 存到 metadata 里，方便 RAG 查询
+		if _, hasContent := metadata["content"]; !hasContent {
+			metadata["content"] = texts[i]
 		}
 		ids[i] = fmt.Sprintf("%d_%d", time.Now().UnixNano(), i)
 		vectors = append(vectors, &model.Vector{

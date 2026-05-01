@@ -61,9 +61,10 @@ message Transaction {
 
 // 充值请求
 message DepositRequest {
-  double amount = 1;
-  string payment_method = 2;
-  map<string, string> metadata = 3;
+  string user_id = 1;
+  double amount = 2;
+  string payment_method = 3;
+  map<string, string> metadata = 4;
 }
 
 // 充值响应
@@ -75,6 +76,7 @@ message DepositResponse {
 
 // 获取账户请求
 message GetAccountRequest {
+  string user_id = 1;
 }
 
 // 获取账户响应
@@ -86,11 +88,12 @@ message GetAccountResponse {
 
 // 获取交易记录请求
 message GetTransactionsRequest {
-  TransactionType type = 1;
-  google.protobuf.Timestamp start_time = 2;
-  google.protobuf.Timestamp end_time = 3;
-  int32 page = 4;
-  int32 page_size = 5;
+  string user_id = 1;
+  TransactionType type = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  int32 page = 5;
+  int32 page_size = 6;
 }
 
 // 获取交易记录响应
@@ -103,9 +106,10 @@ message GetTransactionsResponse {
 
 // 获取用量统计请求
 message GetUsageStatsRequest {
-  BillingItem item = 1;
-  google.protobuf.Timestamp start_time = 2;
-  google.protobuf.Timestamp end_time = 3;
+  string user_id = 1;
+  BillingItem item = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
 }
 
 // 获取用量统计响应
@@ -115,10 +119,107 @@ message GetUsageStatsResponse {
   map<string, double> stats = 3;
 }
 
+// 模型调用计费请求
+message ConsumeModelCallRequest {
+  string user_id = 1;
+  string provider = 2;
+  string model_name = 3;
+  int32 token_count = 4;
+  map<string, string> metadata = 5;
+}
+
+// 模型调用计费响应
+message ConsumeModelCallResponse {
+  int32 code = 1;
+  string message = 2;
+  double amount = 3;
+}
+
+// 提现请求
+message WithdrawRequest {
+  string user_id = 1;
+  double amount = 2;
+  string withdraw_method = 3;
+  map<string, string> metadata = 4;
+}
+
+// 提现响应
+message WithdrawResponse {
+  int32 code = 1;
+  string message = 2;
+  Transaction data = 3;
+}
+
+// 退款请求
+message RefundRequest {
+  string user_id = 1;
+  string transaction_id = 2;
+  double amount = 3;
+  string reason = 4;
+  map<string, string> metadata = 5;
+}
+
+// 退款响应
+message RefundResponse {
+  int32 code = 1;
+  string message = 2;
+  Transaction data = 3;
+}
+
+// 嵌入计费请求
+message ConsumeEmbeddingRequest {
+  string user_id = 1;
+  string provider = 2;
+  string model_name = 3;
+  int32 token_count = 4;
+  int32 vector_count = 5;
+  map<string, string> metadata = 6;
+}
+
+// 嵌入计费响应
+message ConsumeEmbeddingResponse {
+  int32 code = 1;
+  string message = 2;
+  double amount = 3;
+}
+
+// 存储计费请求
+message ConsumeStorageRequest {
+  string user_id = 1;
+  string storage_type = 2;
+  int64 size_bytes = 3;
+  map<string, string> metadata = 4;
+}
+
+// 存储计费响应
+message ConsumeStorageResponse {
+  int32 code = 1;
+  string message = 2;
+  double amount = 3;
+}
+
+// 带宽计费请求
+message ConsumeBandwidthRequest {
+  string user_id = 1;
+  string bandwidth_type = 2;
+  int64 bytes = 3;
+  map<string, string> metadata = 4;
+}
+
+// 带宽计费响应
+message ConsumeBandwidthResponse {
+  int32 code = 1;
+  string message = 2;
+  double amount = 3;
+}
+
 // 计费服务
 service BillingService {
   // 充值
   rpc Deposit(DepositRequest) returns (DepositResponse);
+  
+  // 提现
+  rpc Withdraw(WithdrawRequest) returns (WithdrawResponse);
   
   // 获取账户信息
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
@@ -128,4 +229,19 @@ service BillingService {
   
   // 获取用量统计
   rpc GetUsageStats(GetUsageStatsRequest) returns (GetUsageStatsResponse);
+  
+  // 模型调用计费
+  rpc ConsumeModelCall(ConsumeModelCallRequest) returns (ConsumeModelCallResponse);
+  
+  // 嵌入计费
+  rpc ConsumeEmbedding(ConsumeEmbeddingRequest) returns (ConsumeEmbeddingResponse);
+  
+  // 退款
+  rpc Refund(RefundRequest) returns (RefundResponse);
+  
+  // 存储计费
+  rpc ConsumeStorage(ConsumeStorageRequest) returns (ConsumeStorageResponse);
+  
+  // 带宽计费
+  rpc ConsumeBandwidth(ConsumeBandwidthRequest) returns (ConsumeBandwidthResponse);
 }

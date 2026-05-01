@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"Logos/internal/service/ai/extraction/service"
-	pb "Logos/proto_gen/extraction"
 	pbCommon "Logos/proto_gen/common"
+	pb "Logos/proto_gen/extraction"
 )
 
 type KnowledgeExtractionServiceImpl struct {
@@ -197,7 +197,7 @@ func (s *KnowledgeExtractionServiceImpl) ExtractFromText(ctx context.Context, re
 		BaseResp: &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 	}
 
-	entities, relations, triples, summary, keyphrases, extractErr := s.ExtractionService.ExtractFromText(
+	entities, relations, triples, keyphrases, extractErr := s.ExtractionService.ExtractFromText(
 		ctx,
 		req.Text,
 		int32(req.Type),
@@ -284,9 +284,6 @@ func (s *KnowledgeExtractionServiceImpl) ExtractFromText(ctx context.Context, re
 		})
 	}
 
-	if summary != nil && *summary != "" {
-		resp.Summary = summary
-	}
 	if len(keyphrases) > 0 {
 		resp.Keyphrases = keyphrases
 	}

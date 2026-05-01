@@ -25,8 +25,8 @@ type Config struct {
 	Milvus        Milvus        `mapstructure:"milvus"`
 	Minio         Minio         `mapstructure:"minio"`
 	Log           Log           `mapstructure:"log"`
-	JWT           JWT     `mapstructure:"jwt"`
-	Tracing       Tracing `mapstructure:"tracing"`
+	JWT           JWT           `mapstructure:"jwt"`
+	Tracing       Tracing       `mapstructure:"tracing"`
 	Etcd          Etcd          `mapstructure:"etcd"`
 	GRPC          GRPC          `mapstructure:"grpc"`
 	Eino          Eino          `mapstructure:"eino"`
@@ -43,11 +43,17 @@ type Ports struct {
 	Vector     int `mapstructure:"vector"`
 	Search     int `mapstructure:"search"`
 	Extraction int `mapstructure:"extraction"`
+	Summary    int `mapstructure:"summary"`
+	MCP        int `mapstructure:"mcp"`
+	Moderation int `mapstructure:"moderation"`
 	Message    int `mapstructure:"message"`
 	Monitoring int `mapstructure:"monitoring"`
 	IM         int `mapstructure:"im"`
 	Chat       int `mapstructure:"chat"`
 	Contact    int `mapstructure:"contact"`
+	Bot        int `mapstructure:"bot"`
+	Billing    int `mapstructure:"billing"`
+	Process    int `mapstructure:"process"`
 }
 
 // ServiceConfig 单个服务配置
@@ -65,11 +71,16 @@ type Services struct {
 	Vector     ServiceConfig `mapstructure:"vector"`
 	Search     ServiceConfig `mapstructure:"search"`
 	Extraction ServiceConfig `mapstructure:"extraction"`
+	Summary    ServiceConfig `mapstructure:"summary"`
+	MCP        ServiceConfig `mapstructure:"mcp"`
+	Moderation ServiceConfig `mapstructure:"moderation"`
 	Message    ServiceConfig `mapstructure:"message"`
 	Monitoring ServiceConfig `mapstructure:"monitoring"`
 	IM         ServiceConfig `mapstructure:"im"`
 	Chat       ServiceConfig `mapstructure:"chat"`
 	Contact    ServiceConfig `mapstructure:"contact"`
+	Bot        ServiceConfig `mapstructure:"bot"`
+	Billing    ServiceConfig `mapstructure:"billing"`
 }
 
 // Database 数据库配置
@@ -151,9 +162,9 @@ type JWT struct {
 
 // Tracing 追踪配置（基于 OpenTelemetry）
 type Tracing struct {
-	Enable        bool    `mapstructure:"enable"`
-	OtelEndpoint  string  `mapstructure:"otel_endpoint"`
-	SampleRate    float64 `mapstructure:"sample_rate"`
+	Enable       bool    `mapstructure:"enable"`
+	OtelEndpoint string  `mapstructure:"otel_endpoint"`
+	SampleRate   float64 `mapstructure:"sample_rate"`
 }
 
 // Etcd 配置
@@ -174,10 +185,10 @@ type GRPC struct {
 
 // GRPCClient gRPC客户端配置
 type GRPCClient struct {
-	Timeout         string `mapstructure:"timeout"`
-	ConnTimeout     string `mapstructure:"conn_timeout"`
-	MaxRecvMsgSize  int    `mapstructure:"max_recv_msg_size"`
-	MaxSendMsgSize  int    `mapstructure:"max_send_msg_size"`
+	Timeout        string `mapstructure:"timeout"`
+	ConnTimeout    string `mapstructure:"conn_timeout"`
+	MaxRecvMsgSize int    `mapstructure:"max_recv_msg_size"`
+	MaxSendMsgSize int    `mapstructure:"max_send_msg_size"`
 }
 
 // GRPCServer gRPC服务器配置
@@ -338,6 +349,11 @@ func (c *Config) GetChatServerAddr() string {
 // GetContactServerAddr 获取联系人服务地址
 func (c *Config) GetContactServerAddr() string {
 	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Contact)
+}
+
+// GetBotServerAddr 获取Bot服务地址
+func (c *Config) GetBotServerAddr() string {
+	return fmt.Sprintf("0.0.0.0:%d", c.Ports.Bot)
 }
 
 // GetConfig 获取应用配置（单例模式）

@@ -1,5 +1,5 @@
-﻿﻿# ==================== 阶段1: 构建 ====================
-FROM docker.m.daocloud.io/library/golang:1.25.1-alpine AS builder
+# ==================== 阶段1: 构建 ====================
+FROM docker.1ms.run/library/golang:1.25.1-alpine AS builder
 
 RUN apk --no-cache add ca-certificates tzdata git
 
@@ -20,6 +20,7 @@ ARG LDFLAGS=""
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o gateway ./cmd/platform/gateway
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o user ./cmd/platform/user
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o monitoring ./cmd/platform/monitoring
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o billing ./cmd/platform/billing
 # ==================== Messaging 领域 ====================
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o im ./cmd/messaging/im
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o chat ./cmd/messaging/chat
@@ -33,10 +34,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o recommend ./cmd/ai/recommend
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o extraction ./cmd/ai/extraction
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o collection ./cmd/ai/collection
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o bot ./cmd/ai/bot
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o process ./cmd/ai/process
 
 # ==================== 阶段2: 运行 ====================
-# 使用具体版本号，避免 latest 标签问题
-FROM docker.m.daocloud.io/library/alpine:3.20
+FROM docker.1ms.run/library/alpine:3.20
 
 LABEL maintainer="Logos Team"
 LABEL description="Logos - AI-Powered Instant Messaging Platform"
@@ -53,6 +55,7 @@ RUN mkdir -p logs && chmod 755 logs
 COPY --from=builder /app/gateway .
 COPY --from=builder /app/user .
 COPY --from=builder /app/monitoring .
+COPY --from=builder /app/billing .
 # Messaging
 COPY --from=builder /app/im .
 COPY --from=builder /app/chat .
@@ -66,11 +69,13 @@ COPY --from=builder /app/question .
 COPY --from=builder /app/recommend .
 COPY --from=builder /app/extraction .
 COPY --from=builder /app/collection .
+COPY --from=builder /app/bot .
+COPY --from=builder /app/process .
 COPY --from=builder /app/config ./config
 
-EXPOSE 8080 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013
+EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9015 9016
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8888/health || exit 1
 
 CMD ["./gateway"]

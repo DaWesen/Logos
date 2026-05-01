@@ -55,3 +55,13 @@ func (j *JSONMap) Scan(value interface{}) error {
 func AutoMigrate(db *gorm.DB) error {
 	return db.AutoMigrate(&Entity{}, &Relation{})
 }
+
+// GetID 方法
+func (e *Entity) GetID() string {
+	return e.ID
+}
+
+// GetID 方法
+func (r *Relation) GetID() string {
+	return r.ID
+}

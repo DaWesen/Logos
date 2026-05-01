@@ -41,11 +41,13 @@ message Bot {
   ModelProvider provider = 7;
   string model = 8;
   string api_key = 9;
-  string system_prompt = 10;
-  BotStatus status = 11;
-  map<string, string> config = 12;
-  google.protobuf.Timestamp created_at = 13;
-  google.protobuf.Timestamp updated_at = 14;
+  string base_url = 10;
+  string embedding_model = 11;
+  string system_prompt = 12;
+  BotStatus status = 13;
+  map<string, string> config = 14;
+  google.protobuf.Timestamp created_at = 15;
+  google.protobuf.Timestamp updated_at = 16;
 }
 
 // Bot 对话消息
@@ -59,17 +61,35 @@ message BotMessage {
   google.protobuf.Timestamp created_at = 7;
 }
 
+// Prompt
+message Prompt {
+  string id = 1;
+  string user_id = 2;
+  string name = 3;
+  string description = 4;
+  string content = 5;
+  string type = 6;
+  bool is_preset = 7;
+  bool is_public = 8;
+  map<string, string> config = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
 // 创建 Bot 请求
 message CreateBotRequest {
-  string name = 1;
-  string description = 2;
-  string avatar = 3;
-  BotType type = 4;
-  ModelProvider provider = 5;
-  string model = 6;
-  string api_key = 7;
-  string system_prompt = 8;
-  map<string, string> config = 9;
+  string user_id = 1;
+  string name = 2;
+  string description = 3;
+  string avatar = 4;
+  BotType type = 5;
+  ModelProvider provider = 6;
+  string model = 7;
+  string api_key = 8;
+  string base_url = 9;
+  string embedding_model = 10;
+  string system_prompt = 11;
+  map<string, string> config = 12;
 }
 
 // 创建 Bot 响应
@@ -81,15 +101,18 @@ message CreateBotResponse {
 
 // 更新 Bot 请求
 message UpdateBotRequest {
-  string bot_id = 1;
-  string name = 2;
-  string description = 3;
-  string avatar = 4;
-  string model = 5;
-  string api_key = 6;
-  string system_prompt = 7;
-  map<string, string> config = 8;
-  BotStatus status = 9;
+  string user_id = 1;
+  string bot_id = 2;
+  string name = 3;
+  string description = 4;
+  string avatar = 5;
+  string model = 6;
+  string api_key = 7;
+  string base_url = 8;
+  string embedding_model = 9;
+  string system_prompt = 10;
+  map<string, string> config = 11;
+  BotStatus status = 12;
 }
 
 // 更新 Bot 响应
@@ -124,10 +147,11 @@ message GetBotResponse {
 
 // 获取 Bot 列表请求
 message ListBotsRequest {
-  BotType type = 1;
-  BotStatus status = 2;
-  int32 page = 3;
-  int32 page_size = 4;
+  string user_id = 1;
+  BotType type = 2;
+  BotStatus status = 3;
+  int32 page = 4;
+  int32 page_size = 5;
 }
 
 // 获取 Bot 列表响应
@@ -140,11 +164,12 @@ message ListBotsResponse {
 
 // 发送消息给 Bot 请求
 message SendBotMessageRequest {
-  string bot_id = 1;
-  string chat_id = 2;
-  string content = 3;
-  map<string, string> metadata = 4;
-  bool stream = 5;
+  string user_id = 1;
+  string bot_id = 2;
+  string chat_id = 3;
+  string content = 4;
+  map<string, string> metadata = 5;
+  bool stream = 6;
 }
 
 // 发送消息给 Bot 响应
@@ -176,6 +201,188 @@ message GetBotHistoryResponse {
   bool has_more = 4;
 }
 
+// 创建 Prompt 请求
+message CreatePromptRequest {
+  string user_id = 1;
+  string name = 2;
+  string description = 3;
+  string content = 4;
+  string type = 5;
+  bool is_preset = 6;
+  bool is_public = 7;
+  map<string, string> config = 8;
+}
+
+// 创建 Prompt 响应
+message CreatePromptResponse {
+  int32 code = 1;
+  string message = 2;
+  Prompt data = 3;
+}
+
+// 更新 Prompt 请求
+message UpdatePromptRequest {
+  string user_id = 1;
+  string prompt_id = 2;
+  string name = 3;
+  string description = 4;
+  string content = 5;
+  optional bool is_public = 6;
+  map<string, string> config = 7;
+}
+
+// 更新 Prompt 响应
+message UpdatePromptResponse {
+  int32 code = 1;
+  string message = 2;
+  Prompt data = 3;
+}
+
+// 删除 Prompt 请求
+message DeletePromptRequest {
+  string prompt_id = 1;
+}
+
+// 删除 Prompt 响应
+message DeletePromptResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取 Prompt 请求
+message GetPromptRequest {
+  string prompt_id = 1;
+}
+
+// 获取 Prompt 响应
+message GetPromptResponse {
+  int32 code = 1;
+  string message = 2;
+  Prompt data = 3;
+}
+
+// 获取 Prompt 列表请求
+message ListPromptsRequest {
+  string user_id = 1;
+  string type = 2;
+  optional bool is_preset = 3;
+  optional bool is_public = 4;
+  int32 page = 5;
+  int32 page_size = 6;
+}
+
+// 获取 Prompt 列表响应
+message ListPromptsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Prompt prompts = 3;
+  int32 total = 4;
+}
+
+// 对话
+message Conversation {
+  string id = 1;
+  string bot_id = 2;
+  string user_id = 3;
+  string title = 4;
+  string status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// 创建对话请求
+message CreateConversationRequest {
+  string bot_id = 1;
+  string user_id = 2;
+  string title = 3;
+}
+
+// 创建对话响应
+message CreateConversationResponse {
+  int32 code = 1;
+  string message = 2;
+  Conversation data = 3;
+}
+
+// 更新对话请求
+message UpdateConversationRequest {
+  string conversation_id = 1;
+  string title = 2;
+}
+
+// 更新对话响应
+message UpdateConversationResponse {
+  int32 code = 1;
+  string message = 2;
+  Conversation data = 3;
+}
+
+// 删除对话请求
+message DeleteConversationRequest {
+  string conversation_id = 1;
+}
+
+// 删除对话响应
+message DeleteConversationResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取对话列表请求
+message ListConversationsRequest {
+  string bot_id = 1;
+  string user_id = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// 获取对话列表响应
+message ListConversationsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Conversation conversations = 3;
+  int32 total = 4;
+}
+
+// 用户记忆
+message UserMemory {
+  string id = 1;
+  string user_id = 2;
+  string bot_id = 3;
+  string key = 4;
+  string value = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+// 获取用户记忆请求
+message GetUserMemoryRequest {
+  string user_id = 1;
+  string bot_id = 2;
+}
+
+// 获取用户记忆响应
+message GetUserMemoryResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated UserMemory memories = 3;
+}
+
+// 设置用户记忆请求
+message SetUserMemoryRequest {
+  string user_id = 1;
+  string bot_id = 2;
+  string key = 3;
+  string value = 4;
+}
+
+// 设置用户记忆响应
+message SetUserMemoryResponse {
+  int32 code = 1;
+  string message = 2;
+  UserMemory data = 3;
+}
+
 // Bot 服务
 service BotService {
   // 创建 Bot
@@ -198,4 +405,38 @@ service BotService {
   
   // 获取对话历史
   rpc GetBotHistory(GetBotHistoryRequest) returns (GetBotHistoryResponse);
+
+  // 创建对话
+  rpc CreateConversation(CreateConversationRequest) returns (CreateConversationResponse);
+  
+  // 更新对话
+  rpc UpdateConversation(UpdateConversationRequest) returns (UpdateConversationResponse);
+  
+  // 删除对话
+  rpc DeleteConversation(DeleteConversationRequest) returns (DeleteConversationResponse);
+  
+  // 获取对话列表
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse);
+
+  // 流式发送消息给 Bot
+  rpc StreamBotMessage(SendBotMessageRequest) returns (stream StreamBotResponse);
+
+  // 获取/设置用户记忆
+  rpc GetUserMemory(GetUserMemoryRequest) returns (GetUserMemoryResponse);
+  rpc SetUserMemory(SetUserMemoryRequest) returns (SetUserMemoryResponse);
+
+  // 创建 Prompt
+  rpc CreatePrompt(CreatePromptRequest) returns (CreatePromptResponse);
+  
+  // 更新 Prompt
+  rpc UpdatePrompt(UpdatePromptRequest) returns (UpdatePromptResponse);
+  
+  // 删除 Prompt
+  rpc DeletePrompt(DeletePromptRequest) returns (DeletePromptResponse);
+  
+  // 获取 Prompt
+  rpc GetPrompt(GetPromptRequest) returns (GetPromptResponse);
+  
+  // 获取 Prompt 列表
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResponse);
 }

@@ -36,7 +36,7 @@ type ExtractionService interface {
 	CancelTask(ctx context.Context, taskID string) error
 	GetExtractionResult(ctx context.Context, id string) (*model.ExtractionResult, error)
 	ListExtractionResults(ctx context.Context, taskID string) ([]*model.ExtractionResult, error)
-	ExtractFromText(ctx context.Context, text string, taskType int32, parameters map[string]string) (entities []map[string]interface{}, relations []map[string]interface{}, triples []map[string]interface{}, summary *string, keyphrases []string, err error)
+	ExtractFromText(ctx context.Context, text string, taskType int32, parameters map[string]string) (entities []map[string]interface{}, relations []map[string]interface{}, triples []map[string]interface{}, keyphrases []string, err error)
 	StartKafkaConsumer(ctx context.Context) error
 }
 
@@ -178,8 +178,6 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		extractErr = s.executeRelationExtraction(ctx, task, result)
 	case 3:
 		extractErr = s.executeTripleExtraction(ctx, task, result)
-	case 4:
-		extractErr = s.executeSummarization(ctx, task, result)
 	case 5:
 		extractErr = s.executeKeyphraseExtraction(ctx, task, result)
 	default:
@@ -286,13 +284,13 @@ func (s *extractionServiceImpl) ListExtractionResults(ctx context.Context, taskI
 	return s.repo.ListResultsByTaskID(ctx, taskID)
 }
 
-func (s *extractionServiceImpl) ExtractFromText(ctx context.Context, text string, taskType int32, parameters map[string]string) (entities []map[string]interface{}, relations []map[string]interface{}, triples []map[string]interface{}, summary *string, keyphrases []string, err error) {
+func (s *extractionServiceImpl) ExtractFromText(ctx context.Context, text string, taskType int32, parameters map[string]string) (entities []map[string]interface{}, relations []map[string]interface{}, triples []map[string]interface{}, keyphrases []string, err error) {
 	logger.Info("实时文本抽取",
 		logger.IntField("type", int(taskType)),
 		logger.StringField("text_length", fmt.Sprintf("%d", len(text))))
 
 	if text == "" {
-		return nil, nil, nil, nil, nil, errors.New("文本不能为空")
+		return nil, nil, nil, nil, errors.New("文本不能为空")
 	}
 
 	switch taskType {
@@ -302,17 +300,13 @@ func (s *extractionServiceImpl) ExtractFromText(ctx context.Context, text string
 		relations, err = s.extractRelations(ctx, text, parameters)
 	case 3:
 		triples, err = s.extractTriples(ctx, text, parameters)
-	case 4:
-		var sum string
-		sum, err = s.generateSummary(ctx, text, parameters)
-		summary = &sum
 	case 5:
 		keyphrases, err = s.extractKeyphrases(ctx, text, parameters)
 	default:
 		err = fmt.Errorf("不支持的抽取类型: %d", taskType)
 	}
 
-	return entities, relations, triples, summary, keyphrases, err
+	return entities, relations, triples, keyphrases, err
 }
 
 func (s *extractionServiceImpl) StartKafkaConsumer(ctx context.Context) error {
@@ -621,62 +615,6 @@ func (s *extractionServiceImpl) extractTriples(ctx context.Context, text string,
 		logger.IntField("count", len(triples)))
 
 	return triples, nil
-}
-
-func (s *extractionServiceImpl) executeSummarization(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {
-	parameters := make(map[string]string)
-	json.Unmarshal([]byte(task.Parameters), &parameters)
-
-	text := parameters["text"]
-	if text == "" {
-		text = parameters["content"]
-	}
-
-	summary, err := s.generateSummary(ctx, text, parameters)
-	if err != nil {
-		return err
-	}
-
-	result.Summary = &summary
-	return nil
-}
-
-func (s *extractionServiceImpl) generateSummary(ctx context.Context, text string, params map[string]string) (string, error) {
-	if s.einoClient == nil || !s.einoClient.HasChatModel() {
-		return "摘要生成服务暂不可用", nil
-	}
-
-	maxLen := "200"
-	style := "简洁"
-	if params != nil {
-		if l, ok := params["max_length"]; ok {
-			maxLen = l
-		}
-		if s, ok := params["style"]; ok {
-			style = s
-		}
-	}
-
-	prompt := fmt.Sprintf(`请对以下文本生成%s摘要，长度不超过%s字。
-直接输出摘要内容，不要任何前缀或解释。
-
-文本：
-%s`, style, maxLen, text)
-
-	messages := []string{
-		"你是一个专业的文本摘要生成系统。",
-		prompt,
-	}
-
-	response, err := s.einoClient.Chat(ctx, messages)
-	if err != nil {
-		return "", fmt.Errorf("LLM摘要生成失败: %w", err)
-	}
-
-	logger.Info("摘要生成完成",
-		logger.IntField("length", len(response)))
-
-	return response, nil
 }
 
 func (s *extractionServiceImpl) executeKeyphraseExtraction(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {

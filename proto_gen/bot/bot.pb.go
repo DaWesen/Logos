@@ -183,23 +183,25 @@ func (BotStatus) EnumDescriptor() ([]byte, []int) {
 
 // Bot
 type Bot struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	Avatar        string                 `protobuf:"bytes,5,opt,name=avatar,proto3" json:"avatar,omitempty"`
-	Type          BotType                `protobuf:"varint,6,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
-	Provider      ModelProvider          `protobuf:"varint,7,opt,name=provider,proto3,enum=ai.bot.ModelProvider" json:"provider,omitempty"`
-	Model         string                 `protobuf:"bytes,8,opt,name=model,proto3" json:"model,omitempty"`
-	ApiKey        string                 `protobuf:"bytes,9,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	SystemPrompt  string                 `protobuf:"bytes,10,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
-	Status        BotStatus              `protobuf:"varint,11,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
-	Config        map[string]string      `protobuf:"bytes,12,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId         string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Avatar         string                 `protobuf:"bytes,5,opt,name=avatar,proto3" json:"avatar,omitempty"`
+	Type           BotType                `protobuf:"varint,6,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
+	Provider       ModelProvider          `protobuf:"varint,7,opt,name=provider,proto3,enum=ai.bot.ModelProvider" json:"provider,omitempty"`
+	Model          string                 `protobuf:"bytes,8,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey         string                 `protobuf:"bytes,9,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl        string                 `protobuf:"bytes,10,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	EmbeddingModel string                 `protobuf:"bytes,11,opt,name=embedding_model,json=embeddingModel,proto3" json:"embedding_model,omitempty"`
+	SystemPrompt   string                 `protobuf:"bytes,12,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Status         BotStatus              `protobuf:"varint,13,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
+	Config         map[string]string      `protobuf:"bytes,14,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt      *timestamppb.Timestamp `protobuf:"bytes,16,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Bot) Reset() {
@@ -291,6 +293,20 @@ func (x *Bot) GetModel() string {
 func (x *Bot) GetApiKey() string {
 	if x != nil {
 		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *Bot) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *Bot) GetEmbeddingModel() string {
+	if x != nil {
+		return x.EmbeddingModel
 	}
 	return ""
 }
@@ -423,25 +439,153 @@ func (x *BotMessage) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// 创建 Bot 请求
-type CreateBotRequest struct {
+// Prompt
+type Prompt struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
-	Avatar        string                 `protobuf:"bytes,3,opt,name=avatar,proto3" json:"avatar,omitempty"`
-	Type          BotType                `protobuf:"varint,4,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
-	Provider      ModelProvider          `protobuf:"varint,5,opt,name=provider,proto3,enum=ai.bot.ModelProvider" json:"provider,omitempty"`
-	Model         string                 `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
-	ApiKey        string                 `protobuf:"bytes,7,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	SystemPrompt  string                 `protobuf:"bytes,8,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Content       string                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
+	Type          string                 `protobuf:"bytes,6,opt,name=type,proto3" json:"type,omitempty"`
+	IsPreset      bool                   `protobuf:"varint,7,opt,name=is_preset,json=isPreset,proto3" json:"is_preset,omitempty"`
+	IsPublic      bool                   `protobuf:"varint,8,opt,name=is_public,json=isPublic,proto3" json:"is_public,omitempty"`
 	Config        map[string]string      `protobuf:"bytes,9,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *Prompt) Reset() {
+	*x = Prompt{}
+	mi := &file_ai_bot_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Prompt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Prompt) ProtoMessage() {}
+
+func (x *Prompt) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Prompt.ProtoReflect.Descriptor instead.
+func (*Prompt) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Prompt) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Prompt) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *Prompt) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Prompt) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *Prompt) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *Prompt) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Prompt) GetIsPreset() bool {
+	if x != nil {
+		return x.IsPreset
+	}
+	return false
+}
+
+func (x *Prompt) GetIsPublic() bool {
+	if x != nil {
+		return x.IsPublic
+	}
+	return false
+}
+
+func (x *Prompt) GetConfig() map[string]string {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *Prompt) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *Prompt) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 创建 Bot 请求
+type CreateBotRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UserId         string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Avatar         string                 `protobuf:"bytes,4,opt,name=avatar,proto3" json:"avatar,omitempty"`
+	Type           BotType                `protobuf:"varint,5,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
+	Provider       ModelProvider          `protobuf:"varint,6,opt,name=provider,proto3,enum=ai.bot.ModelProvider" json:"provider,omitempty"`
+	Model          string                 `protobuf:"bytes,7,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey         string                 `protobuf:"bytes,8,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl        string                 `protobuf:"bytes,9,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	EmbeddingModel string                 `protobuf:"bytes,10,opt,name=embedding_model,json=embeddingModel,proto3" json:"embedding_model,omitempty"`
+	SystemPrompt   string                 `protobuf:"bytes,11,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Config         map[string]string      `protobuf:"bytes,12,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
 func (x *CreateBotRequest) Reset() {
 	*x = CreateBotRequest{}
-	mi := &file_ai_bot_proto_msgTypes[2]
+	mi := &file_ai_bot_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -453,7 +597,7 @@ func (x *CreateBotRequest) String() string {
 func (*CreateBotRequest) ProtoMessage() {}
 
 func (x *CreateBotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[2]
+	mi := &file_ai_bot_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -466,7 +610,14 @@ func (x *CreateBotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBotRequest.ProtoReflect.Descriptor instead.
 func (*CreateBotRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{2}
+	return file_ai_bot_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CreateBotRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
 }
 
 func (x *CreateBotRequest) GetName() string {
@@ -518,6 +669,20 @@ func (x *CreateBotRequest) GetApiKey() string {
 	return ""
 }
 
+func (x *CreateBotRequest) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *CreateBotRequest) GetEmbeddingModel() string {
+	if x != nil {
+		return x.EmbeddingModel
+	}
+	return ""
+}
+
 func (x *CreateBotRequest) GetSystemPrompt() string {
 	if x != nil {
 		return x.SystemPrompt
@@ -544,7 +709,7 @@ type CreateBotResponse struct {
 
 func (x *CreateBotResponse) Reset() {
 	*x = CreateBotResponse{}
-	mi := &file_ai_bot_proto_msgTypes[3]
+	mi := &file_ai_bot_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -556,7 +721,7 @@ func (x *CreateBotResponse) String() string {
 func (*CreateBotResponse) ProtoMessage() {}
 
 func (x *CreateBotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[3]
+	mi := &file_ai_bot_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -569,7 +734,7 @@ func (x *CreateBotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBotResponse.ProtoReflect.Descriptor instead.
 func (*CreateBotResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{3}
+	return file_ai_bot_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *CreateBotResponse) GetCode() int32 {
@@ -595,23 +760,26 @@ func (x *CreateBotResponse) GetData() *Bot {
 
 // 更新 Bot 请求
 type UpdateBotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BotId         string                 `protobuf:"bytes,1,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	Avatar        string                 `protobuf:"bytes,4,opt,name=avatar,proto3" json:"avatar,omitempty"`
-	Model         string                 `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
-	ApiKey        string                 `protobuf:"bytes,6,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	SystemPrompt  string                 `protobuf:"bytes,7,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
-	Config        map[string]string      `protobuf:"bytes,8,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Status        BotStatus              `protobuf:"varint,9,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UserId         string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId          string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Avatar         string                 `protobuf:"bytes,5,opt,name=avatar,proto3" json:"avatar,omitempty"`
+	Model          string                 `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey         string                 `protobuf:"bytes,7,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl        string                 `protobuf:"bytes,8,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	EmbeddingModel string                 `protobuf:"bytes,9,opt,name=embedding_model,json=embeddingModel,proto3" json:"embedding_model,omitempty"`
+	SystemPrompt   string                 `protobuf:"bytes,10,opt,name=system_prompt,json=systemPrompt,proto3" json:"system_prompt,omitempty"`
+	Config         map[string]string      `protobuf:"bytes,11,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Status         BotStatus              `protobuf:"varint,12,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *UpdateBotRequest) Reset() {
 	*x = UpdateBotRequest{}
-	mi := &file_ai_bot_proto_msgTypes[4]
+	mi := &file_ai_bot_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -623,7 +791,7 @@ func (x *UpdateBotRequest) String() string {
 func (*UpdateBotRequest) ProtoMessage() {}
 
 func (x *UpdateBotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[4]
+	mi := &file_ai_bot_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -636,7 +804,14 @@ func (x *UpdateBotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateBotRequest.ProtoReflect.Descriptor instead.
 func (*UpdateBotRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{4}
+	return file_ai_bot_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *UpdateBotRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
 }
 
 func (x *UpdateBotRequest) GetBotId() string {
@@ -681,6 +856,20 @@ func (x *UpdateBotRequest) GetApiKey() string {
 	return ""
 }
 
+func (x *UpdateBotRequest) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *UpdateBotRequest) GetEmbeddingModel() string {
+	if x != nil {
+		return x.EmbeddingModel
+	}
+	return ""
+}
+
 func (x *UpdateBotRequest) GetSystemPrompt() string {
 	if x != nil {
 		return x.SystemPrompt
@@ -714,7 +903,7 @@ type UpdateBotResponse struct {
 
 func (x *UpdateBotResponse) Reset() {
 	*x = UpdateBotResponse{}
-	mi := &file_ai_bot_proto_msgTypes[5]
+	mi := &file_ai_bot_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -726,7 +915,7 @@ func (x *UpdateBotResponse) String() string {
 func (*UpdateBotResponse) ProtoMessage() {}
 
 func (x *UpdateBotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[5]
+	mi := &file_ai_bot_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -739,7 +928,7 @@ func (x *UpdateBotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateBotResponse.ProtoReflect.Descriptor instead.
 func (*UpdateBotResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{5}
+	return file_ai_bot_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateBotResponse) GetCode() int32 {
@@ -773,7 +962,7 @@ type DeleteBotRequest struct {
 
 func (x *DeleteBotRequest) Reset() {
 	*x = DeleteBotRequest{}
-	mi := &file_ai_bot_proto_msgTypes[6]
+	mi := &file_ai_bot_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +974,7 @@ func (x *DeleteBotRequest) String() string {
 func (*DeleteBotRequest) ProtoMessage() {}
 
 func (x *DeleteBotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[6]
+	mi := &file_ai_bot_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +987,7 @@ func (x *DeleteBotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBotRequest.ProtoReflect.Descriptor instead.
 func (*DeleteBotRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{6}
+	return file_ai_bot_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteBotRequest) GetBotId() string {
@@ -819,7 +1008,7 @@ type DeleteBotResponse struct {
 
 func (x *DeleteBotResponse) Reset() {
 	*x = DeleteBotResponse{}
-	mi := &file_ai_bot_proto_msgTypes[7]
+	mi := &file_ai_bot_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +1020,7 @@ func (x *DeleteBotResponse) String() string {
 func (*DeleteBotResponse) ProtoMessage() {}
 
 func (x *DeleteBotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[7]
+	mi := &file_ai_bot_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +1033,7 @@ func (x *DeleteBotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBotResponse.ProtoReflect.Descriptor instead.
 func (*DeleteBotResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{7}
+	return file_ai_bot_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteBotResponse) GetCode() int32 {
@@ -871,7 +1060,7 @@ type GetBotRequest struct {
 
 func (x *GetBotRequest) Reset() {
 	*x = GetBotRequest{}
-	mi := &file_ai_bot_proto_msgTypes[8]
+	mi := &file_ai_bot_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -883,7 +1072,7 @@ func (x *GetBotRequest) String() string {
 func (*GetBotRequest) ProtoMessage() {}
 
 func (x *GetBotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[8]
+	mi := &file_ai_bot_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -896,7 +1085,7 @@ func (x *GetBotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBotRequest.ProtoReflect.Descriptor instead.
 func (*GetBotRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{8}
+	return file_ai_bot_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetBotRequest) GetBotId() string {
@@ -918,7 +1107,7 @@ type GetBotResponse struct {
 
 func (x *GetBotResponse) Reset() {
 	*x = GetBotResponse{}
-	mi := &file_ai_bot_proto_msgTypes[9]
+	mi := &file_ai_bot_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -930,7 +1119,7 @@ func (x *GetBotResponse) String() string {
 func (*GetBotResponse) ProtoMessage() {}
 
 func (x *GetBotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[9]
+	mi := &file_ai_bot_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -943,7 +1132,7 @@ func (x *GetBotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBotResponse.ProtoReflect.Descriptor instead.
 func (*GetBotResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{9}
+	return file_ai_bot_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetBotResponse) GetCode() int32 {
@@ -970,17 +1159,18 @@ func (x *GetBotResponse) GetData() *Bot {
 // 获取 Bot 列表请求
 type ListBotsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          BotType                `protobuf:"varint,1,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
-	Status        BotStatus              `protobuf:"varint,2,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
-	Page          int32                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
-	PageSize      int32                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Type          BotType                `protobuf:"varint,2,opt,name=type,proto3,enum=ai.bot.BotType" json:"type,omitempty"`
+	Status        BotStatus              `protobuf:"varint,3,opt,name=status,proto3,enum=ai.bot.BotStatus" json:"status,omitempty"`
+	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ListBotsRequest) Reset() {
 	*x = ListBotsRequest{}
-	mi := &file_ai_bot_proto_msgTypes[10]
+	mi := &file_ai_bot_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -992,7 +1182,7 @@ func (x *ListBotsRequest) String() string {
 func (*ListBotsRequest) ProtoMessage() {}
 
 func (x *ListBotsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[10]
+	mi := &file_ai_bot_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1005,7 +1195,14 @@ func (x *ListBotsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBotsRequest.ProtoReflect.Descriptor instead.
 func (*ListBotsRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{10}
+	return file_ai_bot_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ListBotsRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
 }
 
 func (x *ListBotsRequest) GetType() BotType {
@@ -1049,7 +1246,7 @@ type ListBotsResponse struct {
 
 func (x *ListBotsResponse) Reset() {
 	*x = ListBotsResponse{}
-	mi := &file_ai_bot_proto_msgTypes[11]
+	mi := &file_ai_bot_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1258,7 @@ func (x *ListBotsResponse) String() string {
 func (*ListBotsResponse) ProtoMessage() {}
 
 func (x *ListBotsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[11]
+	mi := &file_ai_bot_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1271,7 @@ func (x *ListBotsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBotsResponse.ProtoReflect.Descriptor instead.
 func (*ListBotsResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{11}
+	return file_ai_bot_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListBotsResponse) GetCode() int32 {
@@ -1108,18 +1305,19 @@ func (x *ListBotsResponse) GetTotal() int32 {
 // 发送消息给 Bot 请求
 type SendBotMessageRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	BotId         string                 `protobuf:"bytes,1,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
-	ChatId        string                 `protobuf:"bytes,2,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	Content       string                 `protobuf:"bytes,3,opt,name=content,proto3" json:"content,omitempty"`
-	Metadata      map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Stream        bool                   `protobuf:"varint,5,opt,name=stream,proto3" json:"stream,omitempty"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	ChatId        string                 `protobuf:"bytes,3,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Content       string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Stream        bool                   `protobuf:"varint,6,opt,name=stream,proto3" json:"stream,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SendBotMessageRequest) Reset() {
 	*x = SendBotMessageRequest{}
-	mi := &file_ai_bot_proto_msgTypes[12]
+	mi := &file_ai_bot_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1131,7 +1329,7 @@ func (x *SendBotMessageRequest) String() string {
 func (*SendBotMessageRequest) ProtoMessage() {}
 
 func (x *SendBotMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[12]
+	mi := &file_ai_bot_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1144,7 +1342,14 @@ func (x *SendBotMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendBotMessageRequest.ProtoReflect.Descriptor instead.
 func (*SendBotMessageRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{12}
+	return file_ai_bot_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SendBotMessageRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
 }
 
 func (x *SendBotMessageRequest) GetBotId() string {
@@ -1194,7 +1399,7 @@ type SendBotMessageResponse struct {
 
 func (x *SendBotMessageResponse) Reset() {
 	*x = SendBotMessageResponse{}
-	mi := &file_ai_bot_proto_msgTypes[13]
+	mi := &file_ai_bot_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1206,7 +1411,7 @@ func (x *SendBotMessageResponse) String() string {
 func (*SendBotMessageResponse) ProtoMessage() {}
 
 func (x *SendBotMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[13]
+	mi := &file_ai_bot_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1219,7 +1424,7 @@ func (x *SendBotMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SendBotMessageResponse.ProtoReflect.Descriptor instead.
 func (*SendBotMessageResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{13}
+	return file_ai_bot_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SendBotMessageResponse) GetCode() int32 {
@@ -1254,7 +1459,7 @@ type StreamBotResponse struct {
 
 func (x *StreamBotResponse) Reset() {
 	*x = StreamBotResponse{}
-	mi := &file_ai_bot_proto_msgTypes[14]
+	mi := &file_ai_bot_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1266,7 +1471,7 @@ func (x *StreamBotResponse) String() string {
 func (*StreamBotResponse) ProtoMessage() {}
 
 func (x *StreamBotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[14]
+	mi := &file_ai_bot_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1279,7 +1484,7 @@ func (x *StreamBotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamBotResponse.ProtoReflect.Descriptor instead.
 func (*StreamBotResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{14}
+	return file_ai_bot_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *StreamBotResponse) GetContent() string {
@@ -1309,7 +1514,7 @@ type GetBotHistoryRequest struct {
 
 func (x *GetBotHistoryRequest) Reset() {
 	*x = GetBotHistoryRequest{}
-	mi := &file_ai_bot_proto_msgTypes[15]
+	mi := &file_ai_bot_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1321,7 +1526,7 @@ func (x *GetBotHistoryRequest) String() string {
 func (*GetBotHistoryRequest) ProtoMessage() {}
 
 func (x *GetBotHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[15]
+	mi := &file_ai_bot_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1334,7 +1539,7 @@ func (x *GetBotHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBotHistoryRequest.ProtoReflect.Descriptor instead.
 func (*GetBotHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{15}
+	return file_ai_bot_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetBotHistoryRequest) GetBotId() string {
@@ -1378,7 +1583,7 @@ type GetBotHistoryResponse struct {
 
 func (x *GetBotHistoryResponse) Reset() {
 	*x = GetBotHistoryResponse{}
-	mi := &file_ai_bot_proto_msgTypes[16]
+	mi := &file_ai_bot_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1390,7 +1595,7 @@ func (x *GetBotHistoryResponse) String() string {
 func (*GetBotHistoryResponse) ProtoMessage() {}
 
 func (x *GetBotHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_bot_proto_msgTypes[16]
+	mi := &file_ai_bot_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1403,7 +1608,7 @@ func (x *GetBotHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBotHistoryResponse.ProtoReflect.Descriptor instead.
 func (*GetBotHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_ai_bot_proto_rawDescGZIP(), []int{16}
+	return file_ai_bot_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetBotHistoryResponse) GetCode() int32 {
@@ -1434,11 +1639,1587 @@ func (x *GetBotHistoryResponse) GetHasMore() bool {
 	return false
 }
 
+// 创建 Prompt 请求
+type CreatePromptRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Content       string                 `protobuf:"bytes,4,opt,name=content,proto3" json:"content,omitempty"`
+	Type          string                 `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
+	IsPreset      bool                   `protobuf:"varint,6,opt,name=is_preset,json=isPreset,proto3" json:"is_preset,omitempty"`
+	IsPublic      bool                   `protobuf:"varint,7,opt,name=is_public,json=isPublic,proto3" json:"is_public,omitempty"`
+	Config        map[string]string      `protobuf:"bytes,8,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePromptRequest) Reset() {
+	*x = CreatePromptRequest{}
+	mi := &file_ai_bot_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePromptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePromptRequest) ProtoMessage() {}
+
+func (x *CreatePromptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePromptRequest.ProtoReflect.Descriptor instead.
+func (*CreatePromptRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *CreatePromptRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *CreatePromptRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreatePromptRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *CreatePromptRequest) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *CreatePromptRequest) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *CreatePromptRequest) GetIsPreset() bool {
+	if x != nil {
+		return x.IsPreset
+	}
+	return false
+}
+
+func (x *CreatePromptRequest) GetIsPublic() bool {
+	if x != nil {
+		return x.IsPublic
+	}
+	return false
+}
+
+func (x *CreatePromptRequest) GetConfig() map[string]string {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+// 创建 Prompt 响应
+type CreatePromptResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *Prompt                `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePromptResponse) Reset() {
+	*x = CreatePromptResponse{}
+	mi := &file_ai_bot_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePromptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePromptResponse) ProtoMessage() {}
+
+func (x *CreatePromptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePromptResponse.ProtoReflect.Descriptor instead.
+func (*CreatePromptResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CreatePromptResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreatePromptResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CreatePromptResponse) GetData() *Prompt {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 更新 Prompt 请求
+type UpdatePromptRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	PromptId      string                 `protobuf:"bytes,2,opt,name=prompt_id,json=promptId,proto3" json:"prompt_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Content       string                 `protobuf:"bytes,5,opt,name=content,proto3" json:"content,omitempty"`
+	IsPublic      *bool                  `protobuf:"varint,6,opt,name=is_public,json=isPublic,proto3,oneof" json:"is_public,omitempty"`
+	Config        map[string]string      `protobuf:"bytes,7,rep,name=config,proto3" json:"config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdatePromptRequest) Reset() {
+	*x = UpdatePromptRequest{}
+	mi := &file_ai_bot_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdatePromptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdatePromptRequest) ProtoMessage() {}
+
+func (x *UpdatePromptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdatePromptRequest.ProtoReflect.Descriptor instead.
+func (*UpdatePromptRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *UpdatePromptRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *UpdatePromptRequest) GetPromptId() string {
+	if x != nil {
+		return x.PromptId
+	}
+	return ""
+}
+
+func (x *UpdatePromptRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdatePromptRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *UpdatePromptRequest) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *UpdatePromptRequest) GetIsPublic() bool {
+	if x != nil && x.IsPublic != nil {
+		return *x.IsPublic
+	}
+	return false
+}
+
+func (x *UpdatePromptRequest) GetConfig() map[string]string {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+// 更新 Prompt 响应
+type UpdatePromptResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *Prompt                `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdatePromptResponse) Reset() {
+	*x = UpdatePromptResponse{}
+	mi := &file_ai_bot_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdatePromptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdatePromptResponse) ProtoMessage() {}
+
+func (x *UpdatePromptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdatePromptResponse.ProtoReflect.Descriptor instead.
+func (*UpdatePromptResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *UpdatePromptResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UpdatePromptResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *UpdatePromptResponse) GetData() *Prompt {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 删除 Prompt 请求
+type DeletePromptRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PromptId      string                 `protobuf:"bytes,1,opt,name=prompt_id,json=promptId,proto3" json:"prompt_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeletePromptRequest) Reset() {
+	*x = DeletePromptRequest{}
+	mi := &file_ai_bot_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeletePromptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeletePromptRequest) ProtoMessage() {}
+
+func (x *DeletePromptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeletePromptRequest.ProtoReflect.Descriptor instead.
+func (*DeletePromptRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *DeletePromptRequest) GetPromptId() string {
+	if x != nil {
+		return x.PromptId
+	}
+	return ""
+}
+
+// 删除 Prompt 响应
+type DeletePromptResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeletePromptResponse) Reset() {
+	*x = DeletePromptResponse{}
+	mi := &file_ai_bot_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeletePromptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeletePromptResponse) ProtoMessage() {}
+
+func (x *DeletePromptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeletePromptResponse.ProtoReflect.Descriptor instead.
+func (*DeletePromptResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DeletePromptResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeletePromptResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取 Prompt 请求
+type GetPromptRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PromptId      string                 `protobuf:"bytes,1,opt,name=prompt_id,json=promptId,proto3" json:"prompt_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPromptRequest) Reset() {
+	*x = GetPromptRequest{}
+	mi := &file_ai_bot_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPromptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPromptRequest) ProtoMessage() {}
+
+func (x *GetPromptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPromptRequest.ProtoReflect.Descriptor instead.
+func (*GetPromptRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *GetPromptRequest) GetPromptId() string {
+	if x != nil {
+		return x.PromptId
+	}
+	return ""
+}
+
+// 获取 Prompt 响应
+type GetPromptResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *Prompt                `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPromptResponse) Reset() {
+	*x = GetPromptResponse{}
+	mi := &file_ai_bot_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPromptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPromptResponse) ProtoMessage() {}
+
+func (x *GetPromptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPromptResponse.ProtoReflect.Descriptor instead.
+func (*GetPromptResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *GetPromptResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetPromptResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetPromptResponse) GetData() *Prompt {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 获取 Prompt 列表请求
+type ListPromptsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	IsPreset      *bool                  `protobuf:"varint,3,opt,name=is_preset,json=isPreset,proto3,oneof" json:"is_preset,omitempty"`
+	IsPublic      *bool                  `protobuf:"varint,4,opt,name=is_public,json=isPublic,proto3,oneof" json:"is_public,omitempty"`
+	Page          int32                  `protobuf:"varint,5,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,6,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPromptsRequest) Reset() {
+	*x = ListPromptsRequest{}
+	mi := &file_ai_bot_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPromptsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPromptsRequest) ProtoMessage() {}
+
+func (x *ListPromptsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPromptsRequest.ProtoReflect.Descriptor instead.
+func (*ListPromptsRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ListPromptsRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *ListPromptsRequest) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ListPromptsRequest) GetIsPreset() bool {
+	if x != nil && x.IsPreset != nil {
+		return *x.IsPreset
+	}
+	return false
+}
+
+func (x *ListPromptsRequest) GetIsPublic() bool {
+	if x != nil && x.IsPublic != nil {
+		return *x.IsPublic
+	}
+	return false
+}
+
+func (x *ListPromptsRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListPromptsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取 Prompt 列表响应
+type ListPromptsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Prompts       []*Prompt              `protobuf:"bytes,3,rep,name=prompts,proto3" json:"prompts,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPromptsResponse) Reset() {
+	*x = ListPromptsResponse{}
+	mi := &file_ai_bot_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPromptsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPromptsResponse) ProtoMessage() {}
+
+func (x *ListPromptsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPromptsResponse.ProtoReflect.Descriptor instead.
+func (*ListPromptsResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ListPromptsResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *ListPromptsResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ListPromptsResponse) GetPrompts() []*Prompt {
+	if x != nil {
+		return x.Prompts
+	}
+	return nil
+}
+
+func (x *ListPromptsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// 对话
+type Conversation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Title         string                 `protobuf:"bytes,4,opt,name=title,proto3" json:"title,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Conversation) Reset() {
+	*x = Conversation{}
+	mi := &file_ai_bot_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Conversation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Conversation) ProtoMessage() {}
+
+func (x *Conversation) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Conversation.ProtoReflect.Descriptor instead.
+func (*Conversation) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *Conversation) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Conversation) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *Conversation) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *Conversation) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *Conversation) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Conversation) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *Conversation) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 创建对话请求
+type CreateConversationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BotId         string                 `protobuf:"bytes,1,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Title         string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateConversationRequest) Reset() {
+	*x = CreateConversationRequest{}
+	mi := &file_ai_bot_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateConversationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateConversationRequest) ProtoMessage() {}
+
+func (x *CreateConversationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateConversationRequest.ProtoReflect.Descriptor instead.
+func (*CreateConversationRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CreateConversationRequest) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *CreateConversationRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *CreateConversationRequest) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+// 创建对话响应
+type CreateConversationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *Conversation          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateConversationResponse) Reset() {
+	*x = CreateConversationResponse{}
+	mi := &file_ai_bot_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateConversationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateConversationResponse) ProtoMessage() {}
+
+func (x *CreateConversationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateConversationResponse.ProtoReflect.Descriptor instead.
+func (*CreateConversationResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *CreateConversationResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreateConversationResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CreateConversationResponse) GetData() *Conversation {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 更新对话请求
+type UpdateConversationRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ConversationId string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	Title          string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UpdateConversationRequest) Reset() {
+	*x = UpdateConversationRequest{}
+	mi := &file_ai_bot_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConversationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConversationRequest) ProtoMessage() {}
+
+func (x *UpdateConversationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConversationRequest.ProtoReflect.Descriptor instead.
+func (*UpdateConversationRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *UpdateConversationRequest) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *UpdateConversationRequest) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+// 更新对话响应
+type UpdateConversationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *Conversation          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateConversationResponse) Reset() {
+	*x = UpdateConversationResponse{}
+	mi := &file_ai_bot_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateConversationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateConversationResponse) ProtoMessage() {}
+
+func (x *UpdateConversationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateConversationResponse.ProtoReflect.Descriptor instead.
+func (*UpdateConversationResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *UpdateConversationResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UpdateConversationResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *UpdateConversationResponse) GetData() *Conversation {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 删除对话请求
+type DeleteConversationRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ConversationId string                 `protobuf:"bytes,1,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeleteConversationRequest) Reset() {
+	*x = DeleteConversationRequest{}
+	mi := &file_ai_bot_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteConversationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteConversationRequest) ProtoMessage() {}
+
+func (x *DeleteConversationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteConversationRequest.ProtoReflect.Descriptor instead.
+func (*DeleteConversationRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *DeleteConversationRequest) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+// 删除对话响应
+type DeleteConversationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteConversationResponse) Reset() {
+	*x = DeleteConversationResponse{}
+	mi := &file_ai_bot_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteConversationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteConversationResponse) ProtoMessage() {}
+
+func (x *DeleteConversationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteConversationResponse.ProtoReflect.Descriptor instead.
+func (*DeleteConversationResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *DeleteConversationResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeleteConversationResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 获取对话列表请求
+type ListConversationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BotId         string                 `protobuf:"bytes,1,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Page          int32                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsRequest) Reset() {
+	*x = ListConversationsRequest{}
+	mi := &file_ai_bot_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsRequest) ProtoMessage() {}
+
+func (x *ListConversationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsRequest.ProtoReflect.Descriptor instead.
+func (*ListConversationsRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *ListConversationsRequest) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *ListConversationsRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *ListConversationsRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListConversationsRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取对话列表响应
+type ListConversationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Conversations []*Conversation        `protobuf:"bytes,3,rep,name=conversations,proto3" json:"conversations,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConversationsResponse) Reset() {
+	*x = ListConversationsResponse{}
+	mi := &file_ai_bot_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConversationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConversationsResponse) ProtoMessage() {}
+
+func (x *ListConversationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConversationsResponse.ProtoReflect.Descriptor instead.
+func (*ListConversationsResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ListConversationsResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *ListConversationsResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ListConversationsResponse) GetConversations() []*Conversation {
+	if x != nil {
+		return x.Conversations
+	}
+	return nil
+}
+
+func (x *ListConversationsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// 用户记忆
+type UserMemory struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId         string                 `protobuf:"bytes,3,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	Key           string                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserMemory) Reset() {
+	*x = UserMemory{}
+	mi := &file_ai_bot_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserMemory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserMemory) ProtoMessage() {}
+
+func (x *UserMemory) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserMemory.ProtoReflect.Descriptor instead.
+func (*UserMemory) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *UserMemory) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *UserMemory) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *UserMemory) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *UserMemory) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *UserMemory) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *UserMemory) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *UserMemory) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 获取用户记忆请求
+type GetUserMemoryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserMemoryRequest) Reset() {
+	*x = GetUserMemoryRequest{}
+	mi := &file_ai_bot_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserMemoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserMemoryRequest) ProtoMessage() {}
+
+func (x *GetUserMemoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserMemoryRequest.ProtoReflect.Descriptor instead.
+func (*GetUserMemoryRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *GetUserMemoryRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *GetUserMemoryRequest) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+// 获取用户记忆响应
+type GetUserMemoryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Memories      []*UserMemory          `protobuf:"bytes,3,rep,name=memories,proto3" json:"memories,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetUserMemoryResponse) Reset() {
+	*x = GetUserMemoryResponse{}
+	mi := &file_ai_bot_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetUserMemoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetUserMemoryResponse) ProtoMessage() {}
+
+func (x *GetUserMemoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetUserMemoryResponse.ProtoReflect.Descriptor instead.
+func (*GetUserMemoryResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *GetUserMemoryResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetUserMemoryResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetUserMemoryResponse) GetMemories() []*UserMemory {
+	if x != nil {
+		return x.Memories
+	}
+	return nil
+}
+
+// 设置用户记忆请求
+type SetUserMemoryRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	Value         string                 `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetUserMemoryRequest) Reset() {
+	*x = SetUserMemoryRequest{}
+	mi := &file_ai_bot_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetUserMemoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetUserMemoryRequest) ProtoMessage() {}
+
+func (x *SetUserMemoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetUserMemoryRequest.ProtoReflect.Descriptor instead.
+func (*SetUserMemoryRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *SetUserMemoryRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *SetUserMemoryRequest) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *SetUserMemoryRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *SetUserMemoryRequest) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+// 设置用户记忆响应
+type SetUserMemoryResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *UserMemory            `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetUserMemoryResponse) Reset() {
+	*x = SetUserMemoryResponse{}
+	mi := &file_ai_bot_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetUserMemoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetUserMemoryResponse) ProtoMessage() {}
+
+func (x *SetUserMemoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetUserMemoryResponse.ProtoReflect.Descriptor instead.
+func (*SetUserMemoryResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *SetUserMemoryResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SetUserMemoryResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SetUserMemoryResponse) GetData() *UserMemory {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
 var File_ai_bot_proto protoreflect.FileDescriptor
 
 const file_ai_bot_proto_rawDesc = "" +
 	"\n" +
-	"\fai/bot.proto\x12\x06ai.bot\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x04\n" +
+	"\fai/bot.proto\x12\x06ai.bot\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x04\n" +
 	"\x03Bot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
@@ -1448,15 +3229,17 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x04type\x18\x06 \x01(\x0e2\x0f.ai.bot.BotTypeR\x04type\x121\n" +
 	"\bprovider\x18\a \x01(\x0e2\x15.ai.bot.ModelProviderR\bprovider\x12\x14\n" +
 	"\x05model\x18\b \x01(\tR\x05model\x12\x17\n" +
-	"\aapi_key\x18\t \x01(\tR\x06apiKey\x12#\n" +
-	"\rsystem_prompt\x18\n" +
-	" \x01(\tR\fsystemPrompt\x12)\n" +
-	"\x06status\x18\v \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x12/\n" +
-	"\x06config\x18\f \x03(\v2\x17.ai.bot.Bot.ConfigEntryR\x06config\x129\n" +
+	"\aapi_key\x18\t \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\n" +
+	" \x01(\tR\abaseUrl\x12'\n" +
+	"\x0fembedding_model\x18\v \x01(\tR\x0eembeddingModel\x12#\n" +
+	"\rsystem_prompt\x18\f \x01(\tR\fsystemPrompt\x12)\n" +
+	"\x06status\x18\r \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x12/\n" +
+	"\x06config\x18\x0e \x03(\v2\x17.ai.bot.Bot.ConfigEntryR\x06config\x129\n" +
 	"\n" +
-	"created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"created_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
+	"updated_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb0\x02\n" +
@@ -1472,34 +3255,60 @@ const file_ai_bot_proto_rawDesc = "" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x85\x03\n" +
-	"\x10CreateBotRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x16\n" +
-	"\x06avatar\x18\x03 \x01(\tR\x06avatar\x12#\n" +
-	"\x04type\x18\x04 \x01(\x0e2\x0f.ai.bot.BotTypeR\x04type\x121\n" +
-	"\bprovider\x18\x05 \x01(\x0e2\x15.ai.bot.ModelProviderR\bprovider\x12\x14\n" +
-	"\x05model\x18\x06 \x01(\tR\x05model\x12\x17\n" +
-	"\aapi_key\x18\a \x01(\tR\x06apiKey\x12#\n" +
-	"\rsystem_prompt\x18\b \x01(\tR\fsystemPrompt\x12<\n" +
-	"\x06config\x18\t \x03(\v2$.ai.bot.CreateBotRequest.ConfigEntryR\x06config\x1a9\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb4\x03\n" +
+	"\x06Prompt\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x18\n" +
+	"\acontent\x18\x05 \x01(\tR\acontent\x12\x12\n" +
+	"\x04type\x18\x06 \x01(\tR\x04type\x12\x1b\n" +
+	"\tis_preset\x18\a \x01(\bR\bisPreset\x12\x1b\n" +
+	"\tis_public\x18\b \x01(\bR\bisPublic\x122\n" +
+	"\x06config\x18\t \x03(\v2\x1a.ai.bot.Prompt.ConfigEntryR\x06config\x129\n" +
+	"\n" +
+	"created_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a9\n" +
+	"\vConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe2\x03\n" +
+	"\x10CreateBotRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06avatar\x18\x04 \x01(\tR\x06avatar\x12#\n" +
+	"\x04type\x18\x05 \x01(\x0e2\x0f.ai.bot.BotTypeR\x04type\x121\n" +
+	"\bprovider\x18\x06 \x01(\x0e2\x15.ai.bot.ModelProviderR\bprovider\x12\x14\n" +
+	"\x05model\x18\a \x01(\tR\x05model\x12\x17\n" +
+	"\aapi_key\x18\b \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\t \x01(\tR\abaseUrl\x12'\n" +
+	"\x0fembedding_model\x18\n" +
+	" \x01(\tR\x0eembeddingModel\x12#\n" +
+	"\rsystem_prompt\x18\v \x01(\tR\fsystemPrompt\x12<\n" +
+	"\x06config\x18\f \x03(\v2$.ai.bot.CreateBotRequest.ConfigEntryR\x06config\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"b\n" +
 	"\x11CreateBotResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
-	"\x04data\x18\x03 \x01(\v2\v.ai.bot.BotR\x04data\"\xef\x02\n" +
-	"\x10UpdateBotRequest\x12\x15\n" +
-	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
-	"\x06avatar\x18\x04 \x01(\tR\x06avatar\x12\x14\n" +
-	"\x05model\x18\x05 \x01(\tR\x05model\x12\x17\n" +
-	"\aapi_key\x18\x06 \x01(\tR\x06apiKey\x12#\n" +
-	"\rsystem_prompt\x18\a \x01(\tR\fsystemPrompt\x12<\n" +
-	"\x06config\x18\b \x03(\v2$.ai.bot.UpdateBotRequest.ConfigEntryR\x06config\x12)\n" +
-	"\x06status\x18\t \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x1a9\n" +
+	"\x04data\x18\x03 \x01(\v2\v.ai.bot.BotR\x04data\"\xcc\x03\n" +
+	"\x10UpdateBotRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06avatar\x18\x05 \x01(\tR\x06avatar\x12\x14\n" +
+	"\x05model\x18\x06 \x01(\tR\x05model\x12\x17\n" +
+	"\aapi_key\x18\a \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\b \x01(\tR\abaseUrl\x12'\n" +
+	"\x0fembedding_model\x18\t \x01(\tR\x0eembeddingModel\x12#\n" +
+	"\rsystem_prompt\x18\n" +
+	" \x01(\tR\fsystemPrompt\x12<\n" +
+	"\x06config\x18\v \x03(\v2$.ai.bot.UpdateBotRequest.ConfigEntryR\x06config\x12)\n" +
+	"\x06status\x18\f \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x1a9\n" +
 	"\vConfigEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"b\n" +
@@ -1517,23 +3326,25 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x0eGetBotResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
-	"\x04data\x18\x03 \x01(\v2\v.ai.bot.BotR\x04data\"\x92\x01\n" +
-	"\x0fListBotsRequest\x12#\n" +
-	"\x04type\x18\x01 \x01(\x0e2\x0f.ai.bot.BotTypeR\x04type\x12)\n" +
-	"\x06status\x18\x02 \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x12\x12\n" +
-	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"w\n" +
+	"\x04data\x18\x03 \x01(\v2\v.ai.bot.BotR\x04data\"\xab\x01\n" +
+	"\x0fListBotsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12#\n" +
+	"\x04type\x18\x02 \x01(\x0e2\x0f.ai.bot.BotTypeR\x04type\x12)\n" +
+	"\x06status\x18\x03 \x01(\x0e2\x11.ai.bot.BotStatusR\x06status\x12\x12\n" +
+	"\x04page\x18\x04 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\"w\n" +
 	"\x10ListBotsResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
 	"\x04bots\x18\x03 \x03(\v2\v.ai.bot.BotR\x04bots\x12\x14\n" +
-	"\x05total\x18\x04 \x01(\x05R\x05total\"\xff\x01\n" +
-	"\x15SendBotMessageRequest\x12\x15\n" +
-	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x17\n" +
-	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x18\n" +
-	"\acontent\x18\x03 \x01(\tR\acontent\x12G\n" +
-	"\bmetadata\x18\x04 \x03(\v2+.ai.bot.SendBotMessageRequest.MetadataEntryR\bmetadata\x12\x16\n" +
-	"\x06stream\x18\x05 \x01(\bR\x06stream\x1a;\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\x98\x02\n" +
+	"\x15SendBotMessageRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x17\n" +
+	"\achat_id\x18\x03 \x01(\tR\x06chatId\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\x12G\n" +
+	"\bmetadata\x18\x05 \x03(\v2+.ai.bot.SendBotMessageRequest.MetadataEntryR\bmetadata\x12\x16\n" +
+	"\x06stream\x18\x06 \x01(\bR\x06stream\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"n\n" +
@@ -1554,7 +3365,134 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12.\n" +
 	"\bmessages\x18\x03 \x03(\v2\x12.ai.bot.BotMessageR\bmessages\x12\x19\n" +
-	"\bhas_more\x18\x04 \x01(\bR\ahasMore*N\n" +
+	"\bhas_more\x18\x04 \x01(\bR\ahasMore\"\xc8\x02\n" +
+	"\x13CreatePromptRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x18\n" +
+	"\acontent\x18\x04 \x01(\tR\acontent\x12\x12\n" +
+	"\x04type\x18\x05 \x01(\tR\x04type\x12\x1b\n" +
+	"\tis_preset\x18\x06 \x01(\bR\bisPreset\x12\x1b\n" +
+	"\tis_public\x18\a \x01(\bR\bisPublic\x12?\n" +
+	"\x06config\x18\b \x03(\v2'.ai.bot.CreatePromptRequest.ConfigEntryR\x06config\x1a9\n" +
+	"\vConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
+	"\x14CreatePromptResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\"\n" +
+	"\x04data\x18\x03 \x01(\v2\x0e.ai.bot.PromptR\x04data\"\xc7\x02\n" +
+	"\x13UpdatePromptRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1b\n" +
+	"\tprompt_id\x18\x02 \x01(\tR\bpromptId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x18\n" +
+	"\acontent\x18\x05 \x01(\tR\acontent\x12 \n" +
+	"\tis_public\x18\x06 \x01(\bH\x00R\bisPublic\x88\x01\x01\x12?\n" +
+	"\x06config\x18\a \x03(\v2'.ai.bot.UpdatePromptRequest.ConfigEntryR\x06config\x1a9\n" +
+	"\vConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
+	"\n" +
+	"_is_public\"h\n" +
+	"\x14UpdatePromptResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\"\n" +
+	"\x04data\x18\x03 \x01(\v2\x0e.ai.bot.PromptR\x04data\"2\n" +
+	"\x13DeletePromptRequest\x12\x1b\n" +
+	"\tprompt_id\x18\x01 \x01(\tR\bpromptId\"D\n" +
+	"\x14DeletePromptResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"/\n" +
+	"\x10GetPromptRequest\x12\x1b\n" +
+	"\tprompt_id\x18\x01 \x01(\tR\bpromptId\"e\n" +
+	"\x11GetPromptResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\"\n" +
+	"\x04data\x18\x03 \x01(\v2\x0e.ai.bot.PromptR\x04data\"\xd2\x01\n" +
+	"\x12ListPromptsRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12 \n" +
+	"\tis_preset\x18\x03 \x01(\bH\x00R\bisPreset\x88\x01\x01\x12 \n" +
+	"\tis_public\x18\x04 \x01(\bH\x01R\bisPublic\x88\x01\x01\x12\x12\n" +
+	"\x04page\x18\x05 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x06 \x01(\x05R\bpageSizeB\f\n" +
+	"\n" +
+	"_is_presetB\f\n" +
+	"\n" +
+	"_is_public\"\x83\x01\n" +
+	"\x13ListPromptsResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12(\n" +
+	"\aprompts\x18\x03 \x03(\v2\x0e.ai.bot.PromptR\aprompts\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xf2\x01\n" +
+	"\fConversation\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x17\n" +
+	"\auser_id\x18\x03 \x01(\tR\x06userId\x12\x14\n" +
+	"\x05title\x18\x04 \x01(\tR\x05title\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x129\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"a\n" +
+	"\x19CreateConversationRequest\x12\x15\n" +
+	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x14\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\"t\n" +
+	"\x1aCreateConversationResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12(\n" +
+	"\x04data\x18\x03 \x01(\v2\x14.ai.bot.ConversationR\x04data\"Z\n" +
+	"\x19UpdateConversationRequest\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\"t\n" +
+	"\x1aUpdateConversationResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12(\n" +
+	"\x04data\x18\x03 \x01(\v2\x14.ai.bot.ConversationR\x04data\"D\n" +
+	"\x19DeleteConversationRequest\x12'\n" +
+	"\x0fconversation_id\x18\x01 \x01(\tR\x0econversationId\"J\n" +
+	"\x1aDeleteConversationResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"{\n" +
+	"\x18ListConversationsRequest\x12\x15\n" +
+	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x12\n" +
+	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\"\x9b\x01\n" +
+	"\x19ListConversationsResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
+	"\rconversations\x18\x03 \x03(\v2\x14.ai.bot.ConversationR\rconversations\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xea\x01\n" +
+	"\n" +
+	"UserMemory\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x03 \x01(\tR\x05botId\x12\x10\n" +
+	"\x03key\x18\x04 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x05 \x01(\tR\x05value\x129\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"F\n" +
+	"\x14GetUserMemoryRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\"u\n" +
+	"\x15GetUserMemoryResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12.\n" +
+	"\bmemories\x18\x03 \x03(\v2\x12.ai.bot.UserMemoryR\bmemories\"n\n" +
+	"\x14SetUserMemoryRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x04 \x01(\tR\x05value\"m\n" +
+	"\x15SetUserMemoryResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12&\n" +
+	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.UserMemoryR\x04data*N\n" +
 	"\aBotType\x12\x18\n" +
 	"\x14BOT_TYPE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10BOT_TYPE_BUILTIN\x10\x01\x12\x13\n" +
@@ -1569,7 +3507,7 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x16BOT_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11BOT_STATUS_ACTIVE\x10\x01\x12\x17\n" +
 	"\x13BOT_STATUS_INACTIVE\x10\x02\x12\x16\n" +
-	"\x12BOT_STATUS_DELETED\x10\x032\xe4\x03\n" +
+	"\x12BOT_STATUS_DELETED\x10\x032\xac\v\n" +
 	"\n" +
 	"BotService\x12@\n" +
 	"\tCreateBot\x12\x18.ai.bot.CreateBotRequest\x1a\x19.ai.bot.CreateBotResponse\x12@\n" +
@@ -1578,7 +3516,19 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x06GetBot\x12\x15.ai.bot.GetBotRequest\x1a\x16.ai.bot.GetBotResponse\x12=\n" +
 	"\bListBots\x12\x17.ai.bot.ListBotsRequest\x1a\x18.ai.bot.ListBotsResponse\x12J\n" +
 	"\x0eSendBotMessage\x12\x1d.ai.bot.SendBotMessageRequest\x1a\x19.ai.bot.StreamBotResponse\x12L\n" +
-	"\rGetBotHistory\x12\x1c.ai.bot.GetBotHistoryRequest\x1a\x1d.ai.bot.GetBotHistoryResponseB\x15Z\x13Logos/proto_gen/botb\x06proto3"
+	"\rGetBotHistory\x12\x1c.ai.bot.GetBotHistoryRequest\x1a\x1d.ai.bot.GetBotHistoryResponse\x12[\n" +
+	"\x12CreateConversation\x12!.ai.bot.CreateConversationRequest\x1a\".ai.bot.CreateConversationResponse\x12[\n" +
+	"\x12UpdateConversation\x12!.ai.bot.UpdateConversationRequest\x1a\".ai.bot.UpdateConversationResponse\x12[\n" +
+	"\x12DeleteConversation\x12!.ai.bot.DeleteConversationRequest\x1a\".ai.bot.DeleteConversationResponse\x12X\n" +
+	"\x11ListConversations\x12 .ai.bot.ListConversationsRequest\x1a!.ai.bot.ListConversationsResponse\x12N\n" +
+	"\x10StreamBotMessage\x12\x1d.ai.bot.SendBotMessageRequest\x1a\x19.ai.bot.StreamBotResponse0\x01\x12L\n" +
+	"\rGetUserMemory\x12\x1c.ai.bot.GetUserMemoryRequest\x1a\x1d.ai.bot.GetUserMemoryResponse\x12L\n" +
+	"\rSetUserMemory\x12\x1c.ai.bot.SetUserMemoryRequest\x1a\x1d.ai.bot.SetUserMemoryResponse\x12I\n" +
+	"\fCreatePrompt\x12\x1b.ai.bot.CreatePromptRequest\x1a\x1c.ai.bot.CreatePromptResponse\x12I\n" +
+	"\fUpdatePrompt\x12\x1b.ai.bot.UpdatePromptRequest\x1a\x1c.ai.bot.UpdatePromptResponse\x12I\n" +
+	"\fDeletePrompt\x12\x1b.ai.bot.DeletePromptRequest\x1a\x1c.ai.bot.DeletePromptResponse\x12@\n" +
+	"\tGetPrompt\x12\x18.ai.bot.GetPromptRequest\x1a\x19.ai.bot.GetPromptResponse\x12F\n" +
+	"\vListPrompts\x12\x1a.ai.bot.ListPromptsRequest\x1a\x1b.ai.bot.ListPromptsResponseB\x15Z\x13Logos/proto_gen/botb\x06proto3"
 
 var (
 	file_ai_bot_proto_rawDescOnce sync.Once
@@ -1593,78 +3543,148 @@ func file_ai_bot_proto_rawDescGZIP() []byte {
 }
 
 var file_ai_bot_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_ai_bot_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_ai_bot_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_ai_bot_proto_goTypes = []any{
-	(BotType)(0),                   // 0: ai.bot.BotType
-	(ModelProvider)(0),             // 1: ai.bot.ModelProvider
-	(BotStatus)(0),                 // 2: ai.bot.BotStatus
-	(*Bot)(nil),                    // 3: ai.bot.Bot
-	(*BotMessage)(nil),             // 4: ai.bot.BotMessage
-	(*CreateBotRequest)(nil),       // 5: ai.bot.CreateBotRequest
-	(*CreateBotResponse)(nil),      // 6: ai.bot.CreateBotResponse
-	(*UpdateBotRequest)(nil),       // 7: ai.bot.UpdateBotRequest
-	(*UpdateBotResponse)(nil),      // 8: ai.bot.UpdateBotResponse
-	(*DeleteBotRequest)(nil),       // 9: ai.bot.DeleteBotRequest
-	(*DeleteBotResponse)(nil),      // 10: ai.bot.DeleteBotResponse
-	(*GetBotRequest)(nil),          // 11: ai.bot.GetBotRequest
-	(*GetBotResponse)(nil),         // 12: ai.bot.GetBotResponse
-	(*ListBotsRequest)(nil),        // 13: ai.bot.ListBotsRequest
-	(*ListBotsResponse)(nil),       // 14: ai.bot.ListBotsResponse
-	(*SendBotMessageRequest)(nil),  // 15: ai.bot.SendBotMessageRequest
-	(*SendBotMessageResponse)(nil), // 16: ai.bot.SendBotMessageResponse
-	(*StreamBotResponse)(nil),      // 17: ai.bot.StreamBotResponse
-	(*GetBotHistoryRequest)(nil),   // 18: ai.bot.GetBotHistoryRequest
-	(*GetBotHistoryResponse)(nil),  // 19: ai.bot.GetBotHistoryResponse
-	nil,                            // 20: ai.bot.Bot.ConfigEntry
-	nil,                            // 21: ai.bot.BotMessage.MetadataEntry
-	nil,                            // 22: ai.bot.CreateBotRequest.ConfigEntry
-	nil,                            // 23: ai.bot.UpdateBotRequest.ConfigEntry
-	nil,                            // 24: ai.bot.SendBotMessageRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),  // 25: google.protobuf.Timestamp
+	(BotType)(0),                       // 0: ai.bot.BotType
+	(ModelProvider)(0),                 // 1: ai.bot.ModelProvider
+	(BotStatus)(0),                     // 2: ai.bot.BotStatus
+	(*Bot)(nil),                        // 3: ai.bot.Bot
+	(*BotMessage)(nil),                 // 4: ai.bot.BotMessage
+	(*Prompt)(nil),                     // 5: ai.bot.Prompt
+	(*CreateBotRequest)(nil),           // 6: ai.bot.CreateBotRequest
+	(*CreateBotResponse)(nil),          // 7: ai.bot.CreateBotResponse
+	(*UpdateBotRequest)(nil),           // 8: ai.bot.UpdateBotRequest
+	(*UpdateBotResponse)(nil),          // 9: ai.bot.UpdateBotResponse
+	(*DeleteBotRequest)(nil),           // 10: ai.bot.DeleteBotRequest
+	(*DeleteBotResponse)(nil),          // 11: ai.bot.DeleteBotResponse
+	(*GetBotRequest)(nil),              // 12: ai.bot.GetBotRequest
+	(*GetBotResponse)(nil),             // 13: ai.bot.GetBotResponse
+	(*ListBotsRequest)(nil),            // 14: ai.bot.ListBotsRequest
+	(*ListBotsResponse)(nil),           // 15: ai.bot.ListBotsResponse
+	(*SendBotMessageRequest)(nil),      // 16: ai.bot.SendBotMessageRequest
+	(*SendBotMessageResponse)(nil),     // 17: ai.bot.SendBotMessageResponse
+	(*StreamBotResponse)(nil),          // 18: ai.bot.StreamBotResponse
+	(*GetBotHistoryRequest)(nil),       // 19: ai.bot.GetBotHistoryRequest
+	(*GetBotHistoryResponse)(nil),      // 20: ai.bot.GetBotHistoryResponse
+	(*CreatePromptRequest)(nil),        // 21: ai.bot.CreatePromptRequest
+	(*CreatePromptResponse)(nil),       // 22: ai.bot.CreatePromptResponse
+	(*UpdatePromptRequest)(nil),        // 23: ai.bot.UpdatePromptRequest
+	(*UpdatePromptResponse)(nil),       // 24: ai.bot.UpdatePromptResponse
+	(*DeletePromptRequest)(nil),        // 25: ai.bot.DeletePromptRequest
+	(*DeletePromptResponse)(nil),       // 26: ai.bot.DeletePromptResponse
+	(*GetPromptRequest)(nil),           // 27: ai.bot.GetPromptRequest
+	(*GetPromptResponse)(nil),          // 28: ai.bot.GetPromptResponse
+	(*ListPromptsRequest)(nil),         // 29: ai.bot.ListPromptsRequest
+	(*ListPromptsResponse)(nil),        // 30: ai.bot.ListPromptsResponse
+	(*Conversation)(nil),               // 31: ai.bot.Conversation
+	(*CreateConversationRequest)(nil),  // 32: ai.bot.CreateConversationRequest
+	(*CreateConversationResponse)(nil), // 33: ai.bot.CreateConversationResponse
+	(*UpdateConversationRequest)(nil),  // 34: ai.bot.UpdateConversationRequest
+	(*UpdateConversationResponse)(nil), // 35: ai.bot.UpdateConversationResponse
+	(*DeleteConversationRequest)(nil),  // 36: ai.bot.DeleteConversationRequest
+	(*DeleteConversationResponse)(nil), // 37: ai.bot.DeleteConversationResponse
+	(*ListConversationsRequest)(nil),   // 38: ai.bot.ListConversationsRequest
+	(*ListConversationsResponse)(nil),  // 39: ai.bot.ListConversationsResponse
+	(*UserMemory)(nil),                 // 40: ai.bot.UserMemory
+	(*GetUserMemoryRequest)(nil),       // 41: ai.bot.GetUserMemoryRequest
+	(*GetUserMemoryResponse)(nil),      // 42: ai.bot.GetUserMemoryResponse
+	(*SetUserMemoryRequest)(nil),       // 43: ai.bot.SetUserMemoryRequest
+	(*SetUserMemoryResponse)(nil),      // 44: ai.bot.SetUserMemoryResponse
+	nil,                                // 45: ai.bot.Bot.ConfigEntry
+	nil,                                // 46: ai.bot.BotMessage.MetadataEntry
+	nil,                                // 47: ai.bot.Prompt.ConfigEntry
+	nil,                                // 48: ai.bot.CreateBotRequest.ConfigEntry
+	nil,                                // 49: ai.bot.UpdateBotRequest.ConfigEntry
+	nil,                                // 50: ai.bot.SendBotMessageRequest.MetadataEntry
+	nil,                                // 51: ai.bot.CreatePromptRequest.ConfigEntry
+	nil,                                // 52: ai.bot.UpdatePromptRequest.ConfigEntry
+	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
 }
 var file_ai_bot_proto_depIdxs = []int32{
 	0,  // 0: ai.bot.Bot.type:type_name -> ai.bot.BotType
 	1,  // 1: ai.bot.Bot.provider:type_name -> ai.bot.ModelProvider
 	2,  // 2: ai.bot.Bot.status:type_name -> ai.bot.BotStatus
-	20, // 3: ai.bot.Bot.config:type_name -> ai.bot.Bot.ConfigEntry
-	25, // 4: ai.bot.Bot.created_at:type_name -> google.protobuf.Timestamp
-	25, // 5: ai.bot.Bot.updated_at:type_name -> google.protobuf.Timestamp
-	21, // 6: ai.bot.BotMessage.metadata:type_name -> ai.bot.BotMessage.MetadataEntry
-	25, // 7: ai.bot.BotMessage.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 8: ai.bot.CreateBotRequest.type:type_name -> ai.bot.BotType
-	1,  // 9: ai.bot.CreateBotRequest.provider:type_name -> ai.bot.ModelProvider
-	22, // 10: ai.bot.CreateBotRequest.config:type_name -> ai.bot.CreateBotRequest.ConfigEntry
-	3,  // 11: ai.bot.CreateBotResponse.data:type_name -> ai.bot.Bot
-	23, // 12: ai.bot.UpdateBotRequest.config:type_name -> ai.bot.UpdateBotRequest.ConfigEntry
-	2,  // 13: ai.bot.UpdateBotRequest.status:type_name -> ai.bot.BotStatus
-	3,  // 14: ai.bot.UpdateBotResponse.data:type_name -> ai.bot.Bot
-	3,  // 15: ai.bot.GetBotResponse.data:type_name -> ai.bot.Bot
-	0,  // 16: ai.bot.ListBotsRequest.type:type_name -> ai.bot.BotType
-	2,  // 17: ai.bot.ListBotsRequest.status:type_name -> ai.bot.BotStatus
-	3,  // 18: ai.bot.ListBotsResponse.bots:type_name -> ai.bot.Bot
-	24, // 19: ai.bot.SendBotMessageRequest.metadata:type_name -> ai.bot.SendBotMessageRequest.MetadataEntry
-	4,  // 20: ai.bot.SendBotMessageResponse.data:type_name -> ai.bot.BotMessage
-	25, // 21: ai.bot.GetBotHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
-	4,  // 22: ai.bot.GetBotHistoryResponse.messages:type_name -> ai.bot.BotMessage
-	5,  // 23: ai.bot.BotService.CreateBot:input_type -> ai.bot.CreateBotRequest
-	7,  // 24: ai.bot.BotService.UpdateBot:input_type -> ai.bot.UpdateBotRequest
-	9,  // 25: ai.bot.BotService.DeleteBot:input_type -> ai.bot.DeleteBotRequest
-	11, // 26: ai.bot.BotService.GetBot:input_type -> ai.bot.GetBotRequest
-	13, // 27: ai.bot.BotService.ListBots:input_type -> ai.bot.ListBotsRequest
-	15, // 28: ai.bot.BotService.SendBotMessage:input_type -> ai.bot.SendBotMessageRequest
-	18, // 29: ai.bot.BotService.GetBotHistory:input_type -> ai.bot.GetBotHistoryRequest
-	6,  // 30: ai.bot.BotService.CreateBot:output_type -> ai.bot.CreateBotResponse
-	8,  // 31: ai.bot.BotService.UpdateBot:output_type -> ai.bot.UpdateBotResponse
-	10, // 32: ai.bot.BotService.DeleteBot:output_type -> ai.bot.DeleteBotResponse
-	12, // 33: ai.bot.BotService.GetBot:output_type -> ai.bot.GetBotResponse
-	14, // 34: ai.bot.BotService.ListBots:output_type -> ai.bot.ListBotsResponse
-	17, // 35: ai.bot.BotService.SendBotMessage:output_type -> ai.bot.StreamBotResponse
-	19, // 36: ai.bot.BotService.GetBotHistory:output_type -> ai.bot.GetBotHistoryResponse
-	30, // [30:37] is the sub-list for method output_type
-	23, // [23:30] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	45, // 3: ai.bot.Bot.config:type_name -> ai.bot.Bot.ConfigEntry
+	53, // 4: ai.bot.Bot.created_at:type_name -> google.protobuf.Timestamp
+	53, // 5: ai.bot.Bot.updated_at:type_name -> google.protobuf.Timestamp
+	46, // 6: ai.bot.BotMessage.metadata:type_name -> ai.bot.BotMessage.MetadataEntry
+	53, // 7: ai.bot.BotMessage.created_at:type_name -> google.protobuf.Timestamp
+	47, // 8: ai.bot.Prompt.config:type_name -> ai.bot.Prompt.ConfigEntry
+	53, // 9: ai.bot.Prompt.created_at:type_name -> google.protobuf.Timestamp
+	53, // 10: ai.bot.Prompt.updated_at:type_name -> google.protobuf.Timestamp
+	0,  // 11: ai.bot.CreateBotRequest.type:type_name -> ai.bot.BotType
+	1,  // 12: ai.bot.CreateBotRequest.provider:type_name -> ai.bot.ModelProvider
+	48, // 13: ai.bot.CreateBotRequest.config:type_name -> ai.bot.CreateBotRequest.ConfigEntry
+	3,  // 14: ai.bot.CreateBotResponse.data:type_name -> ai.bot.Bot
+	49, // 15: ai.bot.UpdateBotRequest.config:type_name -> ai.bot.UpdateBotRequest.ConfigEntry
+	2,  // 16: ai.bot.UpdateBotRequest.status:type_name -> ai.bot.BotStatus
+	3,  // 17: ai.bot.UpdateBotResponse.data:type_name -> ai.bot.Bot
+	3,  // 18: ai.bot.GetBotResponse.data:type_name -> ai.bot.Bot
+	0,  // 19: ai.bot.ListBotsRequest.type:type_name -> ai.bot.BotType
+	2,  // 20: ai.bot.ListBotsRequest.status:type_name -> ai.bot.BotStatus
+	3,  // 21: ai.bot.ListBotsResponse.bots:type_name -> ai.bot.Bot
+	50, // 22: ai.bot.SendBotMessageRequest.metadata:type_name -> ai.bot.SendBotMessageRequest.MetadataEntry
+	4,  // 23: ai.bot.SendBotMessageResponse.data:type_name -> ai.bot.BotMessage
+	53, // 24: ai.bot.GetBotHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
+	4,  // 25: ai.bot.GetBotHistoryResponse.messages:type_name -> ai.bot.BotMessage
+	51, // 26: ai.bot.CreatePromptRequest.config:type_name -> ai.bot.CreatePromptRequest.ConfigEntry
+	5,  // 27: ai.bot.CreatePromptResponse.data:type_name -> ai.bot.Prompt
+	52, // 28: ai.bot.UpdatePromptRequest.config:type_name -> ai.bot.UpdatePromptRequest.ConfigEntry
+	5,  // 29: ai.bot.UpdatePromptResponse.data:type_name -> ai.bot.Prompt
+	5,  // 30: ai.bot.GetPromptResponse.data:type_name -> ai.bot.Prompt
+	5,  // 31: ai.bot.ListPromptsResponse.prompts:type_name -> ai.bot.Prompt
+	53, // 32: ai.bot.Conversation.created_at:type_name -> google.protobuf.Timestamp
+	53, // 33: ai.bot.Conversation.updated_at:type_name -> google.protobuf.Timestamp
+	31, // 34: ai.bot.CreateConversationResponse.data:type_name -> ai.bot.Conversation
+	31, // 35: ai.bot.UpdateConversationResponse.data:type_name -> ai.bot.Conversation
+	31, // 36: ai.bot.ListConversationsResponse.conversations:type_name -> ai.bot.Conversation
+	53, // 37: ai.bot.UserMemory.created_at:type_name -> google.protobuf.Timestamp
+	53, // 38: ai.bot.UserMemory.updated_at:type_name -> google.protobuf.Timestamp
+	40, // 39: ai.bot.GetUserMemoryResponse.memories:type_name -> ai.bot.UserMemory
+	40, // 40: ai.bot.SetUserMemoryResponse.data:type_name -> ai.bot.UserMemory
+	6,  // 41: ai.bot.BotService.CreateBot:input_type -> ai.bot.CreateBotRequest
+	8,  // 42: ai.bot.BotService.UpdateBot:input_type -> ai.bot.UpdateBotRequest
+	10, // 43: ai.bot.BotService.DeleteBot:input_type -> ai.bot.DeleteBotRequest
+	12, // 44: ai.bot.BotService.GetBot:input_type -> ai.bot.GetBotRequest
+	14, // 45: ai.bot.BotService.ListBots:input_type -> ai.bot.ListBotsRequest
+	16, // 46: ai.bot.BotService.SendBotMessage:input_type -> ai.bot.SendBotMessageRequest
+	19, // 47: ai.bot.BotService.GetBotHistory:input_type -> ai.bot.GetBotHistoryRequest
+	32, // 48: ai.bot.BotService.CreateConversation:input_type -> ai.bot.CreateConversationRequest
+	34, // 49: ai.bot.BotService.UpdateConversation:input_type -> ai.bot.UpdateConversationRequest
+	36, // 50: ai.bot.BotService.DeleteConversation:input_type -> ai.bot.DeleteConversationRequest
+	38, // 51: ai.bot.BotService.ListConversations:input_type -> ai.bot.ListConversationsRequest
+	16, // 52: ai.bot.BotService.StreamBotMessage:input_type -> ai.bot.SendBotMessageRequest
+	41, // 53: ai.bot.BotService.GetUserMemory:input_type -> ai.bot.GetUserMemoryRequest
+	43, // 54: ai.bot.BotService.SetUserMemory:input_type -> ai.bot.SetUserMemoryRequest
+	21, // 55: ai.bot.BotService.CreatePrompt:input_type -> ai.bot.CreatePromptRequest
+	23, // 56: ai.bot.BotService.UpdatePrompt:input_type -> ai.bot.UpdatePromptRequest
+	25, // 57: ai.bot.BotService.DeletePrompt:input_type -> ai.bot.DeletePromptRequest
+	27, // 58: ai.bot.BotService.GetPrompt:input_type -> ai.bot.GetPromptRequest
+	29, // 59: ai.bot.BotService.ListPrompts:input_type -> ai.bot.ListPromptsRequest
+	7,  // 60: ai.bot.BotService.CreateBot:output_type -> ai.bot.CreateBotResponse
+	9,  // 61: ai.bot.BotService.UpdateBot:output_type -> ai.bot.UpdateBotResponse
+	11, // 62: ai.bot.BotService.DeleteBot:output_type -> ai.bot.DeleteBotResponse
+	13, // 63: ai.bot.BotService.GetBot:output_type -> ai.bot.GetBotResponse
+	15, // 64: ai.bot.BotService.ListBots:output_type -> ai.bot.ListBotsResponse
+	18, // 65: ai.bot.BotService.SendBotMessage:output_type -> ai.bot.StreamBotResponse
+	20, // 66: ai.bot.BotService.GetBotHistory:output_type -> ai.bot.GetBotHistoryResponse
+	33, // 67: ai.bot.BotService.CreateConversation:output_type -> ai.bot.CreateConversationResponse
+	35, // 68: ai.bot.BotService.UpdateConversation:output_type -> ai.bot.UpdateConversationResponse
+	37, // 69: ai.bot.BotService.DeleteConversation:output_type -> ai.bot.DeleteConversationResponse
+	39, // 70: ai.bot.BotService.ListConversations:output_type -> ai.bot.ListConversationsResponse
+	18, // 71: ai.bot.BotService.StreamBotMessage:output_type -> ai.bot.StreamBotResponse
+	42, // 72: ai.bot.BotService.GetUserMemory:output_type -> ai.bot.GetUserMemoryResponse
+	44, // 73: ai.bot.BotService.SetUserMemory:output_type -> ai.bot.SetUserMemoryResponse
+	22, // 74: ai.bot.BotService.CreatePrompt:output_type -> ai.bot.CreatePromptResponse
+	24, // 75: ai.bot.BotService.UpdatePrompt:output_type -> ai.bot.UpdatePromptResponse
+	26, // 76: ai.bot.BotService.DeletePrompt:output_type -> ai.bot.DeletePromptResponse
+	28, // 77: ai.bot.BotService.GetPrompt:output_type -> ai.bot.GetPromptResponse
+	30, // 78: ai.bot.BotService.ListPrompts:output_type -> ai.bot.ListPromptsResponse
+	60, // [60:79] is the sub-list for method output_type
+	41, // [41:60] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_ai_bot_proto_init() }
@@ -1672,13 +3692,15 @@ func file_ai_bot_proto_init() {
 	if File_ai_bot_proto != nil {
 		return
 	}
+	file_ai_bot_proto_msgTypes[20].OneofWrappers = []any{}
+	file_ai_bot_proto_msgTypes[26].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_bot_proto_rawDesc), len(file_ai_bot_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   22,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

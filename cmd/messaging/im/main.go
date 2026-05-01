@@ -2,7 +2,12 @@ package main
 
 import (
 	"Logos/config"
+	"Logos/internal/service/messaging/im/dao"
 	"Logos/internal/service/messaging/im/handler"
+	"Logos/internal/service/messaging/im/model"
+	"Logos/internal/service/messaging/im/service"
+	"Logos/pkg/cache"
+	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
@@ -18,6 +23,21 @@ func main() {
 
 	logger.InitLogger()
 
+	ctx := context.Background()
+	db, err := pgsql.InitPostgres()
+	if err != nil {
+		log.Fatalf("Failed to init postgres: %v", err)
+	}
+
+	if err := model.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate: %v", err)
+	}
+
+	repo := dao.NewIMRepository(db)
+	redisCache := cache.NewRedisCache()
+	imService := service.NewIMService(repo, redisCache, ctx)
+	imServiceImpl := handler.NewIMServiceImpl(imService)
+
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("im")
 	defer shutdown(context.Background())
 
@@ -26,7 +46,7 @@ func main() {
 		Port:        cfg.Ports.IM,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 	}, func(s *grpc.Server) {
-		pb.RegisterIMServiceServer(s, &handler.IMServiceImpl{})
+		pb.RegisterIMServiceServer(s, imServiceImpl)
 	}, serverOpt); err != nil {
 		log.Fatalf("IM service failed to run: %v", err)
 	}

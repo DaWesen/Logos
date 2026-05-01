@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 
 # Logos 微服务系统 - Docker 管理脚本
 # 架构: Platform / Messaging / AI 三大领域
@@ -25,7 +25,7 @@ show_menu() {
     print_banner
     echo -e "  ${GREEN}[1]${NC} 启动基础设施 (etcd, PG, Redis, Kafka...)"
     echo -e "  ${GREEN}[2]${NC} 启动监控栈 (Prometheus, Jaeger)"
-    echo -e "  ${GREEN}[3]${NC} 启动所有微服务 (14个服务)"
+    echo -e "  ${GREEN}[3]${NC} 启动所有微服务 (17个服务)"
     echo -e "  ${GREEN}[4]${NC} 启动完整系统 (全部服务) ⭐推荐"
     echo -e "  ${YELLOW}[5]${NC} 停止所有服务"
     echo -e "  ${YELLOW}[6]${NC} 重启所有服务"
@@ -53,9 +53,9 @@ start_monitoring() {
 start_services() {
     echo -e "${YELLOW}[*] 正在启动所有微服务...${NC}"
     docker-compose up -d \
-        gateway user-service monitoring-service \
+        gateway user-service monitoring-service billing-service \
         im-service chat-service contact-service message-service \
-        knowledge-service search-service vector-service question-service recommend-service extraction-service collection-service
+        knowledge-service search-service vector-service question-service recommend-service extraction-service collection-service bot-service process-service
     echo -e "${GREEN}✓ 所有微服务启动完成！${NC}"
     show_service_ports
 }
@@ -131,6 +131,7 @@ show_service_ports() {
     echo "  - Gateway:       :8888 (API入口)"
     echo "  - User:          :9001"
     echo "  - Monitoring:    :9010"
+    echo "  - Billing:       :9015 (计费)"
     echo ""
     echo -e "${CYAN}[Messaging 领域]${NC}"
     echo "  - IM:            :9011 (连接管理)"
@@ -146,6 +147,8 @@ show_service_ports() {
     echo "  - Recommend:     :9006 (推荐)"
     echo "  - Extraction:    :9007 (文档提取)"
     echo "  - Collection:    :9008 (知识集合)"
+    echo "  - Bot:           :9014 (AI助手)"
+    echo "  - Process:       :8090 (文档处理)"
 }
 
 show_all_urls() {

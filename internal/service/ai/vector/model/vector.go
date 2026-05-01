@@ -52,4 +52,31 @@ type SearchResultItem struct {
 	VectorID string            `json:"vector_id"`
 	Score    float64           `json:"score"`
 	Metadata map[string]string `json:"metadata"`
+	Content  string            `json:"content"` // RAG 搜索时的内容
+}
+
+// GetID 实现 GetID 方法
+func (v *Vector) GetID() string {
+	return v.ID
+}
+
+// SearchResultItem 的 Getter 方法
+func (s *SearchResultItem) GetID() string {
+	return s.VectorID
+}
+
+func (s *SearchResultItem) GetVectorID() string {
+	return s.VectorID
+}
+
+func (s *SearchResultItem) GetScore() float64 {
+	return s.Score
+}
+
+func (s *SearchResultItem) GetMetadata() map[string]string {
+	return s.Metadata
+}
+
+func (s *SearchResultItem) GetContent() string {
+	return s.Content
 }

@@ -170,7 +170,6 @@ func (h *Handler) ExtractFromText(c *gin.Context) {
 		"entities":  resp.Entities,
 		"relations": resp.Relations,
 		"triples":   resp.Triples,
-		"summary":   resp.Summary,
 	}})
 }
 
