@@ -244,13 +244,25 @@ func (s *ChatServiceImpl) handleTypingEvent(event *types.TypingEvent) error {
 
 // getPrivateChatRecipient 从单聊会话ID获取另一个参与者
 func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []string {
-	parts := strings.Split(chatID, "_")
-	if len(parts) == 2 {
-		if parts[0] == senderID {
-			return []string{parts[1]}
+	if strings.HasPrefix(chatID, "private_") {
+		parts := strings.Split(chatID, "_")
+		if len(parts) == 3 {
+			if parts[1] == senderID {
+				return []string{parts[2]}
+			}
+			if parts[2] == senderID {
+				return []string{parts[1]}
+			}
 		}
-		if parts[1] == senderID {
-			return []string{parts[0]}
+	} else {
+		parts := strings.Split(chatID, "_")
+		if len(parts) == 2 {
+			if parts[0] == senderID {
+				return []string{parts[1]}
+			}
+			if parts[1] == senderID {
+				return []string{parts[0]}
+			}
 		}
 	}
 

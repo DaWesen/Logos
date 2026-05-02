@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/mcp/dao"
 	"Logos/internal/service/ai/mcp/model"
 	"Logos/pkg/eino"
@@ -33,14 +34,53 @@ type ToolParameter struct {
 type mcpServiceImpl struct {
 	repo       dao.MCPRepository
 	einoClient *eino.EinoManager
+	registry   *mcp_server.ToolRegistry
 }
 
 func NewMCPService(repo dao.MCPRepository, einoClient *eino.EinoManager) MCPService {
-	return &mcpServiceImpl{repo: repo, einoClient: einoClient}
+	registry := mcp_server.DefaultRegistry()
+
+	logger.Info("MCP工具引擎已初始化",
+		logger.IntField("builtin_tools", len(registry.List())))
+
+	return &mcpServiceImpl{
+		repo:       repo,
+		einoClient: einoClient,
+		registry:   registry,
+	}
 }
 
 func (s *mcpServiceImpl) CallTool(ctx context.Context, toolID string, toolName string, parameters map[string]string) (string, map[string]string, error) {
 	logger.Info("调用工具", logger.StringField("tool_id", toolID), logger.StringField("tool_name", toolName))
+
+	if builtinTool, ok := s.registry.Get(toolName); ok {
+		result, err := builtinTool.Execute(ctx, parameters)
+		if err != nil {
+			return "", nil, err
+		}
+
+		status := "success"
+		if result.IsError {
+			status = "error"
+		}
+
+		callLog := &model.ToolCallLog{
+			ID:       uuid.New().String(),
+			ToolID:   toolName,
+			ToolName: toolName,
+			Result:   result.Content,
+			Status:   status,
+		}
+		if parameters != nil {
+			paramBytes, _ := json.Marshal(parameters)
+			callLog.Params = string(paramBytes)
+		}
+		if logErr := s.repo.CreateCallLog(ctx, callLog); logErr != nil {
+			logger.Warn("写入调用日志失败", logger.ErrorField(logErr))
+		}
+
+		return result.Content, result.Metadata, nil
+	}
 
 	var tool *model.Tool
 	var err error
@@ -77,7 +117,9 @@ func (s *mcpServiceImpl) CallTool(ctx context.Context, toolID string, toolName s
 		paramBytes, _ := json.Marshal(parameters)
 		callLog.Params = string(paramBytes)
 	}
-	s.repo.CreateCallLog(ctx, callLog)
+	if logErr := s.repo.CreateCallLog(ctx, callLog); logErr != nil {
+		logger.Warn("写入调用日志失败", logger.ErrorField(logErr))
+	}
 
 	if callErr != nil {
 		return "", nil, callErr
@@ -87,6 +129,17 @@ func (s *mcpServiceImpl) CallTool(ctx context.Context, toolID string, toolName s
 }
 
 func (s *mcpServiceImpl) executeTool(ctx context.Context, tool *model.Tool, parameters map[string]string) (string, map[string]string, error) {
+	if builtinTool, ok := s.registry.Get(tool.Name); ok {
+		result, err := builtinTool.Execute(ctx, parameters)
+		if err != nil {
+			return "", nil, err
+		}
+		if result.IsError {
+			return result.Content, result.Metadata, fmt.Errorf("%s", result.Content)
+		}
+		return result.Content, result.Metadata, nil
+	}
+
 	switch tool.Type {
 	case 1:
 		return s.executeWebSearch(ctx, tool, parameters)
@@ -103,70 +156,57 @@ func (s *mcpServiceImpl) executeTool(ctx context.Context, tool *model.Tool, para
 	}
 }
 
-func (s *mcpServiceImpl) executeWebSearch(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
-	query := params["query"]
-	if query == "" {
-		return "", nil, fmt.Errorf("缺少query参数")
-	}
-
-	if s.einoClient == nil || !s.einoClient.HasChatModel() {
-		return fmt.Sprintf("模拟搜索结果: %s", query), map[string]string{"source": "mock"}, nil
-	}
-
-	prompt := fmt.Sprintf(`请根据查询"%s"生成合理的搜索结果摘要。`, query)
-	response, err := s.einoClient.Chat(ctx, []string{
-		"你是一个搜索助手。",
-		prompt,
-	})
+func (s *mcpServiceImpl) executeWebSearch(ctx context.Context, _ *model.Tool, params map[string]string) (string, map[string]string, error) {
+	tool := &mcp_server.WebSearchTool{}
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		return "", nil, err
 	}
-
-	return response, map[string]string{"source": "llm", "query": query}, nil
+	if result.IsError {
+		return result.Content, result.Metadata, fmt.Errorf("%s", result.Content)
+	}
+	return result.Content, result.Metadata, nil
 }
 
-func (s *mcpServiceImpl) executeCodeExecution(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
-	code := params["code"]
-	if code == "" {
-		return "", nil, fmt.Errorf("缺少code参数")
-	}
-	return "代码执行功能暂未实现", map[string]string{"status": "not_implemented"}, nil
-}
-
-func (s *mcpServiceImpl) executeWeather(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
-	location := params["location"]
-	if location == "" {
-		return "", nil, fmt.Errorf("缺少location参数")
-	}
-
-	if s.einoClient == nil || !s.einoClient.HasChatModel() {
-		return fmt.Sprintf("%s: 晴，25°C（模拟数据）", location), map[string]string{"source": "mock"}, nil
-	}
-
-	prompt := fmt.Sprintf(`请生成%s的模拟天气信息，包含温度、湿度、天气状况。`, location)
-	response, err := s.einoClient.Chat(ctx, []string{
-		"你是一个天气信息助手。",
-		prompt,
-	})
+func (s *mcpServiceImpl) executeCodeExecution(ctx context.Context, _ *model.Tool, params map[string]string) (string, map[string]string, error) {
+	tool := &mcp_server.CodeExecutionTool{}
+	result, err := tool.Execute(ctx, params)
 	if err != nil {
 		return "", nil, err
 	}
-
-	return response, map[string]string{"source": "llm", "location": location}, nil
+	if result.IsError {
+		return result.Content, result.Metadata, fmt.Errorf("%s", result.Content)
+	}
+	return result.Content, result.Metadata, nil
 }
 
-func (s *mcpServiceImpl) executeFileSystem(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
-	return "文件系统操作暂未实现", map[string]string{"status": "not_implemented"}, nil
+func (s *mcpServiceImpl) executeWeather(ctx context.Context, _ *model.Tool, params map[string]string) (string, map[string]string, error) {
+	tool := &mcp_server.WeatherTool{}
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		return "", nil, err
+	}
+	if result.IsError {
+		return result.Content, result.Metadata, fmt.Errorf("%s", result.Content)
+	}
+	return result.Content, result.Metadata, nil
+}
+
+func (s *mcpServiceImpl) executeFileSystem(ctx context.Context, _ *model.Tool, params map[string]string) (string, map[string]string, error) {
+	tool := &mcp_server.FileSystemTool{}
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		return "", nil, err
+	}
+	if result.IsError {
+		return result.Content, result.Metadata, fmt.Errorf("%s", result.Content)
+	}
+	return result.Content, result.Metadata, nil
 }
 
 func (s *mcpServiceImpl) executeCustomTool(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
 	if s.einoClient == nil || !s.einoClient.HasChatModel() {
 		return "自定义工具执行暂不可用", map[string]string{"status": "unavailable"}, nil
-	}
-
-	var config map[string]string
-	if tool.Config != "" {
-		json.Unmarshal([]byte(tool.Config), &config)
 	}
 
 	systemPrompt := tool.Description

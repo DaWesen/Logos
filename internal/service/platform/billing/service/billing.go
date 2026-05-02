@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"time"
 
@@ -317,11 +318,7 @@ func (s *billingServiceImpl) Refund(ctx context.Context, userID string, transact
 				"reason":                  reason,
 			}),
 		}
-		if metadata != nil {
-			for k, v := range metadata {
-				tx.Metadata[k] = v
-			}
-		}
+		maps.Copy(tx.Metadata, metadata)
 		if err = txRepo.CreateTransaction(ctx, tx); err != nil {
 			return err
 		}
@@ -536,7 +533,7 @@ func (s *billingServiceImpl) publishBillingEvent(ctx context.Context, action, us
 		return
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"action":         action,
 		"user_id":        userID,
 		"transaction_id": txID,

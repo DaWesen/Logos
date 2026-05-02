@@ -2,6 +2,7 @@ package main
 
 import (
 	"Logos/config"
+	"Logos/internal/service/ai/knowledge/consumer"
 	"Logos/internal/service/ai/knowledge/dao"
 	"Logos/internal/service/ai/knowledge/handler"
 	"Logos/internal/service/ai/knowledge/model"
@@ -68,6 +69,17 @@ func main() {
 	repo := dao.NewKnowledgeRepository(db, neo4jManager)
 
 	knowledgeService := service.NewKnowledgeService(repo, cacheInstance, producer, esManager)
+
+	if kafkaManager != nil && esManager != nil {
+		esConsumer := mq.NewConsumer("knowledge_events", "knowledge-es-consumer")
+		esSyncer := consumer.NewESConsumer(esConsumer, esManager)
+		go func() {
+			if err := esSyncer.Start(context.Background()); err != nil {
+				logger.Warn("ES消费者启动失败", logger.ErrorField(err))
+			}
+		}()
+		logger.Info("ES同步消费者已启动")
+	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("knowledge")
 	defer shutdown(context.Background())

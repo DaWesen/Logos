@@ -3,6 +3,7 @@ module Logos
 go 1.25.1
 
 require (
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/cloudwego/eino v0.8.8
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20260424065505-3b3b8b5db0d0
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
@@ -16,6 +17,7 @@ require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/segmentio/kafka-go v0.4.50
+	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/viper v1.18.2
 	github.com/wdvxdr1123/ZeroBot v1.8.2
 	go.etcd.io/etcd/client/v3 v3.6.2
@@ -41,7 +43,6 @@ require (
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
-	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cilium/ebpf v0.11.0 // indirect

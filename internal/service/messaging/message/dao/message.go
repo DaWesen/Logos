@@ -16,6 +16,10 @@ type MessageRepository interface {
 	UpdateMessageStatus(ctx context.Context, id string, status string) error
 	ListMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
 	ListPendingMessages(ctx context.Context, limit int) ([]*model.Message, error)
+	ListPendingMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
+	DeleteMessagesByTopic(ctx context.Context, topic string) error
+	ClearMessagesByTopic(ctx context.Context, topic string) error
+	DeleteSubscriptionsByTopic(ctx context.Context, topic string) error
 	GetMessageStats(ctx context.Context, topic string) (total, pending, processed, failed int64, err error)
 
 	CreateSubscription(ctx context.Context, sub *model.MessageSubscription) error
@@ -70,6 +74,30 @@ func (r *messageRepository) ListPendingMessages(ctx context.Context, limit int) 
 	}
 	err := query.Find(&msgs).Error
 	return msgs, err
+}
+
+func (r *messageRepository) ListPendingMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error) {
+	var msgs []*model.Message
+	query := r.db.WithContext(ctx).Where("status = ? AND topic = ?", "PENDING", topic).Order("priority desc, timestamp asc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&msgs).Error
+	return msgs, err
+}
+
+func (r *messageRepository) DeleteMessagesByTopic(ctx context.Context, topic string) error {
+	return r.db.WithContext(ctx).Where("topic = ?", topic).Delete(&model.Message{}).Error
+}
+
+func (r *messageRepository) ClearMessagesByTopic(ctx context.Context, topic string) error {
+	return r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("topic = ?", topic).
+		Update("status", "CLEARED").Error
+}
+
+func (r *messageRepository) DeleteSubscriptionsByTopic(ctx context.Context, topic string) error {
+	return r.db.WithContext(ctx).Where("topic = ?", topic).Delete(&model.MessageSubscription{}).Error
 }
 
 func (r *messageRepository) GetMessageStats(ctx context.Context, topic string) (total, pending, processed, failed int64, err error) {

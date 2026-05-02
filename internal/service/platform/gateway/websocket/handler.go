@@ -251,11 +251,12 @@ func (h *Handler) forwardTypingForPrivateChat(event *types.TypingEvent, data []b
 	user2 := parts[2]
 
 	var otherUser string
-	if event.UserID == user1 {
+	switch event.UserID {
+	case user1:
 		otherUser = user2
-	} else if event.UserID == user2 {
+	case user2:
 		otherUser = user1
-	} else {
+	default:
 		logger.Warn("输入用户不在单聊会话中",
 			logger.StringField("user_id", event.UserID),
 			logger.StringField("chat_id", event.ChatID))
@@ -285,11 +286,12 @@ func (h *Handler) forwardReadReceiptForPrivateChat(event *types.MessageReadEvent
 
 	// 确定对方是谁
 	var otherUser string
-	if event.ReaderID == user1 {
+	switch event.ReaderID {
+	case user1:
 		otherUser = user2
-	} else if event.ReaderID == user2 {
+	case user2:
 		otherUser = user1
-	} else {
+	default:
 		logger.Warn("阅读者不在单聊会话中",
 			logger.StringField("reader_id", event.ReaderID),
 			logger.StringField("chat_id", event.ChatID))
@@ -517,6 +519,18 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 	conn.SessionID = sessionID
 
 	h.manager.AddConnection(sessionID, conn)
+
+	if h.eventBus != nil {
+		presenceEvent := &types.UserPresenceEvent{
+			UserID:    conn.UserID,
+			DeviceID:  conn.DeviceID,
+			Online:    true,
+			Timestamp: time.Now(),
+		}
+		if err := h.eventBus.PublishPresenceEvent(h.ctx, presenceEvent); err != nil {
+			logger.Warn("发布用户上线事件失败", logger.ErrorField(err))
+		}
+	}
 
 	logger.Info("WebSocket 已连接",
 		logger.StringField("user_id", conn.UserID),
@@ -811,6 +825,18 @@ func (h *Handler) cleanup(conn *Connection) {
 
 	if conn.SessionID != "" {
 		h.manager.RemoveConnection(conn.SessionID)
+	}
+
+	if conn.UserID != "" && h.eventBus != nil {
+		presenceEvent := &types.UserPresenceEvent{
+			UserID:    conn.UserID,
+			DeviceID:  conn.DeviceID,
+			Online:    false,
+			Timestamp: time.Now(),
+		}
+		if err := h.eventBus.PublishPresenceEvent(h.ctx, presenceEvent); err != nil {
+			logger.Warn("发布用户离线事件失败", logger.ErrorField(err))
+		}
 	}
 
 	conn.Conn.Close()

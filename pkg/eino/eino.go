@@ -12,6 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"Logos/config"
+	"Logos/pkg/governance"
 	"Logos/pkg/logger"
 )
 
@@ -19,6 +20,7 @@ type EinoManager struct {
 	chatModel   model.BaseChatModel
 	embedder    embedding.Embedder
 	initialized bool
+	llmGov      *governance.LLMGovernance
 }
 
 var (
@@ -59,7 +61,9 @@ func NewEinoManager(apiKey, modelName, baseURL, embeddingModel string) (*EinoMan
 		logger.StringField("base_url", baseURL),
 		logger.StringField("embedding_model", embeddingModel))
 
-	manager := &EinoManager{}
+	manager := &EinoManager{
+		llmGov: governance.InitLLMGovernance(governance.DefaultConfig()),
+	}
 
 	ctx := context.Background()
 
@@ -126,6 +130,22 @@ func (e *EinoManager) Chat(ctx context.Context, messages []string) (string, erro
 		} else {
 			schemaMessages = append(schemaMessages, schema.AssistantMessage(msg, nil))
 		}
+	}
+
+	if e.llmGov != nil {
+		result, err := e.llmGov.Chat(ctx, "chat", func(ctx context.Context) (string, error) {
+			response, err := e.chatModel.Generate(ctx, schemaMessages)
+			if err != nil {
+				return "", err
+			}
+			return response.Content, nil
+		})
+		if err != nil {
+			logger.Error("ChatModel生成失败（治理层）", logger.ErrorField(err))
+			return "", fmt.Errorf("生成失败: %w", err)
+		}
+		logger.Info("ChatModel生成成功", logger.StringField("content_length", fmt.Sprintf("%d", len(result))))
+		return result, nil
 	}
 
 	response, err := e.chatModel.Generate(ctx, schemaMessages)

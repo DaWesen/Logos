@@ -35,6 +35,10 @@ func main() {
 
 	messageService := service.NewMessageService(repo, nil)
 
+	if err := messageService.StartKafkaConsumer(context.Background()); err != nil {
+		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
+	}
+
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("message")
 	defer shutdown(context.Background())
 

@@ -122,19 +122,25 @@ func (eb *EventBus) PublishTypingEvent(ctx context.Context, event *TypingEvent) 
 	return eb.producer.SendChatEvent(ctx, key, data)
 }
 
-func (eb *EventBus) SubscribeIMEvents(ctx context.Context, handler mq.MessageHandler) error {
+func (eb *EventBus) SubscribeIMEvents(ctx context.Context, handler mq.MessageHandler, groupID ...string) error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
-	if _, exists := eb.consumers["im"]; exists {
-		logger.Warn("IM消费者已存在")
+	consumerGroupID := "gateway-im-consumer"
+	if len(groupID) > 0 && groupID[0] != "" {
+		consumerGroupID = groupID[0]
+	}
+
+	consumerKey := "im-" + consumerGroupID
+	if _, exists := eb.consumers[consumerKey]; exists {
+		logger.Warn("IM消费者已存在", logger.StringField("group_id", consumerGroupID))
 		return nil
 	}
 
-	consumer := mq.NewConsumer(mq.TopicIM, "gateway-im-consumer")
-	eb.consumers["im"] = consumer
+	consumer := mq.NewConsumer(mq.TopicIM, consumerGroupID)
+	eb.consumers[consumerKey] = consumer
 
-	logger.Info("开始订阅IM事件")
+	logger.Info("开始订阅IM事件", logger.StringField("group_id", consumerGroupID))
 	return consumer.Subscribe(ctx, handler)
 }
 

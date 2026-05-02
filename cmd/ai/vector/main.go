@@ -25,7 +25,7 @@ func main() {
 	var milvusManager *vector.MilvusManager
 	milvusManager, err := vector.InitMilvus()
 	if err != nil {
-		log.Printf("Failed to init milvus: %v", err)
+		log.Fatalf("Failed to init milvus (required for vector service): %v", err)
 	}
 
 	var einoClient *eino.EinoManager

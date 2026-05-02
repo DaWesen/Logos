@@ -10,7 +10,9 @@ import (
 	"unicode/utf8"
 
 	"Logos/internal/bot/agent"
+	"Logos/internal/bot/coordinator"
 	"Logos/internal/bot/provider"
+	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/eino"
@@ -66,6 +68,9 @@ type BotService interface {
 	GetUserMemory(ctx context.Context, userID, botID string) ([]*botmodel.UserMemory, error)
 	SetUserMemory(ctx context.Context, userID, botID, key, value string) error
 
+	ChatWithCoordinator(ctx context.Context, userID, content string) (string, error)
+	ChatWithCoordinatorStream(ctx context.Context, userID, content string, onChunk func(string) error) error
+
 	WithTransaction(ctx context.Context, fn func(txService BotService) error) error
 }
 
@@ -76,6 +81,7 @@ type botServiceImpl struct {
 	billingService BillingService
 	vectorService  VectorService
 	producer       *mq.Producer
+	mcpRegistry    *mcp_server.ToolRegistry
 }
 
 func NewBotService(
@@ -86,6 +92,13 @@ func NewBotService(
 	vectorService VectorService,
 	producer *mq.Producer,
 ) BotService {
+	mcpReg := mcp_server.DefaultRegistry()
+
+	coord := coordinator.InitCoordinator(einoManager, agentManager, mcpReg)
+	if coord != nil {
+		logger.Info("Coordinator 已初始化")
+	}
+
 	return &botServiceImpl{
 		repo:           repo,
 		agentManager:   agentManager,
@@ -93,6 +106,7 @@ func NewBotService(
 		billingService: billingService,
 		vectorService:  vectorService,
 		producer:       producer,
+		mcpRegistry:    mcpReg,
 	}
 }
 
@@ -365,7 +379,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 		Metadata:       botmodel.JSONMap(metadata),
 		CreatedAt:      time.Now(),
 	}
-	if err := s.repo.AddMessage(ctx, userMsg); err != nil {
+	if err = s.repo.AddMessage(ctx, userMsg); err != nil {
 		logger.Error("保存用户消息失败", logger.ErrorField(err))
 		return "", ErrInternalServer
 	}
@@ -398,13 +412,13 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	historyMessages, err := s.buildHistoryMessages(ctx, conversationID, 20)
 	if err != nil {
 		logger.Warn("构建历史消息失败，使用简单对话", logger.ErrorField(err))
-		response, err := botAgent.Chat(ctx, fullPrompt)
-		if err != nil {
-			logger.Error("Agent 调用失败", logger.ErrorField(err))
+		chatResp, chatErr := botAgent.Chat(ctx, fullPrompt)
+		if chatErr != nil {
+			logger.Error("Agent 调用失败", logger.ErrorField(chatErr))
 			return "", ErrInternalServer
 		}
-		s.saveAssistantMessage(ctx, botID, conversationID, response)
-		return response, nil
+		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
+		return chatResp, nil
 	}
 
 	currentMsg := schema.UserMessage(fullPrompt)
@@ -484,7 +498,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		Metadata:       botmodel.JSONMap(metadata),
 		CreatedAt:      time.Now(),
 	}
-	if err := s.repo.AddMessage(ctx, userMsg); err != nil {
+	if err = s.repo.AddMessage(ctx, userMsg); err != nil {
 		logger.Error("保存用户消息失败", logger.ErrorField(err))
 		return ErrInternalServer
 	}
@@ -660,6 +674,67 @@ func (s *botServiceImpl) SetUserMemory(ctx context.Context, userID, botID, key, 
 	return s.repo.SetUserMemory(ctx, memory)
 }
 
+func (s *botServiceImpl) ChatWithCoordinator(ctx context.Context, userID, content string) (string, error) {
+	logger.Info("Coordinator 协作请求", logger.StringField("userID", userID))
+
+	coord := coordinator.GetCoordinator()
+	if coord == nil {
+		return "", ErrAgentNotInitialized
+	}
+
+	usePlatformModel := s.einoManager != nil && s.einoManager.HasChatModel()
+	if usePlatformModel && s.billingService != nil {
+		estimatedTokens := estimateTokenCount(content)
+		_, err := s.billingService.ConsumeModelCall(ctx, userID, "platform", "coordinator", estimatedTokens, map[string]string{
+			"type": "coordinator",
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "insufficient") {
+				return "", ErrInsufficientBalance
+			}
+			logger.Warn("Coordinator 计费失败", logger.ErrorField(err))
+		}
+	}
+
+	response, err := coord.Chat(ctx, content)
+	if err != nil {
+		logger.Error("Coordinator 调用失败", logger.ErrorField(err))
+		return "", ErrInternalServer
+	}
+
+	return response, nil
+}
+
+func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, content string, onChunk func(string) error) error {
+	logger.Info("Coordinator 流式协作请求", logger.StringField("userID", userID))
+
+	coord := coordinator.GetCoordinator()
+	if coord == nil {
+		return ErrAgentNotInitialized
+	}
+
+	usePlatformModel := s.einoManager != nil && s.einoManager.HasChatModel()
+	if usePlatformModel && s.billingService != nil {
+		estimatedTokens := estimateTokenCount(content)
+		_, err := s.billingService.ConsumeModelCall(ctx, userID, "platform", "coordinator", estimatedTokens, map[string]string{
+			"type": "coordinator",
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "insufficient") {
+				return ErrInsufficientBalance
+			}
+			logger.Warn("Coordinator 计费失败", logger.ErrorField(err))
+		}
+	}
+
+	if err := coord.ChatStream(ctx, content, onChunk); err != nil {
+		logger.Error("Coordinator 流式调用失败", logger.ErrorField(err))
+		return ErrInternalServer
+	}
+
+	return nil
+}
+
 func (s *botServiceImpl) WithTransaction(ctx context.Context, fn func(txService BotService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
 		txService := NewBotService(txRepo, s.agentManager, s.einoManager, s.billingService, s.vectorService, s.producer)
@@ -717,9 +792,9 @@ func (s *botServiceImpl) buildRAGPrompt(ctx context.Context, bot *botmodel.Bot, 
 	var ragContext strings.Builder
 	ragContext.WriteString("以下是一些参考文档内容，请基于这些信息回答用户问题：\n\n")
 	for i, result := range results {
-		ragContext.WriteString(fmt.Sprintf("[文档 %d]:\n%s\n\n", i+1, result))
+		fmt.Fprintf(&ragContext, "[文档 %d]:\n%s\n\n", i+1, result)
 	}
-	ragContext.WriteString("用户的问题：\n" + content + "\n\n请基于上述参考内容回答，仅使用参考内容中相关的信息。")
+	fmt.Fprintf(&ragContext, "用户的问题：\n%s\n\n请基于上述参考内容回答，仅使用参考内容中相关的信息。", content)
 
 	logger.Info("RAG 查询成功，找到相关文档", logger.IntField("count", len(results)))
 	return ragContext.String()
@@ -763,7 +838,7 @@ func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, use
 		return
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"action":    action,
 		"bot_id":    botID,
 		"user_id":   userID,
@@ -787,10 +862,7 @@ func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, use
 
 func estimateTokenCount(text string) int {
 	charCount := utf8.RuneCountInString(text)
-	asciiCount := len(text) - charCount*3
-	if asciiCount < 0 {
-		asciiCount = 0
-	}
+	asciiCount := max(0, len(text)-charCount*3)
 	nonAsciiCount := charCount - asciiCount
 	return nonAsciiCount*2 + asciiCount/4 + 50
 }

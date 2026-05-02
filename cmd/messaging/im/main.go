@@ -38,6 +38,10 @@ func main() {
 	imService := service.NewIMService(repo, redisCache, ctx)
 	imServiceImpl := handler.NewIMServiceImpl(imService)
 
+	if err := imService.StartPresenceConsumer(); err != nil {
+		logger.Warn("启动在线状态消费者失败", logger.ErrorField(err))
+	}
+
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("im")
 	defer shutdown(context.Background())
 

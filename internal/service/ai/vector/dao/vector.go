@@ -3,6 +3,7 @@ package dao
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"Logos/internal/service/ai/vector/model"
@@ -200,11 +201,14 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model
 	}
 
 	collection := &model.VectorCollection{
-		ID: id,
+		ID:   id,
+		Name: collectionName,
 	}
 
-	if size, ok := stats["row_count"]; ok {
-		collection.Size = int64(len(size))
+	if rowCount, ok := stats["row_count"]; ok {
+		if s, err := parseStatInt(rowCount); err == nil {
+			collection.Size = s
+		}
 	}
 
 	return collection, nil
@@ -213,8 +217,53 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model
 func (r *vectorRepository) ListCollections(ctx context.Context) ([]*model.VectorCollection, error) {
 	logger.Info("列出所有向量集合")
 
-	logger.Warn("列出向量集合功能待实现")
-	return []*model.VectorCollection{}, nil
+	collectionNames, err := r.milvus.ListCollections(ctx)
+	if err != nil {
+		logger.Error("列出Milvus集合失败", logger.ErrorField(err))
+		return nil, err
+	}
+
+	var collections []*model.VectorCollection
+	for _, name := range collectionNames {
+		if !strings.HasPrefix(name, "vector_") {
+			continue
+		}
+		id := strings.TrimPrefix(name, "vector_")
+
+		stats, statErr := r.milvus.GetCollectionStats(ctx, name)
+		collection := &model.VectorCollection{
+			ID:   id,
+			Name: name,
+		}
+		if statErr == nil {
+			if rowCount, ok := stats["row_count"]; ok {
+				if s, err := parseStatInt(rowCount); err == nil {
+					collection.Size = s
+				}
+			}
+		}
+		collections = append(collections, collection)
+	}
+
+	logger.Info("列出向量集合完成", logger.IntField("count", len(collections)))
+	return collections, nil
+}
+
+func parseStatInt(val interface{}) (int64, error) {
+	switch v := val.(type) {
+	case int64:
+		return v, nil
+	case int:
+		return int64(v), nil
+	case float64:
+		return int64(v), nil
+	case string:
+		var i int64
+		_, err := fmt.Sscanf(v, "%d", &i)
+		return i, err
+	default:
+		return 0, fmt.Errorf("unexpected type %T", val)
+	}
 }
 
 func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectionID string, metadata map[string]string) (*model.Vector, error) {

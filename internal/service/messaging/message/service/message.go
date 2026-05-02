@@ -184,9 +184,16 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 		limit = 10
 	}
 
-	msgs, err := s.repo.ListPendingMessages(ctx, limit)
+	var msgs []*model.Message
+	var err error
+
+	if topicStr != "" && topicStr != "UNKNOWN(0)" {
+		msgs, err = s.repo.ListPendingMessagesByTopic(ctx, topicStr, limit)
+	} else {
+		msgs, err = s.repo.ListPendingMessages(ctx, limit)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("��ѯ��������Ϣʧ��: %w", err)
+		return nil, fmt.Errorf("查询待处理消息失败: %w", err)
 	}
 
 	for _, msg := range msgs {
@@ -275,17 +282,44 @@ func (s *messageServiceImpl) CreateTopic(topic int32) error {
 
 func (s *messageServiceImpl) DeleteTopic(topic int32) error {
 	topicStr := dao.TopicString(int(topic))
-	logger.Info("ɾ����Ϣ����",
+	logger.Info("删除消息主题",
 		logger.StringField("topic", topicStr))
 
+	ctx := context.Background()
+
+	if err := s.repo.DeleteMessagesByTopic(ctx, topicStr); err != nil {
+		logger.Error("删除主题消息失败", logger.ErrorField(err))
+		return fmt.Errorf("删除主题消息失败: %w", err)
+	}
+
+	if err := s.repo.DeleteSubscriptionsByTopic(ctx, topicStr); err != nil {
+		logger.Warn("删除主题订阅失败", logger.ErrorField(err))
+	}
+
+	if s.kafkaProducer != nil {
+		notificationData := []byte(fmt.Sprintf(`{"action":"delete_topic","topic":"%s","timestamp":"%s"}`, topicStr, time.Now().Format(time.RFC3339)))
+		if err := s.kafkaProducer.Send(ctx, mq.TopicSystemEvent, "system-topic-delete", notificationData); err != nil {
+			logger.Warn("发送主题删除事件到Kafka失败", logger.ErrorField(err))
+		}
+	}
+
+	logger.Info("主题已删除", logger.StringField("topic", topicStr))
 	return nil
 }
 
 func (s *messageServiceImpl) ClearMessages(topic int32) error {
 	topicStr := dao.TopicString(int(topic))
-	logger.Info("�����Ϣ",
+	logger.Info("清除消息",
 		logger.StringField("topic", topicStr))
 
+	ctx := context.Background()
+
+	if err := s.repo.ClearMessagesByTopic(ctx, topicStr); err != nil {
+		logger.Error("清除主题消息失败", logger.ErrorField(err))
+		return fmt.Errorf("清除主题消息失败: %w", err)
+	}
+
+	logger.Info("主题消息已清除", logger.StringField("topic", topicStr))
 	return nil
 }
 

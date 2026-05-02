@@ -9,6 +9,7 @@ import (
 	"Logos/internal/service/ai/summary/handler"
 	"Logos/internal/service/ai/summary/model"
 	"Logos/internal/service/ai/summary/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
@@ -41,7 +42,15 @@ func main() {
 
 	repo := dao.NewSummaryRepository(db)
 
-	summaryService := service.NewSummaryService(repo, einoClient, nil)
+	var chatSvc service.ChatService
+	chatClient, chatErr := client.NewChatClientFromConfig(cfg)
+	if chatErr != nil {
+		logger.Warn("初始化Chat客户端失败，摘要服务将降级运行", logger.ErrorField(chatErr))
+	} else {
+		chatSvc = service.NewChatClientAdapter(chatClient)
+	}
+
+	summaryService := service.NewSummaryService(repo, einoClient, chatSvc)
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("summary")
 	defer shutdown(context.Background())

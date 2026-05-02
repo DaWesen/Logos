@@ -140,10 +140,10 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string) 
 	}
 
 	type moderationOutput struct {
-		Result     string             `json:"result"`
-		Categories []string           `json:"categories"`
+		Result     string            `json:"result"`
+		Categories []string          `json:"categories"`
 		Scores     map[string]float64 `json:"scores"`
-		Action     string             `json:"action"`
+		Action     string            `json:"action"`
 	}
 
 	var output moderationOutput

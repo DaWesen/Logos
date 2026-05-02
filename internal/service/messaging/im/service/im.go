@@ -3,8 +3,10 @@ package service
 import (
 	"Logos/internal/service/messaging/im/dao"
 	"Logos/internal/service/messaging/im/model"
+	"Logos/internal/service/messaging/types"
 	"Logos/pkg/cache"
 	"Logos/pkg/logger"
+	"Logos/pkg/mq"
 	"context"
 	"errors"
 	"time"
@@ -25,19 +27,22 @@ type IMService interface {
 	BroadcastMessage(ctx context.Context, content string) error
 	GetOnlineUsers(ctx context.Context) ([]string, error)
 	ValidateSession(ctx context.Context, sessionID string) (string, error)
+	StartPresenceConsumer() error
 }
 
 type IMServiceImpl struct {
-	repo  dao.IMRepository
-	cache cache.Cache
-	ctx   context.Context
+	repo     dao.IMRepository
+	cache    cache.Cache
+	eventBus *types.EventBus
+	ctx      context.Context
 }
 
 func NewIMService(repo dao.IMRepository, cache cache.Cache, ctx context.Context) IMService {
 	return &IMServiceImpl{
-		repo:  repo,
-		cache: cache,
-		ctx:   ctx,
+		repo:     repo,
+		cache:    cache,
+		eventBus: types.GetEventBus(),
+		ctx:      ctx,
 	}
 }
 
@@ -175,15 +180,44 @@ func (s *IMServiceImpl) Heartbeat(ctx context.Context, sessionID string) error {
 }
 
 func (s *IMServiceImpl) SendTypingStatus(ctx context.Context, fromUserID, chatID string, typing bool) error {
-	logger.Info("输入状态",
+	logger.Info("发送输入状态",
 		logger.StringField("user_id", fromUserID),
 		logger.StringField("chat_id", chatID),
 		logger.BoolField("typing", typing))
+
+	typingEvent := &types.TypingEvent{
+		UserID:    fromUserID,
+		ChatID:    chatID,
+		IsTyping:  typing,
+		Timestamp: time.Now(),
+	}
+
+	if err := s.eventBus.PublishTypingEvent(ctx, typingEvent); err != nil {
+		logger.Error("发布输入状态事件失败", logger.ErrorField(err))
+		return err
+	}
+
 	return nil
 }
 
 func (s *IMServiceImpl) BroadcastMessage(ctx context.Context, content string) error {
-	logger.Info("广播消息", logger.StringField("content", content))
+	logger.Info("广播消息", logger.StringField("content_len", content))
+
+	broadcastEvent := &types.MessageEvent{
+		ID:          "broadcast_" + time.Now().Format("20060102150405"),
+		ChatID:      "broadcast",
+		ChatType:    types.ChatTypeBroadcast,
+		SenderID:    "system",
+		MessageType: types.MessageTypeText,
+		Content:     content,
+		Timestamp:   time.Now(),
+	}
+
+	if err := s.eventBus.PublishMessageEvent(ctx, broadcastEvent); err != nil {
+		logger.Error("发布广播消息事件失败", logger.ErrorField(err))
+		return err
+	}
+
 	return nil
 }
 
@@ -200,4 +234,82 @@ func (s *IMServiceImpl) ValidateSession(ctx context.Context, sessionID string) (
 		return "", errors.New("会话已失效")
 	}
 	return record.UserID, nil
+}
+
+func (s *IMServiceImpl) StartPresenceConsumer() error {
+	if s.eventBus == nil {
+		logger.Warn("EventBus未初始化，无法启动在线状态消费者")
+		return nil
+	}
+
+	logger.Info("启动IM服务在线状态消费者")
+
+	go func() {
+		handler := func(msg *mq.Message) error {
+			return s.handlePresenceEvent(msg)
+		}
+		if err := s.eventBus.SubscribeIMEvents(s.ctx, handler, "im-service-consumer"); err != nil {
+			logger.Error("订阅IM在线状态事件失败", logger.ErrorField(err))
+		}
+	}()
+
+	return nil
+}
+
+func (s *IMServiceImpl) handlePresenceEvent(msg *mq.Message) error {
+	event, err := types.UserPresenceEventFromJSON(msg.Value)
+	if err != nil {
+		logger.Error("解析在线状态事件失败", logger.ErrorField(err))
+		return err
+	}
+
+	if event.UserID == "" {
+		return nil
+	}
+
+	ctx := context.Background()
+
+	if event.Online {
+		record := &model.OnlineRecord{
+			UserID:    event.UserID,
+			DeviceID:  event.DeviceID,
+			SessionID: "ws_" + event.UserID + "_" + event.DeviceID,
+			Online:    true,
+			LastSeen:  time.Now().UnixMilli(),
+			Platform:  "websocket",
+		}
+		if err := s.repo.CreateOnlineRecord(ctx, record); err != nil {
+			logger.Error("创建在线记录失败", logger.ErrorField(err))
+			return err
+		}
+
+		cacheKey := onlineStatusCachePrefix + event.UserID
+		if err := s.cache.Set(ctx, cacheKey, "1", 0); err != nil {
+			logger.Warn("更新在线状态缓存失败", logger.ErrorField(err))
+		}
+
+		logger.Info("用户上线（来自Gateway事件）",
+			logger.StringField("user_id", event.UserID),
+			logger.StringField("device_id", event.DeviceID))
+	} else {
+		sessionID := "ws_" + event.UserID + "_" + event.DeviceID
+		if err := s.repo.SetUserOffline(ctx, sessionID); err != nil {
+			logger.Error("设置用户离线失败", logger.ErrorField(err))
+			return err
+		}
+
+		records, err := s.repo.GetOnlineRecordsByUser(ctx, event.UserID)
+		if err == nil && len(records) == 0 {
+			cacheKey := onlineStatusCachePrefix + event.UserID
+			if err := s.cache.Delete(ctx, cacheKey); err != nil {
+				logger.Warn("清除在线状态缓存失败", logger.ErrorField(err))
+			}
+		}
+
+		logger.Info("用户离线（来自Gateway事件）",
+			logger.StringField("user_id", event.UserID),
+			logger.StringField("device_id", event.DeviceID))
+	}
+
+	return nil
 }

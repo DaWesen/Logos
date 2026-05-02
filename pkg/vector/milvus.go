@@ -1,4 +1,4 @@
-﻿package vector
+package vector
 
 import (
 	"context"
@@ -270,6 +270,19 @@ func (m *MilvusManager) GetCollectionStats(ctx context.Context, collectionName s
 	}
 
 	return stats, nil
+}
+
+func (m *MilvusManager) ListCollections(ctx context.Context) ([]string, error) {
+	logger.Info("列出所有Milvus集合")
+
+	collectionNames, err := m.client.ListCollections(ctx, milvusclient.NewListCollectionOption())
+	if err != nil {
+		logger.Error("列出Milvus集合失败", logger.ErrorField(err))
+		return nil, err
+	}
+
+	logger.Info("列出Milvus集合完成", logger.IntField("count", len(collectionNames)))
+	return collectionNames, nil
 }
 
 func (m *MilvusManager) DescribeCollection(ctx context.Context, collectionName string) (*entity.Collection, error) {
