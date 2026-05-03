@@ -1,4 +1,4 @@
-﻿package cache
+package cache
 
 import (
 	"context"
@@ -176,18 +176,19 @@ func InitRedis(redisConfig config.Redis) (Cache, error) {
 		PoolSize: redisConfig.PoolSize,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := client.Ping(ctx).Result()
-	if err != nil {
-		fmt.Printf("Redis连接失败: %v\n", err)
-		return nil, err
-	} else {
-		fmt.Println("Redis连接成功")
+	for i := 0; i < 30; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, err := client.Ping(ctx).Result()
+		cancel()
+		if err == nil {
+			fmt.Println("Redis连接成功")
+			return &RedisCache{client: client}, nil
+		}
+		fmt.Printf("Redis连接失败(第%d次)，重试中...: %v\n", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
 
-	return &RedisCache{client: client}, nil
+	return nil, fmt.Errorf("failed to connect redis after 30 attempts")
 }
 
 // 设置键值对

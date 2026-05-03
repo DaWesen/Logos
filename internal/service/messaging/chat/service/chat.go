@@ -9,13 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// ChatService 聊天服务接口
 type ChatService interface {
 	SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error)
 	GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int) ([]*model.Message, bool, error)
@@ -38,7 +38,6 @@ type ChatService interface {
 
 	StartEventConsumer() error
 
-	// 同步相关方法
 	GetSyncPoint(userID, deviceID string) (*model.SyncPoint, error)
 	UpdateSyncPoint(userID, deviceID string) (*model.SyncPoint, error)
 	SyncMessages(req *model.SyncRequest) (*model.SyncResponse, error)
@@ -48,15 +47,24 @@ type ChatService interface {
 	RecordMessageState(msgID, userID, chatID, state string) error
 }
 
-// ChatServiceImpl 聊天服务实现
-type ChatServiceImpl struct {
-	repo     dao.ChatRepository
-	eventBus *types.EventBus
-	ctx      context.Context
-	cancel   context.CancelFunc
+type BotClient interface {
+	SendBotMessage(ctx context.Context, botID, content, userID, chatID string) (string, error)
 }
 
-// NewChatService 创建聊天服务
+type ModerationClient interface {
+	ModerateContent(ctx context.Context, content, contentID, contentType string) (bool, error)
+}
+
+type ChatServiceImpl struct {
+	repo             dao.ChatRepository
+	eventBus         *types.EventBus
+	ctx              context.Context
+	cancel           context.CancelFunc
+	botClient        BotClient
+	moderationClient ModerationClient
+	enableModeration bool
+}
+
 func NewChatService(repo dao.ChatRepository, eventBus *types.EventBus, ctx context.Context) ChatService {
 	c, cancel := context.WithCancel(ctx)
 	return &ChatServiceImpl{
@@ -67,7 +75,19 @@ func NewChatService(repo dao.ChatRepository, eventBus *types.EventBus, ctx conte
 	}
 }
 
-// StartEventConsumer 启动事件消费者
+func NewChatServiceWithAI(repo dao.ChatRepository, eventBus *types.EventBus, ctx context.Context, botClient BotClient, moderationClient ModerationClient) ChatService {
+	c, cancel := context.WithCancel(ctx)
+	return &ChatServiceImpl{
+		repo:             repo,
+		eventBus:         eventBus,
+		ctx:              c,
+		cancel:           cancel,
+		botClient:        botClient,
+		moderationClient: moderationClient,
+		enableModeration: moderationClient != nil,
+	}
+}
+
 func (s *ChatServiceImpl) StartEventConsumer() error {
 	logger.Info("启动聊天服务事件消费者")
 
@@ -83,21 +103,17 @@ func (s *ChatServiceImpl) StartEventConsumer() error {
 	return nil
 }
 
-// HandleMessageEvent 处理消息事件
 func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 	logger.Debug("收到消息事件", logger.StringField("topic", msg.Topic))
 
-	// 先尝试解析为 TypingEvent
 	if typingEvent, err := types.TypingEventFromJSON(msg.Value); err == nil && typingEvent.UserID != "" {
 		return s.handleTypingEvent(typingEvent)
 	}
 
-	// 然后尝试解析为 MessageReadEvent
 	if readEvent, err := types.MessageReadEventFromJSON(msg.Value); err == nil && readEvent.ReaderID != "" {
 		return s.handleMessageReadEvent(readEvent)
 	}
 
-	// 否则解析为 MessageEvent
 	event, err := types.MessageEventFromJSON(msg.Value)
 	if err != nil {
 		logger.Error("解析消息事件失败", logger.ErrorField(err))
@@ -114,6 +130,15 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		logger.StringField("chat_id", event.ChatID),
 		logger.StringField("sender_id", event.SenderID),
 	)
+
+	if s.enableModeration && event.SenderID != "system" && event.SenderID != "" {
+		if blocked := s.moderateMessage(event); blocked {
+			logger.Info("消息被审核拦截",
+				logger.StringField("msg_id", event.ID),
+				logger.StringField("sender_id", event.SenderID))
+			return nil
+		}
+	}
 
 	var recipientIDs []string
 	_, recipientIDs, err = s.SendMessage(
@@ -148,27 +173,125 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		logger.IntField("recipient_count", len(event.RecipientIDs)),
 	)
 
+	if s.botClient != nil && event.SenderID != "system" {
+		s.handleBotMentions(event)
+	}
+
 	return nil
 }
 
-// handleMessageReadEvent 处理消息已读事件
+var botMentionRegex = regexp.MustCompile(`@(\S+)`)
+
+func (s *ChatServiceImpl) handleBotMentions(event *types.MessageEvent) {
+	mentions := botMentionRegex.FindAllStringSubmatch(event.Content, -1)
+	if len(mentions) == 0 {
+		return
+	}
+
+	var botNames []string
+	for _, m := range mentions {
+		botNames = append(botNames, m[1])
+	}
+
+	logger.Info("检测到Bot提及",
+		logger.StringField("msg_id", event.ID),
+		logger.StringField("bots", strings.Join(botNames, ",")))
+
+	go s.invokeBotForMention(event, botNames)
+}
+
+func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botNames []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	query := event.Content
+	for _, name := range botNames {
+		query = strings.Replace(query, "@"+name, "", 1)
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		query = "你好"
+	}
+
+	botName := botNames[0]
+
+	content, err := s.botClient.SendBotMessage(ctx, botName, query, event.SenderID, event.ChatID)
+	if err != nil {
+		logger.Error("调用Bot失败",
+			logger.StringField("bot", botName),
+			logger.ErrorField(err))
+		return
+	}
+
+	if content == "" {
+		logger.Warn("Bot返回空响应", logger.StringField("bot", botName))
+		return
+	}
+
+	botResponseEvent := &types.MessageEvent{
+		ID:             "bot_" + uuid.New().String(),
+		ChatID:         event.ChatID,
+		ChatType:       event.ChatType,
+		SenderID:       "bot_" + botName,
+		MessageType:    types.MessageTypeText,
+		Content:        content,
+		ReplyToMessage: event.ID,
+		Timestamp:      time.Now(),
+		MentionUserIDs: []string{event.SenderID},
+	}
+
+	if err := s.eventBus.PublishMessageEvent(s.ctx, botResponseEvent); err != nil {
+		logger.Error("发布Bot回复事件失败", logger.ErrorField(err))
+		return
+	}
+
+	logger.Info("Bot回复已注入聊天流",
+		logger.StringField("bot", botName),
+		logger.StringField("chat_id", event.ChatID),
+		logger.StringField("reply_to", event.ID))
+}
+
+func (s *ChatServiceImpl) moderateMessage(event *types.MessageEvent) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rejected, err := s.moderationClient.ModerateContent(ctx, event.Content, event.ID, "text")
+	if err != nil {
+		logger.Warn("内容审核调用失败，放行消息", logger.ErrorField(err))
+		return false
+	}
+
+	if rejected {
+		blockedEvent := &types.MessageEvent{
+			ID:          uuid.New().String(),
+			ChatID:      event.ChatID,
+			ChatType:    event.ChatType,
+			SenderID:    "system",
+			MessageType: types.MessageTypeSystem,
+			Content:     "⚠️ 消息已被内容审核系统拦截",
+			Timestamp:   time.Now(),
+		}
+		s.eventBus.PublishMessageEvent(s.ctx, blockedEvent)
+		return true
+	}
+
+	return false
+}
+
 func (s *ChatServiceImpl) handleMessageReadEvent(event *types.MessageReadEvent) error {
 	logger.Info("处理消息已读事件",
 		logger.StringField("chat_id", event.ChatID),
 		logger.StringField("reader_id", event.ReaderID),
 		logger.IntField("message_count", len(event.MessageIDs)))
 
-	// 更新数据库中的消息状态为已读
 	if err := s.repo.MarkMessagesRead(s.ctx, event.MessageIDs); err != nil {
 		logger.Error("标记消息已读失败", logger.ErrorField(err))
 		return err
 	}
 
-	// 计算应该接收已读回执的用户列表
 	recipientIDs := s.getReadReceiptRecipients(event)
 	event.RecipientIDs = recipientIDs
 
-	// 重新发布带有 RecipientIDs 的事件
 	if err := s.eventBus.PublishMessageReadEvent(s.ctx, event); err != nil {
 		logger.Error("发布完整已读回执事件失败", logger.ErrorField(err))
 		return err
@@ -182,18 +305,14 @@ func (s *ChatServiceImpl) handleMessageReadEvent(event *types.MessageReadEvent) 
 	return nil
 }
 
-// getReadReceiptRecipients 获取应该接收已读回执的用户列表
 func (s *ChatServiceImpl) getReadReceiptRecipients(event *types.MessageReadEvent) []string {
 	var recipients []string
 
 	if strings.HasPrefix(event.ChatID, "private_") {
-		// 单聊：获取对方
 		recipients = s.getPrivateChatRecipient(event.ChatID, event.ReaderID)
 	} else {
-		// 尝试从数据库获取群成员
 		groupMembers, err := s.repo.GetAllGroupMemberIDs(s.ctx, event.ChatID)
 		if err == nil {
-			// 排除阅读者自己
 			for _, uid := range groupMembers {
 				if uid != event.ReaderID {
 					recipients = append(recipients, uid)
@@ -209,27 +328,23 @@ func (s *ChatServiceImpl) getReadReceiptRecipients(event *types.MessageReadEvent
 	return recipients
 }
 
-// handleTypingEvent 处理输入状态事件
 func (s *ChatServiceImpl) handleTypingEvent(event *types.TypingEvent) error {
 	logger.Info("处理输入状态事件",
 		logger.StringField("chat_id", event.ChatID),
 		logger.StringField("user_id", event.UserID),
 		logger.BoolField("typing", event.IsTyping))
 
-	// 如果已经有 RecipientIDs，说明已经处理过，跳过
 	if len(event.RecipientIDs) > 0 {
 		logger.Debug("输入状态事件已处理，跳过", logger.StringField("chat_id", event.ChatID))
 		return nil
 	}
 
-	// 计算应该接收输入状态的用户列表
 	recipientIDs := s.getReadReceiptRecipients(&types.MessageReadEvent{
 		ReaderID: event.UserID,
 		ChatID:   event.ChatID,
 	})
 	event.RecipientIDs = recipientIDs
 
-	// 重新发布带有 RecipientIDs 的事件
 	if err := s.eventBus.PublishTypingEvent(s.ctx, event); err != nil {
 		logger.Error("发布完整输入状态事件失败", logger.ErrorField(err))
 		return err
@@ -242,25 +357,24 @@ func (s *ChatServiceImpl) handleTypingEvent(event *types.TypingEvent) error {
 	return nil
 }
 
-// getPrivateChatRecipient 从单聊会话ID获取另一个参与者
 func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []string {
 	if strings.HasPrefix(chatID, "private_") {
 		parts := strings.Split(chatID, "_")
 		if len(parts) == 3 {
-			if parts[1] == senderID {
+			switch senderID {
+			case parts[1]:
 				return []string{parts[2]}
-			}
-			if parts[2] == senderID {
+			case parts[2]:
 				return []string{parts[1]}
 			}
 		}
 	} else {
 		parts := strings.Split(chatID, "_")
 		if len(parts) == 2 {
-			if parts[0] == senderID {
+			switch senderID {
+			case parts[0]:
 				return []string{parts[1]}
-			}
-			if parts[1] == senderID {
+			case parts[1]:
 				return []string{parts[0]}
 			}
 		}
@@ -273,7 +387,6 @@ func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []str
 	return []string{}
 }
 
-// SendMessage 发送消息
 func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error) {
 	msgID := uuid.New().String()
 	now := time.Now()
@@ -304,10 +417,8 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 
 	switch chatType {
 	case model.ChatTypePrivate:
-		// 私聊：从 chatID 解析接收者
 		recipientIDs = s.getPrivateChatRecipient(chatID, senderID)
 	case model.ChatTypeGroup:
-		// 群聊：获取所有群成员（除发送者）
 		members, err := s.repo.GetAllGroupMemberIDs(s.ctx, chatID)
 		if err == nil {
 			for _, m := range members {
@@ -319,7 +430,6 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 			logger.Warn("获取群成员失败", logger.ErrorField(err))
 		}
 	case model.ChatTypeBroadcast:
-		// 广播：获取所有用户（除发送者）
 		allUsers, err := s.repo.GetAllUserIDs(s.ctx)
 		if err == nil {
 			for _, userID := range allUsers {
@@ -342,7 +452,6 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 	return msg, recipientIDs, nil
 }
 
-// GetMessageHistory 获取消息历史
 func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int) ([]*model.Message, bool, error) {
 	messages, err := s.repo.GetMessagesByChatID(s.ctx, chatID, beforeTime, limit+1)
 	if err != nil {
@@ -362,12 +471,10 @@ func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatTy
 	return messages, hasMore, nil
 }
 
-// SearchMessages 搜索消息
 func (s *ChatServiceImpl) SearchMessages(chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error) {
 	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize)
 }
 
-// MarkMessagesRead 标记消息已读
 func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string) error {
 	if len(msgIDs) == 0 {
 		return nil
@@ -375,7 +482,6 @@ func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string) error {
 	return s.repo.MarkMessagesRead(s.ctx, msgIDs)
 }
 
-// WithdrawMessage 撤回消息
 func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 	msg, err := s.repo.GetMessageByID(s.ctx, msgID)
 	if err != nil {
@@ -402,7 +508,6 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 	return nil
 }
 
-// EditMessage 编辑消息
 func (s *ChatServiceImpl) EditMessage(msgID, userID, content string) (*model.Message, error) {
 	msg, err := s.repo.GetMessageByID(s.ctx, msgID)
 	if err != nil {
@@ -425,7 +530,6 @@ func (s *ChatServiceImpl) EditMessage(msgID, userID, content string) (*model.Mes
 	return s.repo.GetMessageByID(s.ctx, msgID)
 }
 
-// CreateGroup 创建群组
 func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, metadata map[string]string) (*model.Group, error) {
 	groupID := uuid.New().String()
 	now := time.Now()
@@ -495,7 +599,6 @@ func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, 
 	return group, nil
 }
 
-// InviteGroupMember 邀请群成员
 func (s *ChatServiceImpl) InviteGroupMember(groupID, operatorID string, userIDs []string) error {
 	member, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -545,7 +648,6 @@ func (s *ChatServiceImpl) InviteGroupMember(groupID, operatorID string, userIDs 
 	return nil
 }
 
-// KickGroupMember 踢出群成员
 func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -588,7 +690,6 @@ func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) er
 	return nil
 }
 
-// MuteGroupMember 禁言/解禁群成员
 func (s *ChatServiceImpl) MuteGroupMember(groupID, operatorID, userID string, muteType model.MuteType, muteUntil time.Time) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -620,7 +721,6 @@ func (s *ChatServiceImpl) MuteGroupMember(groupID, operatorID, userID string, mu
 	return nil
 }
 
-// TransferGroupOwner 转让群主
 func (s *ChatServiceImpl) TransferGroupOwner(groupID, operatorID, newOwnerID string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -651,7 +751,6 @@ func (s *ChatServiceImpl) TransferGroupOwner(groupID, operatorID, newOwnerID str
 	return nil
 }
 
-// UpdateGroupAnnouncement 更新群公告
 func (s *ChatServiceImpl) UpdateGroupAnnouncement(groupID, operatorID, announcement string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -677,7 +776,6 @@ func (s *ChatServiceImpl) UpdateGroupAnnouncement(groupID, operatorID, announcem
 	return nil
 }
 
-// SetGroupAdmin 设置管理员
 func (s *ChatServiceImpl) SetGroupAdmin(groupID, operatorID, userID string, isAdmin bool) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
@@ -710,12 +808,10 @@ func (s *ChatServiceImpl) SetGroupAdmin(groupID, operatorID, userID string, isAd
 	return nil
 }
 
-// GetGroupMembers 获取群成员列表
 func (s *ChatServiceImpl) GetGroupMembers(groupID string, page, pageSize int) ([]*model.GroupMember, int64, error) {
 	return s.repo.GetGroupMembers(s.ctx, groupID, page, pageSize)
 }
 
-// GetGroup 获取群组信息
 func (s *ChatServiceImpl) GetGroup(groupID string) (*model.Group, error) {
 	return s.repo.GetGroupByID(s.ctx, groupID)
 }
@@ -761,22 +857,17 @@ func (s *ChatServiceImpl) LeaveGroup(groupID, userID string) error {
 	return s.repo.RemoveGroupMember(s.ctx, groupID, userID)
 }
 
-// GetSyncPoint 获取同步点
 func (s *ChatServiceImpl) GetSyncPoint(userID, deviceID string) (*model.SyncPoint, error) {
 	return s.repo.GetSyncPoint(s.ctx, userID, deviceID)
 }
 
-// UpdateSyncPoint 更新同步点
 func (s *ChatServiceImpl) UpdateSyncPoint(userID, deviceID string) (*model.SyncPoint, error) {
 	return s.repo.UpsertSyncPoint(s.ctx, userID, deviceID)
 }
 
-// SyncMessages 增量同步消息
 func (s *ChatServiceImpl) SyncMessages(req *model.SyncRequest) (*model.SyncResponse, error) {
-	// 获取用户参与的所有会话
 	chatIDs := req.ChatIDs
 	if len(chatIDs) == 0 {
-		// 如果没有指定会话，获取用户的所有会话
 		var err error
 		chatIDs, err = s.repo.GetUserChatIDs(s.ctx, req.UserID)
 		if err != nil {
@@ -790,7 +881,6 @@ func (s *ChatServiceImpl) SyncMessages(req *model.SyncRequest) (*model.SyncRespo
 		limit = 100
 	}
 
-	// 获取指定时间之后的消息
 	messages, err := s.repo.GetMessagesAfterTime(s.ctx, chatIDs, req.LastSyncAt, limit+1)
 	if err != nil {
 		logger.Error("获取同步消息失败", logger.ErrorField(err))
@@ -802,7 +892,6 @@ func (s *ChatServiceImpl) SyncMessages(req *model.SyncRequest) (*model.SyncRespo
 		messages = messages[:limit]
 	}
 
-	// 获取消息状态变更（如果需要）
 	var states []*model.MessageState
 	if req.IncludeStates {
 		states, err = s.repo.GetMessageStatesAfterTime(s.ctx, req.UserID, req.LastSyncAt, limit)
@@ -812,13 +901,11 @@ func (s *ChatServiceImpl) SyncMessages(req *model.SyncRequest) (*model.SyncRespo
 		}
 	}
 
-	// 获取最后一条消息的时间
 	lastMessageAt := req.LastSyncAt
 	if len(messages) > 0 {
 		lastMessageAt = messages[len(messages)-1].CreatedAt
 	}
 
-	// 计算下一次同步时间
 	nextSyncTime := time.Now()
 
 	resp := &model.SyncResponse{
@@ -839,7 +926,6 @@ func (s *ChatServiceImpl) SyncMessages(req *model.SyncRequest) (*model.SyncRespo
 	return resp, nil
 }
 
-// RegisterDevice 注册设备
 func (s *ChatServiceImpl) RegisterDevice(userID, deviceID, deviceType, deviceName string) (*model.Device, error) {
 	device, err := s.repo.UpsertDevice(s.ctx, userID, deviceID, deviceType, deviceName)
 	if err != nil {
@@ -853,7 +939,6 @@ func (s *ChatServiceImpl) RegisterDevice(userID, deviceID, deviceType, deviceNam
 	return device, nil
 }
 
-// UpdateDeviceOnline 更新设备在线状态
 func (s *ChatServiceImpl) UpdateDeviceOnline(userID, deviceID string) error {
 	if err := s.repo.UpdateDeviceOnline(s.ctx, userID, deviceID); err != nil {
 		logger.Error("更新设备在线状态失败", logger.ErrorField(err))
@@ -862,12 +947,10 @@ func (s *ChatServiceImpl) UpdateDeviceOnline(userID, deviceID string) error {
 	return nil
 }
 
-// GetUserDevices 获取用户的所有设备
 func (s *ChatServiceImpl) GetUserDevices(userID string) ([]*model.Device, error) {
 	return s.repo.GetUserDevices(s.ctx, userID)
 }
 
-// RecordMessageState 记录消息状态变更
 func (s *ChatServiceImpl) RecordMessageState(msgID, userID, chatID, state string) error {
 	if err := s.repo.RecordMessageState(s.ctx, msgID, userID, chatID, state); err != nil {
 		logger.Error("记录消息状态失败", logger.ErrorField(err))

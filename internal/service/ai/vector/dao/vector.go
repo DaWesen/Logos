@@ -41,7 +41,14 @@ func NewVectorRepository(milvus *vector.MilvusManager, einoClient *eino.EinoMana
 	}
 }
 
+func (r *vectorRepository) milvusUnavailableError(op string) error {
+	return fmt.Errorf("Milvus未连接，无法执行操作: %s", op)
+}
+
 func (r *vectorRepository) CreateCollection(ctx context.Context, collection *model.VectorCollection) error {
+	if r.milvus == nil {
+		return r.milvusUnavailableError("CreateCollection")
+	}
 	logger.Info("创建向量集合",
 		logger.StringField("id", collection.ID),
 		logger.StringField("name", collection.Name))
@@ -87,6 +94,9 @@ func (r *vectorRepository) CreateCollection(ctx context.Context, collection *mod
 }
 
 func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *model.VectorCollection) error {
+	if r.milvus == nil {
+		return r.milvusUnavailableError("UpdateCollection")
+	}
 	logger.Info("更新向量集合",
 		logger.StringField("id", collection.ID),
 		logger.StringField("name", collection.Name))
@@ -137,6 +147,7 @@ func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *mod
 	if err != nil {
 		logger.Error("创建新索引失败",
 			logger.StringField("id", collection.ID),
+			logger.StringField("index_type", indexType),
 			logger.ErrorField(err))
 		return fmt.Errorf("创建新索引失败: %w", err)
 	}
@@ -157,6 +168,9 @@ func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *mod
 }
 
 func (r *vectorRepository) DeleteCollection(ctx context.Context, id string) error {
+	if r.milvus == nil {
+		return r.milvusUnavailableError("DeleteCollection")
+	}
 	logger.Info("删除向量集合",
 		logger.StringField("id", id))
 
@@ -176,6 +190,9 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string) erro
 }
 
 func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model.VectorCollection, error) {
+	if r.milvus == nil {
+		return nil, r.milvusUnavailableError("GetCollection")
+	}
 	logger.Info("获取向量集合",
 		logger.StringField("id", id))
 
@@ -215,6 +232,10 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model
 }
 
 func (r *vectorRepository) ListCollections(ctx context.Context) ([]*model.VectorCollection, error) {
+	if r.milvus == nil {
+		logger.Warn("Milvus未连接，返回空集合列表")
+		return []*model.VectorCollection{}, nil
+	}
 	logger.Info("列出所有向量集合")
 
 	collectionNames, err := r.milvus.ListCollections(ctx)
@@ -289,7 +310,6 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 
 	vectorID := fmt.Sprintf("%d", time.Now().UnixNano())
 
-	// 把 content 存到 metadata 里，方便 RAG 查询
 	if metadata == nil {
 		metadata = map[string]string{}
 	}
@@ -297,8 +317,12 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 		metadata["content"] = text
 	}
 
-	collectionName := "vector_" + collectionID
-	_ = r.milvus.Insert(ctx, collectionName, []string{vectorID}, [][]float32{embeddings})
+	if r.milvus != nil {
+		collectionName := "vector_" + collectionID
+		_ = r.milvus.Insert(ctx, collectionName, []string{vectorID}, [][]float32{embeddings})
+	} else {
+		logger.Warn("Milvus未连接，向量仅返回不存储")
+	}
 
 	vector := &model.Vector{
 		ID:        vectorID,
@@ -352,7 +376,6 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 				metadata[k] = v
 			}
 		}
-		// 把 content 存到 metadata 里，方便 RAG 查询
 		if _, hasContent := metadata["content"]; !hasContent {
 			metadata["content"] = texts[i]
 		}
@@ -365,8 +388,12 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 		})
 	}
 
-	collectionName := "vector_" + collectionID
-	_ = r.milvus.Insert(ctx, collectionName, ids, allEmbeddings)
+	if r.milvus != nil {
+		collectionName := "vector_" + collectionID
+		_ = r.milvus.Insert(ctx, collectionName, ids, allEmbeddings)
+	} else {
+		logger.Warn("Milvus未连接，批量向量仅返回不存储")
+	}
 
 	logger.Info("批量向量化成功",
 		logger.IntField("count", len(vectors)))
@@ -375,6 +402,10 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 }
 
 func (r *vectorRepository) Search(ctx context.Context, collectionID string, queryVector []float64, topK int, threshold float64, filter map[string]string) ([]*model.SearchResultItem, error) {
+	if r.milvus == nil {
+		logger.Warn("Milvus未连接，搜索返回空结果")
+		return []*model.SearchResultItem{}, nil
+	}
 	logger.Info("向量搜索",
 		logger.StringField("collection_id", collectionID),
 		logger.IntField("top_k", topK))
@@ -413,6 +444,10 @@ func (r *vectorRepository) Search(ctx context.Context, collectionID string, quer
 }
 
 func (r *vectorRepository) TextSearch(ctx context.Context, collectionID string, text string, topK int, threshold float64, filter map[string]string) ([]*model.SearchResultItem, error) {
+	if r.milvus == nil {
+		logger.Warn("Milvus未连接，文本搜索返回空结果")
+		return []*model.SearchResultItem{}, nil
+	}
 	logger.Info("文本搜索",
 		logger.StringField("collection_id", collectionID),
 		logger.StringField("text", text),
@@ -460,6 +495,9 @@ func (r *vectorRepository) TextSearch(ctx context.Context, collectionID string, 
 }
 
 func (r *vectorRepository) DeleteVector(ctx context.Context, collectionID string, vectorID string) error {
+	if r.milvus == nil {
+		return r.milvusUnavailableError("DeleteVector")
+	}
 	logger.Info("删除向量",
 		logger.StringField("collection_id", collectionID),
 		logger.StringField("vector_id", vectorID))
@@ -481,6 +519,9 @@ func (r *vectorRepository) DeleteVector(ctx context.Context, collectionID string
 }
 
 func (r *vectorRepository) BatchDeleteVector(ctx context.Context, collectionID string, vectorIDs []string) error {
+	if r.milvus == nil {
+		return r.milvusUnavailableError("BatchDeleteVector")
+	}
 	logger.Info("批量删除向量",
 		logger.StringField("collection_id", collectionID),
 		logger.IntField("count", len(vectorIDs)))

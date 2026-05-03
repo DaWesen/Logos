@@ -7,6 +7,7 @@ import (
 	"Logos/internal/service/messaging/chat/model"
 	"Logos/internal/service/messaging/chat/service"
 	"Logos/internal/service/messaging/types"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
@@ -37,7 +38,26 @@ func main() {
 	eventBus := types.GetEventBus()
 
 	chatRepo := dao.NewChatRepository(db)
-	chatService := service.NewChatService(chatRepo, eventBus, ctx)
+
+	var botClient service.BotClient
+	botRawClient, botErr := client.NewBotClientFromConfig(cfg)
+	if botErr != nil {
+		logger.Warn("连接Bot服务失败，@Bot功能不可用", logger.ErrorField(botErr))
+	} else {
+		botClient = service.NewBotClientAdapter(botRawClient)
+		logger.Info("Bot服务客户端已连接")
+	}
+
+	var moderationClient service.ModerationClient
+	modRawClient, modErr := client.NewModerationClientFromConfig(cfg)
+	if modErr != nil {
+		logger.Warn("连接Moderation服务失败，内容审核不可用", logger.ErrorField(modErr))
+	} else {
+		moderationClient = service.NewModerationClientAdapter(modRawClient)
+		logger.Info("Moderation服务客户端已连接")
+	}
+
+	chatService := service.NewChatServiceWithAI(chatRepo, eventBus, ctx, botClient, moderationClient)
 	chatServiceImpl := handler.NewChatServiceImpl(chatService)
 
 	if err := chatService.StartEventConsumer(); err != nil {

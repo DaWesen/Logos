@@ -118,7 +118,7 @@ type Message struct {
 	MessageType    MessageType    `json:"message_type"`
 	Content        string         `gorm:"type:text" json:"content"`
 	Metadata       Metadata       `gorm:"type:json" json:"metadata"`
-	Status         MessageStatus  `gorm:"default:1" json:"status"`
+	Status         MessageStatus  `gorm:"type:int;default:1" json:"status"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
@@ -137,7 +137,7 @@ type Conversation struct {
 	Type          ChatType       `gorm:"index" json:"type"`
 	Name          string         `gorm:"size:200" json:"name"`
 	Metadata      Metadata       `gorm:"type:json" json:"metadata"`
-	LastMessage   *Message       `gorm:"foreignKey:ID;references:LastMessageID" json:"last_message,omitempty"`
+	LastMessage   *Message       `gorm:"foreignKey:LastMessageID;references:ID" json:"last_message,omitempty"`
 	LastMessageID string         `gorm:"size:100" json:"last_message_id"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`

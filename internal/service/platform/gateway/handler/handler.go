@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"time"
+
 	"Logos/config"
 	"Logos/internal/service/platform/gateway/websocket"
 
+	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
-	"Logos/pkg/obs"
 	pbBilling "Logos/proto_gen/billing"
 	pbBot "Logos/proto_gen/bot"
 	pbChat "Logos/proto_gen/chat"
@@ -24,7 +26,20 @@ import (
 	pbSummary "Logos/proto_gen/summary"
 	pbUser "Logos/proto_gen/user"
 	pbVector "Logos/proto_gen/vector"
+
+	"google.golang.org/grpc"
 )
+
+func buildGovernanceConfig(cfg *config.Config) *governance.Config {
+	clientTimeout, err := cfg.GetGRPCClientTimeout()
+	if err != nil {
+		clientTimeout = 30 * time.Second
+	}
+
+	govCfg := governance.DefaultConfig()
+	govCfg.Timeout.ClientDefault = clientTimeout
+	return govCfg
+}
 
 type Handler struct {
 	UserClient        pbUser.UserServiceClient
@@ -48,9 +63,30 @@ type Handler struct {
 	ProcessServiceURL string
 }
 
+type clientDef struct {
+	host    string
+	port    int
+	svcName string
+}
+
+func directDial(host string, port int) (*grpc.ClientConn, error) {
+	return grpcserver.NewDirectClientConn(host, port)
+}
+
+func etcdDial(endpoints []string, svcName string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return grpcserver.NewGRPCClientConnWithGovernance(endpoints, svcName, buildGovernanceConfig(config.GetConfig()), opts...)
+}
+
+func tryDial(cfg *config.Config, host string, port int, svcName string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	conn, err := directDial(host, port)
+	if err == nil {
+		return conn, nil
+	}
+	return etcdDial(cfg.Etcd.Endpoints, svcName, opts...)
+}
+
 func InitUserClient(cfg *config.Config) (pbUser.UserServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-user-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.user", clientOpt)
+	conn, err := tryDial(cfg, "user-service", cfg.Ports.User, "logos.user")
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +94,7 @@ func InitUserClient(cfg *config.Config) (pbUser.UserServiceClient, error) {
 }
 
 func InitKnowledgeClient(cfg *config.Config) (pbKnowledge.KnowledgeServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.knowledge")
+	conn, err := tryDial(cfg, "knowledge-service", cfg.Ports.Knowledge, "logos.knowledge")
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +102,7 @@ func InitKnowledgeClient(cfg *config.Config) (pbKnowledge.KnowledgeServiceClient
 }
 
 func InitSearchClient(cfg *config.Config) (pbSearch.SearchServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.search")
+	conn, err := tryDial(cfg, "search-service", cfg.Ports.Search, "logos.search")
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +110,7 @@ func InitSearchClient(cfg *config.Config) (pbSearch.SearchServiceClient, error) 
 }
 
 func InitVectorClient(cfg *config.Config) (pbVector.VectorServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.vector")
+	conn, err := tryDial(cfg, "vector-service", cfg.Ports.Vector, "logos.vector")
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +118,7 @@ func InitVectorClient(cfg *config.Config) (pbVector.VectorServiceClient, error) 
 }
 
 func InitQuestionClient(cfg *config.Config) (pbQuestion.QAServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.question")
+	conn, err := tryDial(cfg, "question-service", cfg.Ports.Question, "logos.question")
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +126,7 @@ func InitQuestionClient(cfg *config.Config) (pbQuestion.QAServiceClient, error) 
 }
 
 func InitRecommendClient(cfg *config.Config) (pbRecommend.RecommendationServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.recommend")
+	conn, err := tryDial(cfg, "recommend-service", cfg.Ports.Recommend, "logos.recommend")
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +134,7 @@ func InitRecommendClient(cfg *config.Config) (pbRecommend.RecommendationServiceC
 }
 
 func InitExtractionClient(cfg *config.Config) (pbExtraction.KnowledgeExtractionServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.extraction")
+	conn, err := tryDial(cfg, "extraction-service", cfg.Ports.Extraction, "logos.extraction")
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +142,7 @@ func InitExtractionClient(cfg *config.Config) (pbExtraction.KnowledgeExtractionS
 }
 
 func InitCollectionClient(cfg *config.Config) (pbCollection.DataCollectionServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.collection")
+	conn, err := tryDial(cfg, "collection-service", cfg.Ports.Collection, "logos.collection")
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +150,7 @@ func InitCollectionClient(cfg *config.Config) (pbCollection.DataCollectionServic
 }
 
 func InitMessageClient(cfg *config.Config) (pbMessage.MessageServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.message")
+	conn, err := tryDial(cfg, "message-service", cfg.Ports.Message, "logos.message")
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +158,7 @@ func InitMessageClient(cfg *config.Config) (pbMessage.MessageServiceClient, erro
 }
 
 func InitMonitoringClient(cfg *config.Config) (pbMonitoring.MonitoringServiceClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.monitoring")
+	conn, err := tryDial(cfg, "monitoring-service", cfg.Ports.Monitoring, "logos.monitoring")
 	if err != nil {
 		return nil, err
 	}
@@ -130,8 +166,7 @@ func InitMonitoringClient(cfg *config.Config) (pbMonitoring.MonitoringServiceCli
 }
 
 func InitBotClient(cfg *config.Config) (pbBot.BotServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-bot-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.bot", clientOpt)
+	conn, err := tryDial(cfg, "bot-service", cfg.Ports.Bot, "logos.bot")
 	if err != nil {
 		return nil, err
 	}
@@ -139,8 +174,7 @@ func InitBotClient(cfg *config.Config) (pbBot.BotServiceClient, error) {
 }
 
 func InitBillingClient(cfg *config.Config) (pbBilling.BillingServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-billing-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.billing", clientOpt)
+	conn, err := tryDial(cfg, "billing-service", cfg.Ports.Billing, "logos.billing")
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +182,7 @@ func InitBillingClient(cfg *config.Config) (pbBilling.BillingServiceClient, erro
 }
 
 func InitIMClient(cfg *config.Config) (pbIM.IMServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-im-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.im", clientOpt)
+	conn, err := tryDial(cfg, "im-service", cfg.Ports.IM, "logos.im")
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +190,7 @@ func InitIMClient(cfg *config.Config) (pbIM.IMServiceClient, error) {
 }
 
 func InitChatClient(cfg *config.Config) (pbChat.ChatServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-chat-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.chat", clientOpt)
+	conn, err := tryDial(cfg, "chat-service", cfg.Ports.Chat, "logos.chat")
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +198,7 @@ func InitChatClient(cfg *config.Config) (pbChat.ChatServiceClient, error) {
 }
 
 func InitSummaryClient(cfg *config.Config) (pbSummary.SummaryServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-summary-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.summary", clientOpt)
+	conn, err := tryDial(cfg, "summary-service", cfg.Ports.Summary, "logos.summary")
 	if err != nil {
 		return nil, err
 	}
@@ -175,8 +206,7 @@ func InitSummaryClient(cfg *config.Config) (pbSummary.SummaryServiceClient, erro
 }
 
 func InitMCPClient(cfg *config.Config) (pbMCP.MCPServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-mcp-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.mcp", clientOpt)
+	conn, err := tryDial(cfg, "mcp-service", cfg.Ports.MCP, "logos.mcp")
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +214,7 @@ func InitMCPClient(cfg *config.Config) (pbMCP.MCPServiceClient, error) {
 }
 
 func InitModerationClient(cfg *config.Config) (pbModeration.ModerationServiceClient, error) {
-	_, _, clientOpt := obs.InitGRPCProvider("gateway-moderation-client")
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.moderation", clientOpt)
+	conn, err := tryDial(cfg, "moderation-service", cfg.Ports.Moderation, "logos.moderation")
 	if err != nil {
 		return nil, err
 	}
@@ -197,4 +226,11 @@ func getBaseRespMessage(resp *pbCommon.BaseResp) string {
 		return "success"
 	}
 	return resp.StatusMessage
+}
+
+func mapStatusCode(code int32) int {
+	if code == 0 {
+		return 200
+	}
+	return int(code)
 }

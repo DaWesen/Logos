@@ -34,26 +34,38 @@ func InitMilvus() (*MilvusManager, error) {
 }
 
 func NewMilvusManager(host string, port int) (*MilvusManager, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	addr := fmt.Sprintf("%s:%d", host, port)
-	c, err := milvusclient.New(ctx, &milvusclient.ClientConfig{
-		Address: addr,
-	})
-	if err != nil {
-		logger.Error("连接Milvus失败",
+
+	var c *milvusclient.Client
+	var err error
+
+	for i := 0; i < 60; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		c, err = milvusclient.New(ctx, &milvusclient.ClientConfig{
+			Address: addr,
+		})
+		cancel()
+
+		if err == nil {
+			logger.Info("连接Milvus成功",
+				logger.StringField("address", addr))
+			return &MilvusManager{
+				client: c,
+			}, nil
+		}
+
+		logger.Warn("连接Milvus失败，重试中...",
 			logger.StringField("address", addr),
+			logger.IntField("attempt", i+1),
 			logger.ErrorField(err))
-		return nil, err
+		time.Sleep(3 * time.Second)
 	}
 
-	logger.Info("连接Milvus成功",
-		logger.StringField("address", addr))
-
-	return &MilvusManager{
-		client: c,
-	}, nil
+	logger.Error("连接Milvus失败，已达最大重试次数",
+		logger.StringField("address", addr),
+		logger.ErrorField(err))
+	return nil, fmt.Errorf("failed to connect milvus after 60 attempts: %w", err)
 }
 
 func (m *MilvusManager) Close() error {

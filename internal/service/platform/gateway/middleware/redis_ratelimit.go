@@ -38,7 +38,7 @@ func RedisRateLimit(cache cache.Cache) gin.HandlerFunc {
 	}
 }
 
-func checkGlobalRateLimit(c *gin.Context, ip, path, method, userID string, cache cache.Cache) bool {
+func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cache cache.Cache) bool {
 	globalKey := fmt.Sprintf("global:%s:%s", method, path)
 
 	limiter := ratelimit.GetGlobalLimiter(

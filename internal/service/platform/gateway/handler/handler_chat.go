@@ -52,12 +52,16 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
 		return
 	}
-	var req pb.GetMessageHistoryRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+
+	chatID := c.Query("chat_id")
+	if chatID == "" {
+		c.JSON(http.StatusBadRequest, model.BadRequest("chat_id is required"))
 		return
 	}
-	resp, err := h.ChatClient.GetMessageHistory(context.Background(), &req)
+
+	resp, err := h.ChatClient.GetMessageHistory(context.Background(), &pb.GetMessageHistoryRequest{
+		ChatId: chatID,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

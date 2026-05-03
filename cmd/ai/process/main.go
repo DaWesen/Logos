@@ -12,6 +12,7 @@ import (
 	"Logos/internal/service/ai/process/handler"
 	"Logos/internal/service/ai/process/model"
 	"Logos/internal/service/ai/process/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/logger"
 
@@ -61,12 +62,39 @@ func main() {
 		videoExtractor, _ = video.NewFFMpegExtractor(videoConfig)
 	}
 
+	var extractionService service.ExtractionService
+	extractionRawClient, extractionErr := client.NewExtractionClientFromConfig(cfg)
+	if extractionErr != nil {
+		logger.Warn("连接Extraction服务失败", logger.ErrorField(extractionErr))
+	} else {
+		extractionService = service.NewExtractionClientAdapter(extractionRawClient)
+		logger.Info("Extraction服务客户端已连接")
+	}
+
+	var vectorService service.VectorService
+	vectorRawClient, vectorErr := client.NewVectorClientFromConfig(cfg)
+	if vectorErr != nil {
+		logger.Warn("连接Vector服务失败", logger.ErrorField(vectorErr))
+	} else {
+		vectorService = service.NewVectorClientAdapter(vectorRawClient)
+		logger.Info("Vector服务客户端已连接")
+	}
+
+	var knowledgeService service.KnowledgeService
+	knowledgeRawClient, knowledgeErr := client.NewKnowledgeClientFromConfig(cfg)
+	if knowledgeErr != nil {
+		logger.Warn("连接Knowledge服务失败", logger.ErrorField(knowledgeErr))
+	} else {
+		knowledgeService = service.NewKnowledgeClientAdapter(knowledgeRawClient)
+		logger.Info("Knowledge服务客户端已连接")
+	}
+
 	processConfig := &service.Config{
 		ProcessPort:      cfg.Ports.Process,
 		VectorCollection: "documents",
 	}
 
-	processService := service.NewProcessService(repo, nil, nil, nil, vlmModel, asrModel, videoExtractor, processConfig)
+	processService := service.NewProcessService(repo, extractionService, vectorService, knowledgeService, vlmModel, asrModel, videoExtractor, processConfig)
 
 	processHandler := handler.NewProcessHandler(processService)
 

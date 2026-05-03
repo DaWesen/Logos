@@ -36,6 +36,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o collection ./cmd/ai/collection
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o bot ./cmd/ai/bot
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o process ./cmd/ai/process
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o summary ./cmd/ai/summary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o mcp ./cmd/ai/mcp
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w ${LDFLAGS}" -tags "${BUILD_TAGS}" -o moderation ./cmd/ai/moderation
 
 # ==================== 阶段2: 运行 ====================
 FROM docker.1ms.run/library/alpine:3.20
@@ -71,9 +74,12 @@ COPY --from=builder /app/extraction .
 COPY --from=builder /app/collection .
 COPY --from=builder /app/bot .
 COPY --from=builder /app/process .
+COPY --from=builder /app/summary .
+COPY --from=builder /app/mcp .
+COPY --from=builder /app/moderation .
 COPY --from=builder /app/config ./config
 
-EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9015 9016
+EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9015 9016 9017 9018 9019
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8888/health || exit 1

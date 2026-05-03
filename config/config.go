@@ -2,6 +2,9 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -217,6 +220,8 @@ func LoadConfig(path string) (*Config, error) {
 
 	viper.AutomaticEnv()
 
+	bindEnvVars()
+
 	err := viper.ReadInConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
@@ -228,7 +233,113 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	overrideFromEnv(&config)
+
 	return &config, nil
+}
+
+func bindEnvVars() {
+	envBindings := []struct {
+		envKey string
+		cfgKey string
+	}{
+		{"POSTGRES_HOST", "database.postgres.host"},
+		{"POSTGRES_PORT", "database.postgres.port"},
+		{"POSTGRES_USER", "database.postgres.user"},
+		{"POSTGRES_PASSWORD", "database.postgres.password"},
+		{"POSTGRES_DB", "database.postgres.dbname"},
+		{"REDIS_HOST", "redis.host"},
+		{"REDIS_PORT", "redis.port"},
+		{"REDIS_PASSWORD", "redis.password"},
+		{"ELASTICSEARCH_URL", "elasticsearch.url"},
+		{"NEO4J_URI", "neo4j.uri"},
+		{"NEO4J_PASSWORD", "neo4j.password"},
+		{"MILVUS_HOST", "milvus.host"},
+		{"MINIO_ENDPOINT", "minio.endpoint"},
+		{"MINIO_ACCESS_KEY", "minio.access_key"},
+		{"MINIO_SECRET_KEY", "minio.secret_key"},
+		{"ARK_API_KEY", "eino.api_key"},
+		{"ARK_MODEL", "eino.model"},
+		{"JWT_SECRET", "jwt.secret"},
+	}
+
+	for _, b := range envBindings {
+		_ = viper.BindEnv(b.cfgKey, b.envKey)
+	}
+}
+
+func overrideFromEnv(cfg *Config) {
+	if v := os.Getenv("POSTGRES_HOST"); v != "" {
+		cfg.Database.Postgres.Host = v
+	}
+	if v := os.Getenv("POSTGRES_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.Database.Postgres.Port = port
+		}
+	}
+	if v := os.Getenv("POSTGRES_USER"); v != "" {
+		cfg.Database.Postgres.User = v
+	}
+	if v := os.Getenv("POSTGRES_PASSWORD"); v != "" {
+		cfg.Database.Postgres.Password = v
+	}
+	if v := os.Getenv("POSTGRES_DB"); v != "" {
+		cfg.Database.Postgres.DBName = v
+	}
+	if v := os.Getenv("KAFKA_BROKERS"); v != "" {
+		cfg.Kafka.Brokers = strings.Split(v, ",")
+	}
+	if v := os.Getenv("ETCD_ENDPOINTS"); v != "" {
+		cfg.Etcd.Endpoints = strings.Split(v, ",")
+	}
+	if v := os.Getenv("REDIS_ADDR"); v != "" {
+		parts := strings.Split(v, ":")
+		if len(parts) == 2 {
+			cfg.Redis.Host = parts[0]
+			if port, err := strconv.Atoi(parts[1]); err == nil {
+				cfg.Redis.Port = port
+			}
+		}
+	}
+	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
+		cfg.Redis.Password = v
+	}
+	if v := os.Getenv("MILVUS_ADDRESS"); v != "" {
+		parts := strings.Split(v, ":")
+		if len(parts) == 2 {
+			cfg.Milvus.Host = parts[0]
+			if port, err := strconv.Atoi(parts[1]); err == nil {
+				cfg.Milvus.Port = port
+			}
+		}
+	}
+	if v := os.Getenv("ES_ADDRESSES"); v != "" {
+		cfg.Elasticsearch.URL = v
+	}
+	if v := os.Getenv("NEO4J_URI"); v != "" {
+		cfg.Neo4j.URI = v
+	}
+	if v := os.Getenv("NEO4J_PASSWORD"); v != "" {
+		cfg.Neo4j.Password = v
+	}
+	if v := os.Getenv("MINIO_ENDPOINT"); v != "" {
+		cfg.Minio.Endpoint = v
+	}
+	if v := os.Getenv("MINIO_ACCESS_KEY"); v != "" {
+		cfg.Minio.AccessKey = v
+	}
+	if v := os.Getenv("MINIO_SECRET_KEY"); v != "" {
+		cfg.Minio.SecretKey = v
+	}
+	if v := os.Getenv("ARK_API_KEY"); v != "" {
+		cfg.Eino.APIKey = v
+	}
+	if v := os.Getenv("ARK_MODEL"); v != "" {
+		cfg.Eino.Model = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWT.Secret = v
+	}
 }
 
 // GetPostgresDSN 获取PostgreSQL连接字符串

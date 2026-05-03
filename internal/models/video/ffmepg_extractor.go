@@ -14,13 +14,11 @@ import (
 	"Logos/pkg/logger"
 )
 
-// FFMpegExtractor implements the Extractor interface using FFmpeg.
 type FFMpegExtractor struct {
 	ffmpegPath string
 	tempDir    string
 }
 
-// NewFFMpegExtractor creates a new FFmpeg-based video extractor.
 func NewFFMpegExtractor(config *Config) (Extractor, error) {
 	ffmpegPath := "ffmpeg"
 	tempDir := os.TempDir()
@@ -41,7 +39,6 @@ func NewFFMpegExtractor(config *Config) (Extractor, error) {
 	return extractor, nil
 }
 
-// checkFFmpeg verifies that FFmpeg is available.
 func (e *FFMpegExtractor) checkFFmpeg() error {
 	cmd := exec.Command(e.ffmpegPath, "-version")
 	_, err := cmd.CombinedOutput()
@@ -51,7 +48,6 @@ func (e *FFMpegExtractor) checkFFmpeg() error {
 	return nil
 }
 
-// ExtractFrames extracts frames from a video using FFmpeg.
 func (e *FFMpegExtractor) ExtractFrames(ctx context.Context, videoBytes []byte, options *ExtractOptions) ([]*Frame, error) {
 	if options == nil {
 		options = DefaultExtractOptions()
@@ -69,18 +65,24 @@ func (e *FFMpegExtractor) ExtractFrames(ctx context.Context, videoBytes []byte, 
 	}
 	defer os.RemoveAll(tempFrameDir)
 
-	if _, err := e.getVideoDuration(ctx, tempVideoPath); err != nil {
-		logger.Warn("Failed to get video duration", logger.ErrorField(err))
+	switch options.Mode {
+	case ExtractModeTimestamps:
+		err = e.extractFramesByTimestamps(ctx, tempVideoPath, tempFrameDir, options)
+	case ExtractModeScene:
+		err = e.extractFramesByScene(ctx, tempVideoPath, tempFrameDir, options)
+	case ExtractModeKeyFrame:
+		err = e.extractFramesByKeyFrame(ctx, tempVideoPath, tempFrameDir, options)
+	default:
+		err = e.extractFramesByInterval(ctx, tempVideoPath, tempFrameDir, options)
 	}
 
-	if err := e.extractFramesWithFFmpeg(ctx, tempVideoPath, tempFrameDir, options); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
 	return e.readExtractedFrames(tempFrameDir, options)
 }
 
-// ExtractFramesToReaders extracts frames and returns them as io.Readers.
 func (e *FFMpegExtractor) ExtractFramesToReaders(ctx context.Context, videoBytes []byte, options *ExtractOptions) ([]io.Reader, error) {
 	frames, err := e.ExtractFrames(ctx, videoBytes, options)
 	if err != nil {
@@ -95,7 +97,6 @@ func (e *FFMpegExtractor) ExtractFramesToReaders(ctx context.Context, videoBytes
 	return readers, nil
 }
 
-// writeTempVideo writes the video bytes to a temporary file.
 func (e *FFMpegExtractor) writeTempVideo(videoBytes []byte) (string, error) {
 	tempFile, err := os.CreateTemp(e.tempDir, "video-input-*.mp4")
 	if err != nil {
@@ -111,7 +112,6 @@ func (e *FFMpegExtractor) writeTempVideo(videoBytes []byte) (string, error) {
 	return tempFile.Name(), nil
 }
 
-// getVideoDuration gets the duration of a video using FFmpeg.
 func (e *FFMpegExtractor) getVideoDuration(ctx context.Context, videoPath string) (float64, error) {
 	cmd := exec.CommandContext(ctx, e.ffmpegPath,
 		"-i", videoPath,
@@ -154,31 +154,26 @@ func (e *FFMpegExtractor) getVideoDuration(ctx context.Context, videoPath string
 	return totalSeconds, nil
 }
 
-// extractFramesWithFFmpeg uses FFmpeg to extract frames from a video.
-func (e *FFMpegExtractor) extractFramesWithFFmpeg(ctx context.Context, videoPath, outputDir string, options *ExtractOptions) error {
-	filters := []string{fmt.Sprintf("fps=1/%f", options.FrameInterval)}
-
-	if options.Width > 0 || options.Height > 0 {
-		scaleFilter := "scale="
-		if options.Width > 0 {
-			scaleFilter += strconv.Itoa(options.Width)
-		} else {
-			scaleFilter += "-1"
-		}
-		scaleFilter += ":"
-		if options.Height > 0 {
-			scaleFilter += strconv.Itoa(options.Height)
-		} else {
-			scaleFilter += "-1"
-		}
-		filters = append(filters, scaleFilter)
+func (e *FFMpegExtractor) buildScaleFilter(options *ExtractOptions) string {
+	if options.Width <= 0 && options.Height <= 0 {
+		return ""
 	}
-
-	args := []string{
-		"-i", videoPath,
-		"-vf", strings.Join(filters, ","),
+	scaleFilter := "scale="
+	if options.Width > 0 {
+		scaleFilter += strconv.Itoa(options.Width)
+	} else {
+		scaleFilter += "-1"
 	}
+	scaleFilter += ":"
+	if options.Height > 0 {
+		scaleFilter += strconv.Itoa(options.Height)
+	} else {
+		scaleFilter += "-1"
+	}
+	return scaleFilter
+}
 
+func (e *FFMpegExtractor) appendOutputArgs(args []string, options *ExtractOptions, outputDir string) []string {
 	quality := options.Quality
 	if quality < 1 {
 		quality = 1
@@ -191,7 +186,10 @@ func (e *FFMpegExtractor) extractFramesWithFFmpeg(ctx context.Context, videoPath
 
 	outputPattern := filepath.Join(outputDir, "frame-%05d."+options.Format)
 	args = append(args, outputPattern)
+	return args
+}
 
+func (e *FFMpegExtractor) runFFmpeg(ctx context.Context, args []string) error {
 	cmd := exec.CommandContext(ctx, e.ffmpegPath, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -199,12 +197,114 @@ func (e *FFMpegExtractor) extractFramesWithFFmpeg(ctx context.Context, videoPath
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ffmpeg extraction failed: %w, stderr: %s", err, stderr.String())
 	}
-
-	logger.Info("Extracted frames", logger.StringField("outputDir", outputDir))
 	return nil
 }
 
-// readExtractedFrames reads the extracted frames from the temporary directory.
+func (e *FFMpegExtractor) extractFramesByInterval(ctx context.Context, videoPath, outputDir string, options *ExtractOptions) error {
+	filters := []string{fmt.Sprintf("fps=1/%f", options.FrameInterval)}
+	if scale := e.buildScaleFilter(options); scale != "" {
+		filters = append(filters, scale)
+	}
+
+	args := []string{
+		"-i", videoPath,
+		"-vf", strings.Join(filters, ","),
+	}
+	args = e.appendOutputArgs(args, options, outputDir)
+
+	logger.Info("按间隔抽帧", logger.StringField("interval", fmt.Sprintf("%.2fs", options.FrameInterval)))
+	return e.runFFmpeg(ctx, args)
+}
+
+func (e *FFMpegExtractor) extractFramesByKeyFrame(ctx context.Context, videoPath, outputDir string, options *ExtractOptions) error {
+	var filters []string
+	if scale := e.buildScaleFilter(options); scale != "" {
+		filters = append(filters, scale)
+	}
+
+	args := []string{
+		"-i", videoPath,
+		"-vf", "select='eq(pict_type\\,I)'",
+		"-vsync", "vfr",
+	}
+	if len(filters) > 0 {
+		args[3] = "select='eq(pict_type\\,I)'," + strings.Join(filters, ",")
+	}
+	args = e.appendOutputArgs(args, options, outputDir)
+
+	logger.Info("按关键帧抽帧")
+	return e.runFFmpeg(ctx, args)
+}
+
+func (e *FFMpegExtractor) extractFramesByScene(ctx context.Context, videoPath, outputDir string, options *ExtractOptions) error {
+	threshold := options.SceneThreshold
+	if threshold <= 0 {
+		threshold = 0.3
+	}
+
+	selectFilter := fmt.Sprintf("select='gt(scene\\,%.4f)'", threshold)
+	filters := []string{selectFilter}
+	if scale := e.buildScaleFilter(options); scale != "" {
+		filters = append(filters, scale)
+	}
+
+	args := []string{
+		"-i", videoPath,
+		"-vf", strings.Join(filters, ","),
+		"-vsync", "vfr",
+	}
+	args = e.appendOutputArgs(args, options, outputDir)
+
+	logger.Info("按场景变化抽帧", logger.StringField("threshold", fmt.Sprintf("%.4f", threshold)))
+	return e.runFFmpeg(ctx, args)
+}
+
+func (e *FFMpegExtractor) extractFramesByTimestamps(ctx context.Context, videoPath, outputDir string, options *ExtractOptions) error {
+	if len(options.Timestamps) == 0 {
+		return fmt.Errorf("timestamps mode requires at least one timestamp")
+	}
+
+	for i, ts := range options.Timestamps {
+		var filters []string
+		if scale := e.buildScaleFilter(options); scale != "" {
+			filters = append(filters, scale)
+		}
+
+		args := []string{
+			"-ss", fmt.Sprintf("%.6f", ts),
+			"-i", videoPath,
+			"-frames:v", "1",
+		}
+		if len(filters) > 0 {
+			args = append(args, "-vf", strings.Join(filters, ","))
+		}
+
+		quality := options.Quality
+		if quality < 1 {
+			quality = 1
+		} else if quality > 100 {
+			quality = 100
+		}
+		if options.Format == "jpeg" {
+			args = append(args, "-q:v", strconv.Itoa(quality))
+		}
+
+		outputFile := filepath.Join(outputDir, fmt.Sprintf("frame-%05d.%s", i, options.Format))
+		args = append(args, outputFile)
+
+		if err := e.runFFmpeg(ctx, args); err != nil {
+			logger.Warn("指定时间戳抽帧失败",
+				logger.IntField("index", i),
+				logger.StringField("timestamp", fmt.Sprintf("%.2fs", ts)),
+				logger.ErrorField(err))
+			continue
+		}
+	}
+
+	logger.Info("按时间戳抽帧", logger.IntField("count", len(options.Timestamps)))
+	return nil
+}
+
 func (e *FFMpegExtractor) readExtractedFrames(frameDir string, options *ExtractOptions) ([]*Frame, error) {
 	files, err := filepath.Glob(filepath.Join(frameDir, "frame-*."+options.Format))
 	if err != nil {
@@ -247,7 +347,6 @@ func (e *FFMpegExtractor) readExtractedFrames(frameDir string, options *ExtractO
 	return frames, nil
 }
 
-// GetVideoInfo returns basic information about a video.
 func (e *FFMpegExtractor) GetVideoInfo(ctx context.Context, videoBytes []byte) (map[string]interface{}, error) {
 	tempVideoPath, err := e.writeTempVideo(videoBytes)
 	if err != nil {

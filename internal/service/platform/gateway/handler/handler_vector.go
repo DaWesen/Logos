@@ -6,7 +6,6 @@ import (
 
 	"Logos/internal/service/platform/gateway/model"
 
-	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/vector"
 
 	"github.com/gin-gonic/gin"
@@ -14,7 +13,7 @@ import (
 
 func (h *Handler) CreateCollection(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.CreateCollectionReq
@@ -27,16 +26,13 @@ func (h *Handler) CreateCollection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Collection})
 }
 
 func (h *Handler) ListCollections(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	resp, err := h.VectorClient.ListCollections(context.Background(), &pb.EmptyReq{})
@@ -44,17 +40,14 @@ func (h *Handler) ListCollections(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Collections})
 }
 
 func (h *Handler) GetCollection(c *gin.Context) {
 	id := c.Param("id")
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	resp, err := h.VectorClient.GetCollection(context.Background(), &pb.GetByIdReq{Id: id})
@@ -62,16 +55,13 @@ func (h *Handler) GetCollection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Collection})
 }
 
 func (h *Handler) UpdateCollection(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.UpdateCollectionReq
@@ -84,16 +74,13 @@ func (h *Handler) UpdateCollection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Collection})
 }
 
 func (h *Handler) DeleteCollection(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.DeleteCollectionReq
@@ -105,14 +92,14 @@ func (h *Handler) DeleteCollection(c *gin.Context) {
 	}
 	statusCode := 200
 	if resp != nil {
-		statusCode = int(resp.StatusCode)
+		statusCode = mapStatusCode(resp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: map[string]string{"deleted_id": req.Id}})
 }
 
 func (h *Handler) Vectorize(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.VectorizeReq
@@ -125,16 +112,13 @@ func (h *Handler) Vectorize(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Vector})
 }
 
 func (h *Handler) BatchVectorize(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.BatchVectorizeReq
@@ -147,16 +131,13 @@ func (h *Handler) BatchVectorize(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Vectors})
 }
 
 func (h *Handler) VectorSearchByCollection(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.SearchReq
@@ -169,16 +150,13 @@ func (h *Handler) VectorSearchByCollection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Results})
 }
 
 func (h *Handler) TextSearchByCollection(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.TextSearchReq
@@ -191,16 +169,13 @@ func (h *Handler) TextSearchByCollection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Results})
 }
 
 func (h *Handler) DeleteVector(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.DeleteVectorReq
@@ -215,14 +190,14 @@ func (h *Handler) DeleteVector(c *gin.Context) {
 	}
 	statusCode := 200
 	if resp != nil {
-		statusCode = int(resp.StatusCode)
+		statusCode = mapStatusCode(resp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
 func (h *Handler) BatchDeleteVector(c *gin.Context) {
 	if h.VectorClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
 	var req pb.BatchDeleteVectorReq
@@ -237,9 +212,7 @@ func (h *Handler) BatchDeleteVector(c *gin.Context) {
 	}
 	statusCode := 200
 	if resp != nil {
-		statusCode = int(resp.StatusCode)
+		statusCode = mapStatusCode(resp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
-
-func _() { _ = (*pbCommon.BaseResp)(nil) }

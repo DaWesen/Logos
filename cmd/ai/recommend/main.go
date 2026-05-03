@@ -6,6 +6,7 @@ import (
 	"Logos/internal/service/ai/recommend/handler"
 	"Logos/internal/service/ai/recommend/model"
 	"Logos/internal/service/ai/recommend/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
@@ -40,7 +41,25 @@ func main() {
 
 	repo := dao.NewRecommendRepository(db)
 
-	recommendService := service.NewRecommendService(repo, einoClient, nil, nil)
+	var vectorService service.VectorService
+	vectorRawClient, vectorErr := client.NewVectorClientFromConfig(cfg)
+	if vectorErr != nil {
+		logger.Warn("连接Vector服务失败", logger.ErrorField(vectorErr))
+	} else {
+		vectorService = service.NewVectorClientAdapter(vectorRawClient)
+		logger.Info("Vector服务客户端已连接")
+	}
+
+	var knowledgeService service.KnowledgeService
+	knowledgeRawClient, knowledgeErr := client.NewKnowledgeClientFromConfig(cfg)
+	if knowledgeErr != nil {
+		logger.Warn("连接Knowledge服务失败", logger.ErrorField(knowledgeErr))
+	} else {
+		knowledgeService = service.NewKnowledgeClientAdapter(knowledgeRawClient)
+		logger.Info("Knowledge服务客户端已连接")
+	}
+
+	recommendService := service.NewRecommendService(repo, einoClient, vectorService, knowledgeService)
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("recommend")
 	defer shutdown(context.Background())

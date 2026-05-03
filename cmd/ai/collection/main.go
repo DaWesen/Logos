@@ -6,6 +6,7 @@ import (
 	"Logos/internal/service/ai/collection/handler"
 	"Logos/internal/service/ai/collection/model"
 	"Logos/internal/service/ai/collection/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
@@ -44,9 +45,28 @@ func main() {
 	repo := dao.NewCollectionRepository(db)
 
 	var knowledgeService service.KnowledgeService
+	knowledgeRawClient, knowledgeErr := client.NewKnowledgeClientFromConfig(cfg)
+	if knowledgeErr != nil {
+		logger.Warn("连接Knowledge服务失败，知识入库不可用", logger.ErrorField(knowledgeErr))
+	} else {
+		knowledgeService = service.NewKnowledgeClientAdapter(knowledgeRawClient)
+		logger.Info("Knowledge服务客户端已连接")
+	}
+
 	var extractionService service.ExtractionService
+	extractionRawClient, extractionErr := client.NewExtractionClientFromConfig(cfg)
+	if extractionErr != nil {
+		logger.Warn("连接Extraction服务失败，知识提取不可用", logger.ErrorField(extractionErr))
+	} else {
+		extractionService = service.NewExtractionClientAdapter(extractionRawClient)
+		logger.Info("Extraction服务客户端已连接")
+	}
 
 	collectionService := service.NewCollectionService(repo, knowledgeService, extractionService)
+
+	if err := collectionService.StartKafkaConsumer(context.Background()); err != nil {
+		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
+	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("collection")
 	defer shutdown(context.Background())

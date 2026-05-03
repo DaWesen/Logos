@@ -6,6 +6,7 @@ import (
 	"Logos/internal/service/ai/question/handler"
 	"Logos/internal/service/ai/question/model"
 	"Logos/internal/service/ai/question/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
@@ -40,7 +41,34 @@ func main() {
 
 	repo := dao.NewQARepository(db)
 
-	qaService := service.NewQAService(repo, einoClient, nil, nil, nil)
+	var knowledgeService service.KnowledgeService
+	knowledgeRawClient, knowledgeErr := client.NewKnowledgeClientFromConfig(cfg)
+	if knowledgeErr != nil {
+		logger.Warn("连接Knowledge服务失败", logger.ErrorField(knowledgeErr))
+	} else {
+		knowledgeService = service.NewKnowledgeClientAdapter(knowledgeRawClient)
+		logger.Info("Knowledge服务客户端已连接")
+	}
+
+	var searchService service.SearchService
+	searchRawClient, searchErr := client.NewSearchClientFromConfig(cfg)
+	if searchErr != nil {
+		logger.Warn("连接Search服务失败", logger.ErrorField(searchErr))
+	} else {
+		searchService = service.NewSearchClientAdapter(searchRawClient)
+		logger.Info("Search服务客户端已连接")
+	}
+
+	var vectorService service.VectorService
+	vectorRawClient, vectorErr := client.NewVectorClientFromConfig(cfg)
+	if vectorErr != nil {
+		logger.Warn("连接Vector服务失败", logger.ErrorField(vectorErr))
+	} else {
+		vectorService = service.NewVectorClientAdapter(vectorRawClient)
+		logger.Info("Vector服务客户端已连接")
+	}
+
+	qaService := service.NewQAService(repo, einoClient, knowledgeService, searchService, vectorService)
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("question")
 	defer shutdown(context.Background())

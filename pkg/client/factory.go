@@ -3,7 +3,6 @@ package client
 import (
 	"Logos/config"
 
-	"Logos/pkg/grpcserver"
 	pbBilling "Logos/proto_gen/billing"
 	pbKnowledge "Logos/proto_gen/knowledge"
 	pbSearch "Logos/proto_gen/search"
@@ -11,7 +10,7 @@ import (
 )
 
 func NewKnowledgeClientFromConfig(cfg *config.Config) (*KnowledgeClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.knowledge")
+	conn, err := newConn(cfg, "logos.knowledge")
 	if err != nil {
 		return nil, err
 	}
@@ -20,7 +19,7 @@ func NewKnowledgeClientFromConfig(cfg *config.Config) (*KnowledgeClient, error) 
 }
 
 func NewSearchClientFromConfig(cfg *config.Config) (*SearchClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.search")
+	conn, err := newConn(cfg, "logos.search")
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +28,7 @@ func NewSearchClientFromConfig(cfg *config.Config) (*SearchClient, error) {
 }
 
 func NewVectorClientFromConfig(cfg *config.Config) (*VectorClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.vector")
+	conn, err := newConn(cfg, "logos.vector")
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +37,7 @@ func NewVectorClientFromConfig(cfg *config.Config) (*VectorClient, error) {
 }
 
 func NewBillingClientFromConfig(cfg *config.Config) (*BillingClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.billing")
+	conn, err := newConn(cfg, "logos.billing")
 	if err != nil {
 		return nil, err
 	}

@@ -741,9 +741,10 @@ func fixJSONResponse(s string) string {
 		if inString {
 			continue
 		}
-		if c == '[' {
+		switch c {
+		case '[':
 			depth++
-		} else if c == ']' {
+		case ']':
 			depth--
 			if depth == 0 {
 				return s[:i+1]

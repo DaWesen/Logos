@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"Logos/config"
-	"Logos/pkg/grpcserver"
 	pb "Logos/proto_gen/chat"
 
 	"google.golang.org/grpc"
@@ -22,7 +21,7 @@ func NewChatClient(client pb.ChatServiceClient, conn *grpc.ClientConn) *ChatClie
 }
 
 func NewChatClientFromConfig(cfg *config.Config) (*ChatClient, error) {
-	conn, err := grpcserver.NewGRPCClientConn(cfg.Etcd.Endpoints, "logos.chat")
+	conn, err := newConn(cfg, "logos.chat")
 	if err != nil {
 		return nil, err
 	}

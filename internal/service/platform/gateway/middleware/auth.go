@@ -1,4 +1,4 @@
-﻿package middleware
+package middleware
 
 import (
 	"net/http"
@@ -50,8 +50,11 @@ func JWTAuth() gin.HandlerFunc {
 		}
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			userID, _ := claims["sub"].(string)
+			userID, _ := claims["user_id"].(string)
 			username, _ := claims["username"].(string)
+			if userID == "" {
+				userID, _ = claims["sub"].(string)
+			}
 			c.Set("user_id", userID)
 			c.Set("username", username)
 		}

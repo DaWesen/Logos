@@ -6,6 +6,7 @@ import (
 	"Logos/internal/service/messaging/message/handler"
 	"Logos/internal/service/messaging/message/model"
 	"Logos/internal/service/messaging/message/service"
+	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
@@ -33,7 +34,16 @@ func main() {
 
 	repo := dao.NewMessageRepository(db)
 
-	messageService := service.NewMessageService(repo, nil)
+	var questionService service.QuestionService
+	questionRawClient, questionErr := client.NewQuestionClientFromConfig(cfg)
+	if questionErr != nil {
+		logger.Warn("连接Question服务失败，智能问答不可用", logger.ErrorField(questionErr))
+	} else {
+		questionService = service.NewQuestionClientAdapter(questionRawClient)
+		logger.Info("Question服务客户端已连接")
+	}
+
+	messageService := service.NewMessageService(repo, questionService)
 
 	if err := messageService.StartKafkaConsumer(context.Background()); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))

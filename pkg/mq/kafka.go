@@ -127,28 +127,38 @@ func (m *KafkaManager) CreateTopic(topic string) error {
 	if m == nil {
 		return fmt.Errorf("kafka manager is nil")
 	}
-	conn, err := kafka.Dial("tcp", m.brokers[0])
-	if err != nil {
-		return fmt.Errorf("连接Kafka失败: %w", err)
+
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		conn, err := kafka.Dial("tcp", m.brokers[0])
+		if err != nil {
+			lastErr = fmt.Errorf("连接Kafka失败: %w", err)
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			continue
+		}
+
+		err = conn.CreateTopics(kafka.TopicConfig{
+			Topic:             topic,
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		})
+		conn.Close()
+
+		if err != nil {
+			lastErr = err
+			logger.Warn("创建主题失败",
+				logger.StringField("topic", topic),
+				logger.IntField("attempt", attempt),
+				logger.ErrorField(err))
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+			continue
+		}
+
+		logger.Info("创建Kafka主题成功", logger.StringField("topic", topic))
+		return nil
 	}
-	defer conn.Close()
 
-	err = conn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic,
-		NumPartitions:     3,
-		ReplicationFactor: 1,
-	})
-	if err != nil {
-		logger.Warn("创建主题失败",
-			logger.StringField("topic", topic),
-			logger.ErrorField(err))
-		return err
-	}
-
-	logger.Info("创建Kafka主题成功",
-		logger.StringField("topic", topic))
-
-	return nil
+	return lastErr
 }
 
 func (p *Producer) SendUserEvent(ctx context.Context, key string, value []byte) error {
@@ -279,13 +289,6 @@ func CreateTopics(ctx context.Context) error {
 		return nil
 	}
 
-	conn, err := kafka.Dial("tcp", kafkaConfig.Brokers[0])
-	if err != nil {
-		logger.Warn("连接Kafka失败", logger.ErrorField(err))
-		return err
-	}
-	defer conn.Close()
-
 	topicConfigs := []kafka.TopicConfig{
 		{
 			Topic:             "user_events",
@@ -326,14 +329,43 @@ func CreateTopics(ctx context.Context) error {
 
 	for _, tc := range topicConfigs {
 		logger.Info("尝试创建主题", logger.StringField("topic", tc.Topic))
-		err := conn.CreateTopics(tc)
-		if err != nil {
-			logger.Warn("创建主题失败",
-				logger.StringField("topic", tc.Topic),
-				logger.ErrorField(err))
-			continue
+
+		var lastErr error
+		for attempt := 1; attempt <= 3; attempt++ {
+			// 每个 topic 独立建立连接，避免连接复用导致断开
+			conn, err := kafka.Dial("tcp", kafkaConfig.Brokers[0])
+			if err != nil {
+				lastErr = err
+				logger.Warn("连接Kafka失败",
+					logger.IntField("attempt", attempt),
+					logger.ErrorField(err))
+				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+				continue
+			}
+
+			err = conn.CreateTopics(tc)
+			conn.Close()
+
+			if err != nil {
+				lastErr = err
+				logger.Warn("创建主题失败",
+					logger.StringField("topic", tc.Topic),
+					logger.IntField("attempt", attempt),
+					logger.ErrorField(err))
+				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+				continue
+			}
+
+			logger.Info("主题创建成功", logger.StringField("topic", tc.Topic))
+			lastErr = nil
+			break
 		}
-		logger.Info("主题创建成功", logger.StringField("topic", tc.Topic))
+
+		if lastErr != nil {
+			logger.Warn("主题最终创建失败，Kafka可能已自动创建",
+				logger.StringField("topic", tc.Topic),
+				logger.ErrorField(lastErr))
+		}
 	}
 
 	return nil

@@ -25,7 +25,9 @@ func main() {
 	var milvusManager *vector.MilvusManager
 	milvusManager, err := vector.InitMilvus()
 	if err != nil {
-		log.Fatalf("Failed to init milvus (required for vector service): %v", err)
+		logger.Warn("Milvus不可用，向量服务以降级模式运行", logger.ErrorField(err))
+	} else {
+		logger.Info("Milvus连接成功")
 	}
 
 	var einoClient *eino.EinoManager

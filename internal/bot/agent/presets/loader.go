@@ -31,8 +31,8 @@ func LoadPresetsFromYAML(mgr *agent.AgentManager, filePath string) error {
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		logger.Warn("读取 YAML 文件失败，回退到硬编码预设", logger.ErrorField(err))
-		return RegisterAllPresets(mgr)
+		logger.Warn("读取 YAML 文件失败，使用硬编码预设", logger.ErrorField(err))
+		return err
 	}
 
 	var config PresetsConfig

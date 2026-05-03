@@ -9,6 +9,7 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/storage"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -74,7 +75,11 @@ func SetupRouter() *gin.Engine {
 	if processPort == 0 {
 		processPort = 8090
 	}
-	processServiceURL := "http://localhost:" + fmt.Sprintf("%d", processPort)
+	processHost := os.Getenv("PROCESS_SERVICE_HOST")
+	if processHost == "" {
+		processHost = "localhost"
+	}
+	processServiceURL := "http://" + processHost + ":" + fmt.Sprintf("%d", processPort)
 
 	h := &handler.Handler{
 		UserClient:        userClient,
@@ -297,7 +302,7 @@ func SetupRouter() *gin.Engine {
 	{
 		im.POST("/connect", h.ConnectIM)
 		im.POST("/disconnect", h.DisconnectIM)
-		im.GET("/online-status", h.GetOnlineStatus)
+		im.POST("/online-status", h.GetOnlineStatus)
 		im.PUT("/online-status", h.SetOnlineStatus)
 		im.POST("/heartbeat", h.SendTypingStatus)
 		im.POST("/broadcast", h.BroadcastIMMessage)

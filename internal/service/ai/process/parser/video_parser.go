@@ -27,9 +27,10 @@ const (
 )
 
 type VideoParser struct {
-	vlmModel   vlm.VLM
-	asrModel   asr.ASR
-	extractor  video.Extractor
+	vlmModel  vlm.VLM
+	asrModel  asr.ASR
+	extractor video.Extractor
+	options   *video.ExtractOptions
 }
 
 func NewVideoParser(vlmModel vlm.VLM, asrModel asr.ASR, extractor video.Extractor) *VideoParser {
@@ -37,6 +38,16 @@ func NewVideoParser(vlmModel vlm.VLM, asrModel asr.ASR, extractor video.Extracto
 		vlmModel:  vlmModel,
 		asrModel:  asrModel,
 		extractor: extractor,
+		options:   nil,
+	}
+}
+
+func NewVideoParserWithOptions(vlmModel vlm.VLM, asrModel asr.ASR, extractor video.Extractor, options *video.ExtractOptions) *VideoParser {
+	return &VideoParser{
+		vlmModel:  vlmModel,
+		asrModel:  asrModel,
+		extractor: extractor,
+		options:   options,
 	}
 }
 
@@ -65,8 +76,7 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 
 	var frameDescriptions []string
 	if p.extractor != nil && p.vlmModel != nil {
-		options := video.DefaultExtractOptions()
-		options.MaxFrames = 5
+		options := p.resolveExtractOptions(videoInfo)
 		frames, extractErr := p.extractor.ExtractFrames(ctx, videoData, options)
 		if extractErr == nil && len(frames) > 0 {
 			for _, frame := range frames {
@@ -79,6 +89,7 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 			if len(frameDescriptions) > 0 {
 				metadata["frame_descriptions"] = frameDescriptions
 				metadata["frame_count"] = len(frameDescriptions)
+				metadata["extract_mode"] = string(options.Mode)
 			}
 		}
 	}
@@ -124,6 +135,37 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	}
 
 	return contentBuilder.String(), metadata, nil
+}
+
+func (p *VideoParser) resolveExtractOptions(videoInfo map[string]interface{}) *video.ExtractOptions {
+	if p.options != nil {
+		opts := *p.options
+		if opts.MaxFrames == 0 {
+			opts.MaxFrames = 5
+		}
+		return &opts
+	}
+
+	if videoInfo != nil {
+		if duration, ok := videoInfo["duration"].(float64); ok && duration > 0 {
+			interval := duration / 6.0
+			if interval < 1.0 {
+				interval = 1.0
+			}
+			return &video.ExtractOptions{
+				Mode:           video.ExtractModeInterval,
+				FrameInterval:  interval,
+				MaxFrames:      5,
+				Format:         "jpeg",
+				Quality:        80,
+				SceneThreshold: 0.3,
+			}
+		}
+	}
+
+	opts := video.DefaultExtractOptions()
+	opts.MaxFrames = 5
+	return opts
 }
 
 func (p *VideoParser) SupportedTypes() []string {

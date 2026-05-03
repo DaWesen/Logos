@@ -56,10 +56,10 @@ echo   - etcd:          http://localhost:2379
 echo   - PostgreSQL:    localhost:5432 (logos/logos123456)
 echo   - Redis:         localhost:6379 (redis123456)
 echo   - Milvus:        localhost:19530
-echo   - Kafka:         localhost:9092
+echo   - Kafka:         localhost:9093
 echo   - Elasticsearch: http://localhost:9200
 echo   - Neo4j:         http://localhost:7474 (neo4j/neo4j123456)
-echo   - Minio:         http://localhost:9001 (minioadmin/minioadmin123)
+echo   - Minio:         http://localhost:9901 (minioadmin/minioadmin123)
 goto wait
 
 :::monitoring

@@ -20,12 +20,17 @@ services:
     container_name: logos-etcd
     environment:
       - ALLOW_NONE_AUTHENTICATION=yes
-      - ETCD_ADVERTISE_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
     ports:
       - "2379:2379"
       - "2380:2380"
     volumes:
       - etcd_data:/default.etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - logos-network
 
@@ -36,10 +41,16 @@ services:
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: logos123456
       POSTGRES_DB: logos
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - logos-network
 
@@ -51,6 +62,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis123456", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - logos-network
 
@@ -63,24 +79,27 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin123
     ports:
       - "9000:9000"
-      - "9001:9001"
+      - "9901:9001"
     volumes:
       - minio_data:/data
     networks:
       - logos-network
 
   milvus:
-    image: registry.cn-hangzhou.aliyuncs.com/zilliztech/milvus:v2.5.4
+    image: milvusdb/milvus:latest
     container_name: logos-milvus
     command: ["milvus", "run", "standalone"]
+    restart: unless-stopped
     security_opt:
       - seccomp:unconfined
-    mem_limit: 8192MB
-    memswap_limit: 8192MB
-    shm_size: 2048MB
+    shm_size: 2gb
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: minioadmin
+      MINIO_SECRET_ACCESS_KEY: minioadmin123
+      MILVUS_GAUGE_PROMETHEUS_ENABLED: "false"
+      COMMON_GRACEFULTIME: "5"
     ports:
       - "19530:19530"
       - "9091:9091"
@@ -98,19 +117,26 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_LISTENERS: INSIDE://:9092,OUTSIDE://:9093
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092,OUTSIDE://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT,OUTSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 7
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
     ports:
-      - "9093:9092"
+      - "9093:9093"
     volumes:
       - kafka_data:/kafka
     depends_on:
       - zookeeper
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - logos-network
 
@@ -198,6 +224,7 @@ services:
       - "20001:20001"
     environment:
       - PROMETHEUS_SERVICE_URL=http://prometheus:9090
+      - SERVER_CREDENTIALS_SESSION_SECRET_KEY=logos1234567890ab
     depends_on:
       - prometheus
     networks:
@@ -214,7 +241,7 @@ services:
       - logos-network
 
   jaeger:
-    image: jaegertracing/all-in-one:1.58
+    image: docker.m.daocloud.io/jaegertracing/all-in-one:1.58
     container_name: logos-jaeger
     ports:
       - "16686:16686"
@@ -234,8 +261,10 @@ services:
     container_name: logos-gateway
     environment:
       GIN_MODE: release
+      SERVICE_HOST: gateway
       ETCD_ENDPOINTS: etcd:2379
-      JWT_SECRET: your-secret-key-change-in-production
+      KAFKA_BROKERS: kafka:9092
+      JWT_SECRET: your-secret-key-change-in-production-please-use-strong-random-string
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     ports:
@@ -254,6 +283,7 @@ services:
     container_name: logos-user
     command: ["./user"]
     environment:
+      SERVICE_HOST: user-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -262,6 +292,7 @@ services:
       POSTGRES_DB: logos
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
+      KAFKA_BROKERS: kafka:9092
     depends_on:
       - etcd
       - postgres
@@ -276,12 +307,14 @@ services:
     container_name: logos-monitoring
     command: ["./monitoring"]
     environment:
+      SERVICE_HOST: monitoring-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: logos123456
       POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     depends_on:
@@ -298,12 +331,14 @@ services:
     container_name: logos-billing
     command: ["./billing"]
     environment:
+      SERVICE_HOST: billing-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: logos123456
       POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     depends_on:
@@ -323,7 +358,14 @@ services:
     container_name: logos-im
     command: ["./im"]
     environment:
+      SERVICE_HOST: im-service
       ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     depends_on:
@@ -339,6 +381,7 @@ services:
     container_name: logos-chat
     command: ["./chat"]
     environment:
+      SERVICE_HOST: chat-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -363,12 +406,14 @@ services:
     container_name: logos-contact
     command: ["./contact"]
     environment:
+      SERVICE_HOST: contact-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: logos123456
       POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     depends_on:
@@ -385,7 +430,13 @@ services:
     container_name: logos-message
     command: ["./message"]
     environment:
+      SERVICE_HOST: message-service
       ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
       KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
@@ -406,7 +457,14 @@ services:
     container_name: logos-knowledge
     command: ["./knowledge"]
     environment:
+      SERVICE_HOST: knowledge-service
       ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USERNAME: neo4j
       NEO4J_PASSWORD: neo4j123456
@@ -428,7 +486,9 @@ services:
     container_name: logos-search
     command: ["./search"]
     environment:
+      SERVICE_HOST: search-service
       ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
       ES_ADDRESSES: http://elasticsearch:9200
     depends_on:
       - etcd
@@ -443,7 +503,9 @@ services:
     container_name: logos-vector
     command: ["./vector"]
     environment:
+      SERVICE_HOST: vector-service
       ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
       MILVUS_ADDRESS: milvus:19530
     depends_on:
       - etcd
@@ -458,7 +520,14 @@ services:
     container_name: logos-question
     command: ["./question"]
     environment:
+      SERVICE_HOST: question-service
       ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       MILVUS_ADDRESS: milvus:19530
       ARK_API_KEY: your-ark-api-key
       ARK_MODEL: ep-20240806150409-xxxxx
@@ -479,12 +548,14 @@ services:
     container_name: logos-recommend
     command: ["./recommend"]
     environment:
+      SERVICE_HOST: recommend-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: logos
       POSTGRES_PASSWORD: logos123456
       POSTGRES_DB: logos
+      KAFKA_BROKERS: kafka:9092
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
     depends_on:
@@ -501,7 +572,13 @@ services:
     container_name: logos-extraction
     command: ["./extraction"]
     environment:
+      SERVICE_HOST: extraction-service
       ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
       ARK_API_KEY: your-ark-api-key
       ARK_MODEL: ep-20240806150409-xxxxx
       KAFKA_BROKERS: kafka:9092
@@ -521,6 +598,7 @@ services:
     container_name: logos-collection
     command: ["./collection"]
     environment:
+      SERVICE_HOST: collection-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
       POSTGRES_HOST: postgres
@@ -544,7 +622,9 @@ services:
     container_name: logos-bot
     command: ["./bot"]
     environment:
+      SERVICE_HOST: bot-service
       ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: logos
@@ -568,6 +648,7 @@ services:
     container_name: logos-process
     command: ["./process"]
     environment:
+      SERVICE_HOST: process-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -581,11 +662,81 @@ services:
       MINIO_SECRET_KEY: minioadmin123
       MINIO_BUCKET: logos-documents
     ports:
-      - "8090:8090"
+      - "9016:9016"
     depends_on:
       - etcd
       - postgres
       - minio
+    networks:
+      - logos-network
+
+  summary-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-summary
+    command: ["./summary"]
+    environment:
+      SERVICE_HOST: summary-service
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+    ports:
+      - "9017:9017"
+    depends_on:
+      - etcd
+      - postgres
+    networks:
+      - logos-network
+
+  mcp-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-mcp
+    command: ["./mcp"]
+    environment:
+      SERVICE_HOST: mcp-service
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+    ports:
+      - "9018:9018"
+    depends_on:
+      - etcd
+      - postgres
+    networks:
+      - logos-network
+
+  moderation-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-moderation
+    command: ["./moderation"]
+    environment:
+      SERVICE_HOST: moderation-service
+      ETCD_ENDPOINTS: etcd:2379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+    ports:
+      - "9019:9019"
+    depends_on:
+      - etcd
+      - postgres
     networks:
       - logos-network
 

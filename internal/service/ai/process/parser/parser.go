@@ -15,12 +15,25 @@ type DocumentParser interface {
 }
 
 type ParserManager struct {
-	parsers map[string]DocumentParser
+	parsers        map[string]DocumentParser
+	videoExtractor video.Extractor
+	videoOptions   *video.ExtractOptions
 }
 
 func NewParserManager(vlmModel vlm.VLM, asrModel asr.ASR, videoExtractor video.Extractor) *ParserManager {
 	pm := &ParserManager{
-		parsers: make(map[string]DocumentParser),
+		parsers:        make(map[string]DocumentParser),
+		videoExtractor: videoExtractor,
+	}
+	pm.registerDefaultParsers(vlmModel, asrModel, videoExtractor)
+	return pm
+}
+
+func NewParserManagerWithOptions(vlmModel vlm.VLM, asrModel asr.ASR, videoExtractor video.Extractor, videoOptions *video.ExtractOptions) *ParserManager {
+	pm := &ParserManager{
+		parsers:        make(map[string]DocumentParser),
+		videoExtractor: videoExtractor,
+		videoOptions:   videoOptions,
 	}
 	pm.registerDefaultParsers(vlmModel, asrModel, videoExtractor)
 	return pm
@@ -31,7 +44,7 @@ func (pm *ParserManager) registerDefaultParsers(vlmModel vlm.VLM, asrModel asr.A
 		NewTextParser(),
 		NewImageParser(vlmModel),
 		NewAudioParser(asrModel),
-		NewVideoParser(vlmModel, asrModel, videoExtractor),
+		NewVideoParserWithOptions(vlmModel, asrModel, videoExtractor, pm.videoOptions),
 		NewDocParser(),
 		NewGenericParser(),
 	}
@@ -40,6 +53,14 @@ func (pm *ParserManager) registerDefaultParsers(vlmModel vlm.VLM, asrModel asr.A
 		for _, t := range parser.SupportedTypes() {
 			pm.parsers[t] = parser
 		}
+	}
+}
+
+func (pm *ParserManager) SetVideoOptions(options *video.ExtractOptions) {
+	pm.videoOptions = options
+	pm.parsers["mp4"] = NewVideoParserWithOptions(nil, nil, pm.videoExtractor, options)
+	for _, t := range pm.parsers["mp4"].SupportedTypes() {
+		pm.parsers[t] = pm.parsers["mp4"]
 	}
 }
 
