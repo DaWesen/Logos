@@ -156,6 +156,17 @@ func (s *billingServiceImpl) ConsumeModelCall(ctx context.Context, userID string
 
 	amount := s.calculateModelCallPrice(provider, modelName, tokenCount)
 
+	usePlatformModel := true
+	if metadata != nil {
+		if v, ok := metadata["use_platform_model"]; ok && v == "false" {
+			usePlatformModel = false
+		}
+	}
+
+	if !usePlatformModel {
+		amount = 0
+	}
+
 	if metadata == nil {
 		metadata = map[string]string{}
 	}

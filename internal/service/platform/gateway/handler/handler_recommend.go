@@ -49,7 +49,7 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 
 func (h *Handler) GetRelatedRecommendations(c *gin.Context) {
 	if h.RecommendClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�Ƽ������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	entityID := c.Param("entityId")
@@ -83,7 +83,7 @@ func (h *Handler) GetRelatedRecommendations(c *gin.Context) {
 
 func (h *Handler) SubmitRecommendFeedback(c *gin.Context) {
 	if h.RecommendClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�Ƽ������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.FeedbackReq
@@ -105,7 +105,7 @@ func (h *Handler) SubmitRecommendFeedback(c *gin.Context) {
 
 func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 	if h.RecommendClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�Ƽ������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
@@ -134,7 +134,7 @@ func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 
 func (h *Handler) BatchGetRecommendations(c *gin.Context) {
 	if h.RecommendClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�Ƽ������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchRecommendationReq

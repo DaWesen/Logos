@@ -16,6 +16,22 @@ type SummaryServiceImpl struct {
 	SummaryService service.SummaryService
 }
 
+func protoToModelConfig(pbCfg *pb.ModelConfig) *service.ModelConfig {
+	if pbCfg == nil {
+		return nil
+	}
+	if pbCfg.ApiKey == "" || pbCfg.Model == "" {
+		return nil
+	}
+	return &service.ModelConfig{
+		Provider:    pbCfg.Provider,
+		Model:       pbCfg.Model,
+		ApiKey:      pbCfg.ApiKey,
+		BaseUrl:     pbCfg.BaseUrl,
+		Temperature: pbCfg.Temperature,
+	}
+}
+
 func (s *SummaryServiceImpl) SummarizeMessages(ctx context.Context, req *pb.SummarizeMessagesRequest) (*pb.SummarizeMessagesResponse, error) {
 	resp := &pb.SummarizeMessagesResponse{}
 
@@ -29,8 +45,10 @@ func (s *SummaryServiceImpl) SummarizeMessages(ctx context.Context, req *pb.Summ
 		chatType = req.ChatType.String()
 	}
 
+	cfg := protoToModelConfig(req.ModelConfig)
+
 	record, todos, candidates, keyPoints, participants, err := s.SummaryService.SummarizeMessages(
-		ctx, req.ChatId, chatType, messageIDs, req.IncludeTodos, req.IncludeCandidates,
+		ctx, req.ChatId, chatType, messageIDs, req.IncludeTodos, req.IncludeCandidates, int(req.MessageCount), cfg,
 	)
 	if err != nil {
 		logger.Error("总结消息失败", logger.ErrorField(err))
@@ -89,8 +107,10 @@ func (s *SummaryServiceImpl) GenerateReplyCandidates(ctx context.Context, req *p
 		candidateCount = 3
 	}
 
+	cfg := protoToModelConfig(req.ModelConfig)
+
 	candidates, err := s.SummaryService.GenerateReplyCandidates(
-		ctx, req.ChatId, chatType, req.ContextMessageIds, candidateCount, req.Tone,
+		ctx, req.ChatId, chatType, req.ContextMessageIds, candidateCount, req.Tone, cfg,
 	)
 	if err != nil {
 		logger.Error("生成回复候选失败", logger.ErrorField(err))
@@ -121,7 +141,9 @@ func (s *SummaryServiceImpl) ExtractTodos(ctx context.Context, req *pb.ExtractTo
 		chatType = req.ChatType.String()
 	}
 
-	todos, err := s.SummaryService.ExtractTodos(ctx, req.ChatId, chatType, req.MessageIds)
+	cfg := protoToModelConfig(req.ModelConfig)
+
+	todos, err := s.SummaryService.ExtractTodos(ctx, req.ChatId, chatType, req.MessageIds, int(req.MessageCount), cfg)
 	if err != nil {
 		logger.Error("提取待办事项失败", logger.ErrorField(err))
 		resp.Code = 1

@@ -54,6 +54,31 @@ func (c *MCPClient) ListTools(ctx context.Context) ([]*ToolInfo, error) {
 	return tools, nil
 }
 
+func (c *MCPClient) ListMCPServices(ctx context.Context, enabledOnly bool) ([]*MCPServiceInfo, error) {
+	resp, err := c.client.ListMCPServices(ctx, &pb.ListMCPServicesRequest{
+		EnabledOnly: enabledOnly,
+		Page:        1,
+		PageSize:    100,
+	})
+	if err != nil {
+		return nil, err
+	}
+	services := make([]*MCPServiceInfo, 0, len(resp.GetServices()))
+	for _, s := range resp.GetServices() {
+		services = append(services, &MCPServiceInfo{
+			ID:            s.GetId(),
+			Name:          s.GetName(),
+			Description:   s.GetDescription(),
+			Enabled:       s.GetEnabled(),
+			TransportType: s.GetTransportType(),
+			URL:           s.GetUrl(),
+			Headers:       s.GetHeaders(),
+			AuthConfig:    s.GetAuthConfig(),
+		})
+	}
+	return services, nil
+}
+
 func (c *MCPClient) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()
@@ -65,4 +90,15 @@ type ToolInfo struct {
 	ID          string
 	Name        string
 	Description string
+}
+
+type MCPServiceInfo struct {
+	ID            string
+	Name          string
+	Description   string
+	Enabled       bool
+	TransportType string
+	URL           string
+	Headers       map[string]string
+	AuthConfig    map[string]string
 }

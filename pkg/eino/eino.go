@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	openaiembed "github.com/cloudwego/eino-ext/components/embedding/openai"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
@@ -76,6 +77,7 @@ func NewEinoManager(apiKey, modelName, baseURL, embeddingModel string) (*EinoMan
 			APIKey:  apiKey,
 			Model:   modelName,
 			BaseURL: baseURL,
+			Timeout: 120 * time.Second,
 		})
 		if err != nil {
 			logger.Warn("初始化ChatModel失败，将降级使用", logger.ErrorField(err))
@@ -110,6 +112,38 @@ func NewEinoManager(apiKey, modelName, baseURL, embeddingModel string) (*EinoMan
 		logger.BoolField("initialized", manager.initialized))
 
 	return manager, nil
+}
+
+func NewDynamicEmbedder(apiKey, embeddingModel, baseURL string) (embedding.Embedder, error) {
+	logger.Info("创建动态Embedder",
+		logger.StringField("model", embeddingModel),
+		logger.StringField("base_url", baseURL))
+
+	if IsMultimodalBaseURL(baseURL) {
+		logger.Info("检测到多模态Embedding API，使用Volcengine适配器")
+		return NewVolcMultimodalEmbedder(apiKey, embeddingModel, baseURL)
+	}
+
+	ctx := context.Background()
+	return openaiembed.NewEmbedder(ctx, &openaiembed.EmbeddingConfig{
+		APIKey:  apiKey,
+		Model:   embeddingModel,
+		BaseURL: baseURL,
+	})
+}
+
+func NewDynamicChatModel(apiKey, modelName, baseURL string) (model.BaseChatModel, error) {
+	logger.Info("创建动态ChatModel",
+		logger.StringField("model", modelName),
+		logger.StringField("base_url", baseURL))
+
+	ctx := context.Background()
+	return openaimodel.NewChatModel(ctx, &openaimodel.ChatModelConfig{
+		APIKey:  apiKey,
+		Model:   modelName,
+		BaseURL: baseURL,
+		Timeout: 120 * time.Second,
+	})
 }
 
 func (e *EinoManager) Chat(ctx context.Context, messages []string) (string, error) {

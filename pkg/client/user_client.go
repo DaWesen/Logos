@@ -19,7 +19,7 @@ func NewUserClient(client pb.UserServiceClient, conn *grpc.ClientConn) *UserClie
 }
 
 func NewUserClientFromConfig(cfg *config.Config) (*UserClient, error) {
-	conn, err := newConn(cfg, "logos.user")
+	conn, err := tryDialWithFallback(cfg, "logos.user", cfg.Ports.User)
 	if err != nil {
 		return nil, err
 	}

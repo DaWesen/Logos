@@ -1947,6 +1947,128 @@ func (x *GetBlacklistResponse) GetTotal() int32 {
 	return 0
 }
 
+// 检查好友关系请求
+type CheckFriendshipRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	FriendId      string                 `protobuf:"bytes,2,opt,name=friend_id,json=friendId,proto3" json:"friend_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckFriendshipRequest) Reset() {
+	*x = CheckFriendshipRequest{}
+	mi := &file_messaging_contact_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckFriendshipRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckFriendshipRequest) ProtoMessage() {}
+
+func (x *CheckFriendshipRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckFriendshipRequest.ProtoReflect.Descriptor instead.
+func (*CheckFriendshipRequest) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *CheckFriendshipRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *CheckFriendshipRequest) GetFriendId() string {
+	if x != nil {
+		return x.FriendId
+	}
+	return ""
+}
+
+// 检查好友关系响应
+type CheckFriendshipResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	IsFriend      bool                   `protobuf:"varint,3,opt,name=is_friend,json=isFriend,proto3" json:"is_friend,omitempty"`
+	IsBlocked     bool                   `protobuf:"varint,4,opt,name=is_blocked,json=isBlocked,proto3" json:"is_blocked,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckFriendshipResponse) Reset() {
+	*x = CheckFriendshipResponse{}
+	mi := &file_messaging_contact_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckFriendshipResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckFriendshipResponse) ProtoMessage() {}
+
+func (x *CheckFriendshipResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_messaging_contact_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckFriendshipResponse.ProtoReflect.Descriptor instead.
+func (*CheckFriendshipResponse) Descriptor() ([]byte, []int) {
+	return file_messaging_contact_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *CheckFriendshipResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CheckFriendshipResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CheckFriendshipResponse) GetIsFriend() bool {
+	if x != nil {
+		return x.IsFriend
+	}
+	return false
+}
+
+func (x *CheckFriendshipResponse) GetIsBlocked() bool {
+	if x != nil {
+		return x.IsBlocked
+	}
+	return false
+}
+
 var File_messaging_contact_proto protoreflect.FileDescriptor
 
 const file_messaging_contact_proto_rawDesc = "" +
@@ -2083,12 +2205,21 @@ const file_messaging_contact_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12<\n" +
 	"\arecords\x18\x03 \x03(\v2\".messaging.contact.BlacklistRecordR\arecords\x12\x14\n" +
-	"\x05total\x18\x04 \x01(\x05R\x05total*\xa7\x01\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"N\n" +
+	"\x16CheckFriendshipRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x1b\n" +
+	"\tfriend_id\x18\x02 \x01(\tR\bfriendId\"\x83\x01\n" +
+	"\x17CheckFriendshipResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1b\n" +
+	"\tis_friend\x18\x03 \x01(\bR\bisFriend\x12\x1d\n" +
+	"\n" +
+	"is_blocked\x18\x04 \x01(\bR\tisBlocked*\xa7\x01\n" +
 	"\x13FriendRequestStatus\x12%\n" +
 	"!FRIEND_REQUEST_STATUS_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dFRIEND_REQUEST_STATUS_PENDING\x10\x01\x12\"\n" +
 	"\x1eFRIEND_REQUEST_STATUS_ACCEPTED\x10\x02\x12\"\n" +
-	"\x1eFRIEND_REQUEST_STATUS_REJECTED\x10\x032\xc7\v\n" +
+	"\x1eFRIEND_REQUEST_STATUS_REJECTED\x10\x032\xb1\f\n" +
 	"\x0eContactService\x12V\n" +
 	"\tAddFriend\x12#.messaging.contact.AddFriendRequest\x1a$.messaging.contact.AddFriendResponse\x12t\n" +
 	"\x13HandleFriendRequest\x12-.messaging.contact.HandleFriendRequestRequest\x1a..messaging.contact.HandleFriendRequestResponse\x12n\n" +
@@ -2103,7 +2234,8 @@ const file_messaging_contact_proto_rawDesc = "" +
 	"\x11MoveFriendToGroup\x12+.messaging.contact.MoveFriendToGroupRequest\x1a,.messaging.contact.MoveFriendToGroupResponse\x12V\n" +
 	"\tBlockUser\x12#.messaging.contact.BlockUserRequest\x1a$.messaging.contact.BlockUserResponse\x12\\\n" +
 	"\vUnblockUser\x12%.messaging.contact.UnblockUserRequest\x1a&.messaging.contact.UnblockUserResponse\x12_\n" +
-	"\fGetBlacklist\x12&.messaging.contact.GetBlacklistRequest\x1a'.messaging.contact.GetBlacklistResponseB\x19Z\x17Logos/proto_gen/contactb\x06proto3"
+	"\fGetBlacklist\x12&.messaging.contact.GetBlacklistRequest\x1a'.messaging.contact.GetBlacklistResponse\x12h\n" +
+	"\x0fCheckFriendship\x12).messaging.contact.CheckFriendshipRequest\x1a*.messaging.contact.CheckFriendshipResponseB\x19Z\x17Logos/proto_gen/contactb\x06proto3"
 
 var (
 	file_messaging_contact_proto_rawDescOnce sync.Once
@@ -2118,7 +2250,7 @@ func file_messaging_contact_proto_rawDescGZIP() []byte {
 }
 
 var file_messaging_contact_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_messaging_contact_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_messaging_contact_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_messaging_contact_proto_goTypes = []any{
 	(FriendRequestStatus)(0),            // 0: messaging.contact.FriendRequestStatus
 	(*Friendship)(nil),                  // 1: messaging.contact.Friendship
@@ -2153,19 +2285,21 @@ var file_messaging_contact_proto_goTypes = []any{
 	(*UnblockUserResponse)(nil),         // 30: messaging.contact.UnblockUserResponse
 	(*GetBlacklistRequest)(nil),         // 31: messaging.contact.GetBlacklistRequest
 	(*GetBlacklistResponse)(nil),        // 32: messaging.contact.GetBlacklistResponse
-	(*timestamppb.Timestamp)(nil),       // 33: google.protobuf.Timestamp
+	(*CheckFriendshipRequest)(nil),      // 33: messaging.contact.CheckFriendshipRequest
+	(*CheckFriendshipResponse)(nil),     // 34: messaging.contact.CheckFriendshipResponse
+	(*timestamppb.Timestamp)(nil),       // 35: google.protobuf.Timestamp
 }
 var file_messaging_contact_proto_depIdxs = []int32{
-	33, // 0: messaging.contact.Friendship.created_at:type_name -> google.protobuf.Timestamp
-	33, // 1: messaging.contact.Friendship.updated_at:type_name -> google.protobuf.Timestamp
-	33, // 2: messaging.contact.FriendGroup.created_at:type_name -> google.protobuf.Timestamp
-	33, // 3: messaging.contact.FriendGroup.updated_at:type_name -> google.protobuf.Timestamp
-	33, // 4: messaging.contact.BlacklistRecord.created_at:type_name -> google.protobuf.Timestamp
+	35, // 0: messaging.contact.Friendship.created_at:type_name -> google.protobuf.Timestamp
+	35, // 1: messaging.contact.Friendship.updated_at:type_name -> google.protobuf.Timestamp
+	35, // 2: messaging.contact.FriendGroup.created_at:type_name -> google.protobuf.Timestamp
+	35, // 3: messaging.contact.FriendGroup.updated_at:type_name -> google.protobuf.Timestamp
+	35, // 4: messaging.contact.BlacklistRecord.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 5: messaging.contact.HandleFriendRequestRequest.status:type_name -> messaging.contact.FriendRequestStatus
 	10, // 6: messaging.contact.GetFriendRequestsResponse.requests:type_name -> messaging.contact.FriendRequest
 	0,  // 7: messaging.contact.FriendRequest.status:type_name -> messaging.contact.FriendRequestStatus
-	33, // 8: messaging.contact.FriendRequest.created_at:type_name -> google.protobuf.Timestamp
-	33, // 9: messaging.contact.FriendRequest.updated_at:type_name -> google.protobuf.Timestamp
+	35, // 8: messaging.contact.FriendRequest.created_at:type_name -> google.protobuf.Timestamp
+	35, // 9: messaging.contact.FriendRequest.updated_at:type_name -> google.protobuf.Timestamp
 	1,  // 10: messaging.contact.GetFriendListResponse.friends:type_name -> messaging.contact.Friendship
 	2,  // 11: messaging.contact.CreateFriendGroupResponse.data:type_name -> messaging.contact.FriendGroup
 	2,  // 12: messaging.contact.GetFriendGroupsResponse.groups:type_name -> messaging.contact.FriendGroup
@@ -2184,22 +2318,24 @@ var file_messaging_contact_proto_depIdxs = []int32{
 	27, // 25: messaging.contact.ContactService.BlockUser:input_type -> messaging.contact.BlockUserRequest
 	29, // 26: messaging.contact.ContactService.UnblockUser:input_type -> messaging.contact.UnblockUserRequest
 	31, // 27: messaging.contact.ContactService.GetBlacklist:input_type -> messaging.contact.GetBlacklistRequest
-	5,  // 28: messaging.contact.ContactService.AddFriend:output_type -> messaging.contact.AddFriendResponse
-	7,  // 29: messaging.contact.ContactService.HandleFriendRequest:output_type -> messaging.contact.HandleFriendRequestResponse
-	9,  // 30: messaging.contact.ContactService.GetFriendRequests:output_type -> messaging.contact.GetFriendRequestsResponse
-	12, // 31: messaging.contact.ContactService.DeleteFriend:output_type -> messaging.contact.DeleteFriendResponse
-	14, // 32: messaging.contact.ContactService.UpdateFriendRemark:output_type -> messaging.contact.UpdateFriendRemarkResponse
-	16, // 33: messaging.contact.ContactService.GetFriendList:output_type -> messaging.contact.GetFriendListResponse
-	18, // 34: messaging.contact.ContactService.CreateFriendGroup:output_type -> messaging.contact.CreateFriendGroupResponse
-	20, // 35: messaging.contact.ContactService.DeleteFriendGroup:output_type -> messaging.contact.DeleteFriendGroupResponse
-	22, // 36: messaging.contact.ContactService.UpdateFriendGroup:output_type -> messaging.contact.UpdateFriendGroupResponse
-	24, // 37: messaging.contact.ContactService.GetFriendGroups:output_type -> messaging.contact.GetFriendGroupsResponse
-	26, // 38: messaging.contact.ContactService.MoveFriendToGroup:output_type -> messaging.contact.MoveFriendToGroupResponse
-	28, // 39: messaging.contact.ContactService.BlockUser:output_type -> messaging.contact.BlockUserResponse
-	30, // 40: messaging.contact.ContactService.UnblockUser:output_type -> messaging.contact.UnblockUserResponse
-	32, // 41: messaging.contact.ContactService.GetBlacklist:output_type -> messaging.contact.GetBlacklistResponse
-	28, // [28:42] is the sub-list for method output_type
-	14, // [14:28] is the sub-list for method input_type
+	33, // 28: messaging.contact.ContactService.CheckFriendship:input_type -> messaging.contact.CheckFriendshipRequest
+	5,  // 29: messaging.contact.ContactService.AddFriend:output_type -> messaging.contact.AddFriendResponse
+	7,  // 30: messaging.contact.ContactService.HandleFriendRequest:output_type -> messaging.contact.HandleFriendRequestResponse
+	9,  // 31: messaging.contact.ContactService.GetFriendRequests:output_type -> messaging.contact.GetFriendRequestsResponse
+	12, // 32: messaging.contact.ContactService.DeleteFriend:output_type -> messaging.contact.DeleteFriendResponse
+	14, // 33: messaging.contact.ContactService.UpdateFriendRemark:output_type -> messaging.contact.UpdateFriendRemarkResponse
+	16, // 34: messaging.contact.ContactService.GetFriendList:output_type -> messaging.contact.GetFriendListResponse
+	18, // 35: messaging.contact.ContactService.CreateFriendGroup:output_type -> messaging.contact.CreateFriendGroupResponse
+	20, // 36: messaging.contact.ContactService.DeleteFriendGroup:output_type -> messaging.contact.DeleteFriendGroupResponse
+	22, // 37: messaging.contact.ContactService.UpdateFriendGroup:output_type -> messaging.contact.UpdateFriendGroupResponse
+	24, // 38: messaging.contact.ContactService.GetFriendGroups:output_type -> messaging.contact.GetFriendGroupsResponse
+	26, // 39: messaging.contact.ContactService.MoveFriendToGroup:output_type -> messaging.contact.MoveFriendToGroupResponse
+	28, // 40: messaging.contact.ContactService.BlockUser:output_type -> messaging.contact.BlockUserResponse
+	30, // 41: messaging.contact.ContactService.UnblockUser:output_type -> messaging.contact.UnblockUserResponse
+	32, // 42: messaging.contact.ContactService.GetBlacklist:output_type -> messaging.contact.GetBlacklistResponse
+	34, // 43: messaging.contact.ContactService.CheckFriendship:output_type -> messaging.contact.CheckFriendshipResponse
+	29, // [29:44] is the sub-list for method output_type
+	14, // [14:29] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name
 	14, // [14:14] is the sub-list for extension extendee
 	0,  // [0:14] is the sub-list for field type_name
@@ -2216,7 +2352,7 @@ func file_messaging_contact_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_messaging_contact_proto_rawDesc), len(file_messaging_contact_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   32,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

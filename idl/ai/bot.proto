@@ -177,12 +177,16 @@ message SendBotMessageResponse {
   int32 code = 1;
   string message = 2;
   BotMessage data = 3;
+  string chat_id = 4; // 返回 conversation ID
 }
 
 // 流式响应
 message StreamBotResponse {
-  string content = 1;
-  bool done = 2;
+	string content = 1;
+	bool done = 2;
+	string chat_id = 3;
+	double cost = 4;
+	int64 tokens = 5;
 }
 
 // 获取对话历史请求
@@ -351,6 +355,9 @@ message UserMemory {
   string bot_id = 3;
   string key = 4;
   string value = 5;
+  string category = 8;
+  string source = 9;
+  double confidence = 10;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
 }
@@ -374,6 +381,7 @@ message SetUserMemoryRequest {
   string bot_id = 2;
   string key = 3;
   string value = 4;
+  string category = 5;
 }
 
 // 设置用户记忆响应
@@ -381,6 +389,19 @@ message SetUserMemoryResponse {
   int32 code = 1;
   string message = 2;
   UserMemory data = 3;
+}
+
+// 删除用户记忆请求
+message DeleteUserMemoryRequest {
+  string user_id = 1;
+  string bot_id = 2;
+  string key = 3;
+}
+
+// 删除用户记忆响应
+message DeleteUserMemoryResponse {
+  int32 code = 1;
+  string message = 2;
 }
 
 // Bot 服务
@@ -424,6 +445,7 @@ service BotService {
   // 获取/设置用户记忆
   rpc GetUserMemory(GetUserMemoryRequest) returns (GetUserMemoryResponse);
   rpc SetUserMemory(SetUserMemoryRequest) returns (SetUserMemoryResponse);
+  rpc DeleteUserMemory(DeleteUserMemoryRequest) returns (DeleteUserMemoryResponse);
 
   // 创建 Prompt
   rpc CreatePrompt(CreatePromptRequest) returns (CreatePromptResponse);

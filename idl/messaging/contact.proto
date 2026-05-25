@@ -228,6 +228,20 @@ message GetBlacklistResponse {
   int32 total = 4;
 }
 
+// 检查好友关系请求
+message CheckFriendshipRequest {
+  string user_id = 1;
+  string friend_id = 2;
+}
+
+// 检查好友关系响应
+message CheckFriendshipResponse {
+  int32 code = 1;
+  string message = 2;
+  bool is_friend = 3;
+  bool is_blocked = 4;
+}
+
 // 联系人服务
 service ContactService {
   // 添加好友
@@ -271,4 +285,7 @@ service ContactService {
   
   // 获取黑名单
   rpc GetBlacklist(GetBlacklistRequest) returns (GetBlacklistResponse);
+  
+  // 检查好友关系
+  rpc CheckFriendship(CheckFriendshipRequest) returns (CheckFriendshipResponse);
 }

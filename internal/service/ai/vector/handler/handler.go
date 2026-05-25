@@ -52,15 +52,27 @@ func convertModelCollectionToProtoCollection(collection *model.VectorCollection)
 	}
 
 	return &pb.VectorCollection{
-		Id:         collection.ID,
-		Name:       collection.Name,
-		ModelType:  pb.VectorModelType(collection.ModelType),
-		IndexType:  pb.IndexType(collection.IndexType),
-		Dimension:  int32(collection.Dimension),
-		Parameters: collection.Parameters,
-		Size:       collection.Size,
-		CreatedAt:  collection.CreatedAt.Unix(),
-		UpdatedAt:  collection.UpdatedAt.Unix(),
+		Id:               collection.ID,
+		Name:             collection.Name,
+		ModelType:        pb.VectorModelType(collection.ModelType),
+		IndexType:        pb.IndexType(collection.IndexType),
+		Dimension:        int32(collection.Dimension),
+		Parameters:       collection.Parameters,
+		Size:             collection.Size,
+		VlmModel:         collection.VLM.Model,
+		VlmBaseUrl:       collection.VLM.BaseURL,
+		VlmApiKey:        collection.VLM.APIKey,
+		LlmModel:         collection.LLM.Model,
+		LlmBaseUrl:       collection.LLM.BaseURL,
+		LlmApiKey:        collection.LLM.APIKey,
+		AsrModel:         collection.ASR.Model,
+		AsrBaseUrl:       collection.ASR.BaseURL,
+		AsrApiKey:        collection.ASR.APIKey,
+		EmbeddingModel:   collection.Embedding.Model,
+		EmbeddingBaseUrl: collection.Embedding.BaseURL,
+		EmbeddingApiKey:  collection.Embedding.APIKey,
+		CreatedAt:        collection.CreatedAt.Unix(),
+		UpdatedAt:        collection.UpdatedAt.Unix(),
 	}
 }
 
@@ -86,6 +98,26 @@ func (s *VectorServiceImpl) CreateCollection(ctx context.Context, req *pb.Create
 		IndexType:  model.IndexType(req.IndexType),
 		Dimension:  int(req.Dimension),
 		Parameters: req.Parameters,
+		VLM: model.ModelConfig{
+			Model:   req.VlmModel,
+			BaseURL: req.VlmBaseUrl,
+			APIKey:  req.VlmApiKey,
+		},
+		LLM: model.ModelConfig{
+			Model:   req.LlmModel,
+			BaseURL: req.LlmBaseUrl,
+			APIKey:  req.LlmApiKey,
+		},
+		ASR: model.ModelConfig{
+			Model:   req.AsrModel,
+			BaseURL: req.AsrBaseUrl,
+			APIKey:  req.AsrApiKey,
+		},
+		Embedding: model.ModelConfig{
+			Model:   req.EmbeddingModel,
+			BaseURL: req.EmbeddingBaseUrl,
+			APIKey:  req.EmbeddingApiKey,
+		},
 	}
 
 	createdCollection, err := s.VectorService.CreateCollection(ctx, collection)
@@ -114,11 +146,23 @@ func (s *VectorServiceImpl) UpdateCollection(ctx context.Context, req *pb.Update
 	}
 	if req.Parameters != nil {
 		collection.Parameters = req.Parameters
+		if model, ok := req.Parameters["__embedding_model"]; ok {
+			collection.Embedding.Model = model
+			delete(collection.Parameters, "__embedding_model")
+		}
+		if baseURL, ok := req.Parameters["__embedding_base_url"]; ok {
+			collection.Embedding.BaseURL = baseURL
+			delete(collection.Parameters, "__embedding_base_url")
+		}
+		if apiKey, ok := req.Parameters["__embedding_api_key"]; ok {
+			collection.Embedding.APIKey = apiKey
+			delete(collection.Parameters, "__embedding_api_key")
+		}
 	}
 
 	updatedCollection, err := s.VectorService.UpdateCollection(ctx, collection)
 	if err != nil {
-		logger.Error("������������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -133,11 +177,43 @@ func (s *VectorServiceImpl) UpdateCollection(ctx context.Context, req *pb.Update
 func (s *VectorServiceImpl) DeleteCollection(ctx context.Context, req *pb.DeleteCollectionReq) (*pbCommon.BaseResp, error) {
 	err := s.VectorService.DeleteCollection(ctx, req.Id)
 	if err != nil {
-		logger.Error("ɾ����������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
 	return buildSuccessBaseResp(), nil
+}
+
+func (s *VectorServiceImpl) ListVectors(ctx context.Context, req *pb.ListVectorsReq) (*pb.ListVectorsResp, error) {
+	logger.Info("列出向量预览请求",
+		logger.StringField("collection_id", req.CollectionId),
+		logger.IntField("page", int(req.Page)),
+		logger.IntField("page_size", int(req.PageSize)))
+
+	items, total, err := s.VectorService.ListVectors(ctx, req.CollectionId, int(req.Page), int(req.PageSize))
+	if err != nil {
+		logger.Error("列出向量预览失败", logger.ErrorField(err))
+		return &pb.ListVectorsResp{
+			BaseResp: buildErrorBaseResp(err.Error()),
+		}, nil
+	}
+
+	pbItems := make([]*pb.VectorPreviewItem, 0, len(items))
+	for _, item := range items {
+		pbItems = append(pbItems, &pb.VectorPreviewItem{
+			Id:       item.ID,
+			Content:  item.Content,
+			Metadata: item.Metadata,
+		})
+	}
+
+	return &pb.ListVectorsResp{
+		BaseResp: buildSuccessBaseResp(),
+		Vectors:  pbItems,
+		Total:    total,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+	}, nil
 }
 
 // GetCollection implements the VectorServiceImpl interface.
@@ -146,7 +222,7 @@ func (s *VectorServiceImpl) GetCollection(ctx context.Context, req *pb.GetByIdRe
 
 	collection, err := s.VectorService.GetCollection(ctx, req.Id)
 	if err != nil {
-		logger.Error("��ȡ��������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -163,7 +239,7 @@ func (s *VectorServiceImpl) ListCollections(ctx context.Context, req *pb.EmptyRe
 
 	collections, err := s.VectorService.ListCollections(ctx)
 	if err != nil {
-		logger.Error("�г���������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -179,11 +255,14 @@ func (s *VectorServiceImpl) ListCollections(ctx context.Context, req *pb.EmptyRe
 
 // Vectorize implements the VectorServiceImpl interface.
 func (s *VectorServiceImpl) Vectorize(ctx context.Context, req *pb.VectorizeReq) (*pb.VectorizeResp, error) {
+	logger.Info("收到 Vectorize 请求",
+		logger.StringField("collection_id", req.CollectionId),
+		logger.StringField("text", req.Text))
 	resp := &pb.VectorizeResp{}
 
 	vec, err := s.VectorService.Vectorize(ctx, req.Text, req.CollectionId, req.Metadata)
 	if err != nil {
-		logger.Error("������ʧ��", logger.ErrorField(err))
+		logger.Error("Vectorize 失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -191,6 +270,7 @@ func (s *VectorServiceImpl) Vectorize(ctx context.Context, req *pb.VectorizeReq)
 	resp.BaseResp = buildSuccessBaseResp()
 	resp.Vector = convertModelVectorToProtoVector(vec)
 
+	logger.Info("Vectorize 完成", logger.StringField("vector_id", vec.ID))
 	return resp, nil
 }
 
@@ -205,7 +285,7 @@ func (s *VectorServiceImpl) BatchVectorize(ctx context.Context, req *pb.BatchVec
 
 	vectors, err := s.VectorService.BatchVectorize(ctx, req.Texts, req.CollectionId, metadataList)
 	if err != nil {
-		logger.Error("����������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -235,7 +315,7 @@ func (s *VectorServiceImpl) Search(ctx context.Context, req *pb.SearchReq) (*pb.
 
 	results, err := s.VectorService.Search(ctx, req.CollectionId, req.QueryVector, int(req.TopK), threshold, filter)
 	if err != nil {
-		logger.Error("��������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		resp.Results = make([]*pb.SearchResultItem, 0)
 		return resp, nil
@@ -252,6 +332,10 @@ func (s *VectorServiceImpl) Search(ctx context.Context, req *pb.SearchReq) (*pb.
 
 // TextSearch implements the VectorServiceImpl interface.
 func (s *VectorServiceImpl) TextSearch(ctx context.Context, req *pb.TextSearchReq) (*pb.SearchResp, error) {
+	logger.Info("gRPC TextSearch 到达",
+		logger.StringField("collection_id", req.CollectionId),
+		logger.StringField("text", req.Text),
+		logger.IntField("top_k", int(req.TopK)))
 	resp := &pb.SearchResp{}
 
 	threshold := 0.0
@@ -266,7 +350,7 @@ func (s *VectorServiceImpl) TextSearch(ctx context.Context, req *pb.TextSearchRe
 
 	results, err := s.VectorService.TextSearch(ctx, req.CollectionId, req.Text, int(req.TopK), threshold, filter)
 	if err != nil {
-		logger.Error("�ı�����ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -284,7 +368,7 @@ func (s *VectorServiceImpl) TextSearch(ctx context.Context, req *pb.TextSearchRe
 func (s *VectorServiceImpl) DeleteVector(ctx context.Context, req *pb.DeleteVectorReq) (*pbCommon.BaseResp, error) {
 	err := s.VectorService.DeleteVector(ctx, req.CollectionId, req.VectorId)
 	if err != nil {
-		logger.Error("ɾ������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -295,7 +379,7 @@ func (s *VectorServiceImpl) DeleteVector(ctx context.Context, req *pb.DeleteVect
 func (s *VectorServiceImpl) BatchDeleteVector(ctx context.Context, req *pb.BatchDeleteVectorReq) (*pbCommon.BaseResp, error) {
 	err := s.VectorService.BatchDeleteVector(ctx, req.CollectionId, req.VectorIds)
 	if err != nil {
-		logger.Error("����ɾ������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 

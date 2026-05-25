@@ -22,18 +22,21 @@ type KnowledgeRepository interface {
 	UpdateEntity(ctx context.Context, entity *model.Entity) error
 	DeleteEntity(ctx context.Context, id string) error
 	GetEntity(ctx context.Context, id string) (*model.Entity, error)
-	QueryEntities(ctx context.Context, entityType, name string, properties map[string]string, offset, limit int) ([]*model.Entity, error)
-	CountEntities(ctx context.Context, entityType, name string, properties map[string]string) (int64, error)
+	FindEntityByNameAndType(ctx context.Context, name, entityType, collectionID string) (*model.Entity, error)
+	QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, offset, limit int) ([]*model.Entity, error)
+	CountEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string) (int64, error)
 
 	CreateRelation(ctx context.Context, relation *model.Relation) error
 	UpdateRelation(ctx context.Context, relation *model.Relation) error
 	DeleteRelation(ctx context.Context, id string) error
 	GetRelation(ctx context.Context, id string) (*model.Relation, error)
-	QueryRelations(ctx context.Context, relationType, sourceId, targetId string, offset, limit int) ([]*model.Relation, error)
-	CountRelations(ctx context.Context, relationType, sourceId, targetId string) (int64, error)
+	QueryRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string, offset, limit int) ([]*model.Relation, error)
+	CountRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string) (int64, error)
 
-	GetGraphStats(ctx context.Context) (*model.GraphStats, error)
+	GetGraphStats(ctx context.Context, collectionID string) (*model.GraphStats, error)
 	GetRelatedEntities(ctx context.Context, entityId, relationType string) ([]*model.Entity, error)
+	GetSubgraph(ctx context.Context, entityID string, depth int, collectionID string) (*model.Subgraph, error)
+	GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*model.EntityPath, error)
 
 	WithTransaction(ctx context.Context, fn func(txRepo KnowledgeRepository) error) error
 }
@@ -58,10 +61,11 @@ func (r *knowledgeRepository) CreateEntity(ctx context.Context, entity *model.En
 
 	if r.neo4jManager != nil {
 		properties := map[string]interface{}{
-			"name":        entity.Name,
-			"description": entity.Description,
-			"createdAt":   entity.CreatedAt.Unix(),
-			"updatedAt":   entity.UpdatedAt.Unix(),
+			"name":         entity.Name,
+			"description":  entity.Description,
+			"collectionId": entity.CollectionID,
+			"createdAt":    entity.CreatedAt.Unix(),
+			"updatedAt":    entity.UpdatedAt.Unix(),
 		}
 		for k, v := range entity.Properties {
 			properties[k] = v
@@ -84,9 +88,10 @@ func (r *knowledgeRepository) UpdateEntity(ctx context.Context, entity *model.En
 
 	if r.neo4jManager != nil {
 		properties := map[string]interface{}{
-			"name":        entity.Name,
-			"description": entity.Description,
-			"updatedAt":   entity.UpdatedAt.Unix(),
+			"name":         entity.Name,
+			"description":  entity.Description,
+			"collectionId": entity.CollectionID,
+			"updatedAt":    entity.UpdatedAt.Unix(),
 		}
 		for k, v := range entity.Properties {
 			properties[k] = v
@@ -108,7 +113,15 @@ func (r *knowledgeRepository) DeleteEntity(ctx context.Context, id string) error
 		return err
 	}
 
-	if err := r.db.WithContext(ctx).Delete(&model.Entity{}, "id = ?", id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("source_id = ? OR target_id = ?", id, id).Delete(&model.Relation{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&model.Entity{}, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -135,7 +148,23 @@ func (r *knowledgeRepository) GetEntity(ctx context.Context, id string) (*model.
 	return &entity, nil
 }
 
-func (r *knowledgeRepository) QueryEntities(ctx context.Context, entityType, name string, properties map[string]string, offset, limit int) ([]*model.Entity, error) {
+func (r *knowledgeRepository) FindEntityByNameAndType(ctx context.Context, name, entityType, collectionID string) (*model.Entity, error) {
+	var entity model.Entity
+	query := r.db.WithContext(ctx).Where("name = ? AND type = ?", name, entityType)
+	if collectionID != "" {
+		query = query.Where("collection_id = ?", collectionID)
+	}
+	err := query.First(&entity).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &entity, nil
+}
+
+func (r *knowledgeRepository) QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, offset, limit int) ([]*model.Entity, error) {
 	query := r.db.WithContext(ctx).Model(&model.Entity{})
 
 	if entityType != "" {
@@ -143,14 +172,21 @@ func (r *knowledgeRepository) QueryEntities(ctx context.Context, entityType, nam
 	}
 	if name != "" {
 		query = query.Where("name LIKE ?", "%"+name+"%")
+	}
+	if collectionID != "" {
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var entities []*model.Entity
-	err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&entities).Error
+	q := query.Offset(offset).Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	err := q.Find(&entities).Error
 	return entities, err
 }
 
-func (r *knowledgeRepository) CountEntities(ctx context.Context, entityType, name string, properties map[string]string) (int64, error) {
+func (r *knowledgeRepository) CountEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string) (int64, error) {
 	query := r.db.WithContext(ctx).Model(&model.Entity{})
 
 	if entityType != "" {
@@ -158,6 +194,9 @@ func (r *knowledgeRepository) CountEntities(ctx context.Context, entityType, nam
 	}
 	if name != "" {
 		query = query.Where("name LIKE ?", "%"+name+"%")
+	}
+	if collectionID != "" {
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var count int64
@@ -180,9 +219,10 @@ func (r *knowledgeRepository) CreateRelation(ctx context.Context, relation *mode
 
 		if sourceEntity != nil && targetEntity != nil {
 			properties := map[string]interface{}{
-				"description": relation.Description,
-				"createdAt":   relation.CreatedAt.Unix(),
-				"updatedAt":   relation.UpdatedAt.Unix(),
+				"description":  relation.Description,
+				"collectionId": relation.CollectionID,
+				"createdAt":    relation.CreatedAt.Unix(),
+				"updatedAt":    relation.UpdatedAt.Unix(),
 			}
 			for k, v := range relation.Properties {
 				properties[k] = v
@@ -225,8 +265,9 @@ func (r *knowledgeRepository) UpdateRelation(ctx context.Context, relation *mode
 
 		if sourceEntity != nil && targetEntity != nil {
 			properties := map[string]interface{}{
-				"description": relation.Description,
-				"updatedAt":   relation.UpdatedAt.Unix(),
+				"description":  relation.Description,
+				"collectionId": relation.CollectionID,
+				"updatedAt":    relation.UpdatedAt.Unix(),
 			}
 			for k, v := range relation.Properties {
 				properties[k] = v
@@ -281,7 +322,7 @@ func (r *knowledgeRepository) GetRelation(ctx context.Context, id string) (*mode
 	return &relation, nil
 }
 
-func (r *knowledgeRepository) QueryRelations(ctx context.Context, relationType, sourceId, targetId string, offset, limit int) ([]*model.Relation, error) {
+func (r *knowledgeRepository) QueryRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string, offset, limit int) ([]*model.Relation, error) {
 	query := r.db.WithContext(ctx).Model(&model.Relation{})
 
 	if relationType != "" {
@@ -292,14 +333,21 @@ func (r *knowledgeRepository) QueryRelations(ctx context.Context, relationType, 
 	}
 	if targetId != "" {
 		query = query.Where("target_id = ?", targetId)
+	}
+	if collectionID != "" {
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var relations []*model.Relation
-	err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&relations).Error
+	q := query.Offset(offset).Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	err := q.Find(&relations).Error
 	return relations, err
 }
 
-func (r *knowledgeRepository) CountRelations(ctx context.Context, relationType, sourceId, targetId string) (int64, error) {
+func (r *knowledgeRepository) CountRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string) (int64, error) {
 	query := r.db.WithContext(ctx).Model(&model.Relation{})
 
 	if relationType != "" {
@@ -310,6 +358,9 @@ func (r *knowledgeRepository) CountRelations(ctx context.Context, relationType, 
 	}
 	if targetId != "" {
 		query = query.Where("target_id = ?", targetId)
+	}
+	if collectionID != "" {
+		query = query.Where("collection_id = ?", collectionID)
 	}
 
 	var count int64
@@ -317,43 +368,56 @@ func (r *knowledgeRepository) CountRelations(ctx context.Context, relationType, 
 	return count, err
 }
 
-func (r *knowledgeRepository) GetGraphStats(ctx context.Context) (*model.GraphStats, error) {
+func (r *knowledgeRepository) GetGraphStats(ctx context.Context, collectionID string) (*model.GraphStats, error) {
 	stats := &model.GraphStats{
 		EntityTypeCount:   make(map[string]int64),
 		RelationTypeCount: make(map[string]int64),
 	}
 
-	if err := r.db.WithContext(ctx).Model(&model.Entity{}).Count(&stats.EntityCount).Error; err != nil {
+	entityQuery := r.db.WithContext(ctx).Model(&model.Entity{})
+	if collectionID != "" {
+		entityQuery = entityQuery.Where("collection_id = ?", collectionID)
+	}
+	if err := entityQuery.Count(&stats.EntityCount).Error; err != nil {
 		return nil, err
 	}
 
-	if err := r.db.WithContext(ctx).Model(&model.Relation{}).Count(&stats.RelationCount).Error; err != nil {
+	relationQuery := r.db.WithContext(ctx).Model(&model.Relation{})
+	if collectionID != "" {
+		relationQuery = relationQuery.Where("collection_id = ?", collectionID)
+	}
+	if err := relationQuery.Count(&stats.RelationCount).Error; err != nil {
 		return nil, err
 	}
 
-	type EntityTypeCount struct {
+	type TypeCount struct {
 		Type  string
 		Count int64
 	}
-	var entityTypeCounts []EntityTypeCount
-	if err := r.db.WithContext(ctx).Model(&model.Entity{}).Select("type, count(*) as count").Group("type").Find(&entityTypeCounts).Error; err != nil {
+
+	var entityTypeCounts []TypeCount
+	etcQuery := r.db.WithContext(ctx).Model(&model.Entity{}).Select("type, count(*) as count").Group("type")
+	if collectionID != "" {
+		etcQuery = etcQuery.Where("collection_id = ?", collectionID)
+	}
+	if err := etcQuery.Find(&entityTypeCounts).Error; err != nil {
 		logger.Error("获取实体类型统计失败", logger.ErrorField(err))
 	} else {
-		for etc := range entityTypeCounts {
-			stats.EntityTypeCount[entityTypeCounts[etc].Type] = entityTypeCounts[etc].Count
+		for _, etc := range entityTypeCounts {
+			stats.EntityTypeCount[etc.Type] = etc.Count
 		}
 	}
 
-	type RelationTypeCount struct {
-		Type  string
-		Count int64
+	var relationTypeCounts []TypeCount
+	rtcQuery := r.db.WithContext(ctx).Model(&model.Relation{}).Select("type, count(*) as count").Group("type")
+	if collectionID != "" {
+		rtcQuery = rtcQuery.Where("collection_id = ?", collectionID)
 	}
-	var relationTypeCounts []RelationTypeCount
-	if err := r.db.WithContext(ctx).Model(&model.Relation{}).Select("type, count(*) as count").Group("type").Find(&relationTypeCounts).Error; err != nil {
+	if err := rtcQuery.Find(&relationTypeCounts).Error; err != nil {
 		logger.Error("获取关系类型统计失败", logger.ErrorField(err))
 	} else {
-		for rtc := range relationTypeCounts {
-			stats.RelationTypeCount[relationTypeCounts[rtc].Type] = relationTypeCounts[rtc].Count
+		for _, rtc := range relationTypeCounts {
+			stats.RelationTypeCount[rtc.Type] = rtc.Count
 		}
 	}
 
@@ -383,41 +447,282 @@ func (r *knowledgeRepository) GetRelatedEntities(ctx context.Context, entityId, 
 		}
 	}
 
-	query := `
-		SELECT e.* FROM entities e
-		INNER JOIN relations r ON e.id = r.target_id
-		WHERE r.source_id = ?
-	`
-	args := []interface{}{entityId}
-
+	forwardQuery := r.db.WithContext(ctx).Model(&model.Entity{}).
+		Joins("INNER JOIN relations ON entities.id = relations.target_id").
+		Where("relations.source_id = ?", entityId)
 	if relationType != "" {
-		query += " AND r.type = ?"
-		args = append(args, relationType)
+		forwardQuery = forwardQuery.Where("relations.type = ?", relationType)
 	}
 
 	var entities []*model.Entity
-	err := r.db.WithContext(ctx).Raw(query, args...).Find(&entities).Error
-	if err != nil {
+	if err := forwardQuery.Find(&entities).Error; err != nil {
 		return nil, err
 	}
 
-	query = `
-		SELECT e.* FROM entities e
-		INNER JOIN relations r ON e.id = r.source_id
-		WHERE r.target_id = ?
-	`
+	reverseQuery := r.db.WithContext(ctx).Model(&model.Entity{}).
+		Joins("INNER JOIN relations ON entities.id = relations.source_id").
+		Where("relations.target_id = ?", entityId)
 	if relationType != "" {
-		query += " AND r.type = ?"
+		reverseQuery = reverseQuery.Where("relations.type = ?", relationType)
 	}
 
 	var reverseEntities []*model.Entity
-	err = r.db.WithContext(ctx).Raw(query, args...).Find(&reverseEntities).Error
-	if err != nil {
+	if err := reverseQuery.Find(&reverseEntities).Error; err != nil {
 		return nil, err
 	}
 
 	entities = append(entities, reverseEntities...)
 	return entities, nil
+}
+
+func (r *knowledgeRepository) GetSubgraph(ctx context.Context, entityID string, depth int, collectionID string) (*model.Subgraph, error) {
+	if depth <= 0 {
+		depth = 2
+	}
+	if depth > 4 {
+		depth = 4
+	}
+
+	subgraph := &model.Subgraph{}
+
+	if r.neo4jManager != nil {
+		entity, err := r.GetEntity(ctx, entityID)
+		if err == nil && entity != nil {
+			neo4jSubgraph, err := r.neo4jManager.GetSubgraph(ctx, entity.Type, entityID, depth)
+			if err == nil && neo4jSubgraph != nil {
+				for _, nodeProps := range neo4jSubgraph.Nodes {
+					id, _ := nodeProps["id"].(string)
+					if id != "" {
+						e, _ := r.GetEntity(ctx, id)
+						if e != nil {
+							subgraph.Nodes = append(subgraph.Nodes, e)
+						}
+					}
+				}
+				for _, relProps := range neo4jSubgraph.Relationships {
+					id, _ := relProps["id"].(string)
+					if id != "" {
+						rel, _ := r.GetRelation(ctx, id)
+						if rel != nil {
+							subgraph.Edges = append(subgraph.Edges, rel)
+						}
+					}
+				}
+				if len(subgraph.Nodes) > 0 {
+					subgraph.NodeCount = len(subgraph.Nodes)
+					subgraph.EdgeCount = len(subgraph.Edges)
+					return subgraph, nil
+				}
+			}
+		}
+	}
+
+	visited := make(map[string]bool)
+	entityQueue := []string{entityID}
+	visited[entityID] = true
+
+	for d := 0; d < depth; d++ {
+		var nextQueue []string
+		for _, eid := range entityQueue {
+			entity, err := r.GetEntity(ctx, eid)
+			if err != nil || entity == nil {
+				continue
+			}
+			if collectionID != "" && entity.CollectionID != collectionID && entity.CollectionID != "" {
+				continue
+			}
+
+			found := false
+			for _, n := range subgraph.Nodes {
+				if n.ID == entity.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				subgraph.Nodes = append(subgraph.Nodes, entity)
+			}
+
+			related, err := r.GetRelatedEntities(ctx, eid, "")
+			if err != nil {
+				continue
+			}
+
+			for _, relEntity := range related {
+				if collectionID != "" && relEntity.CollectionID != collectionID && relEntity.CollectionID != "" {
+					continue
+				}
+
+				if !visited[relEntity.ID] {
+					visited[relEntity.ID] = true
+					nextQueue = append(nextQueue, relEntity.ID)
+				}
+
+				found := false
+				for _, n := range subgraph.Nodes {
+					if n.ID == relEntity.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					subgraph.Nodes = append(subgraph.Nodes, relEntity)
+				}
+			}
+		}
+		entityQueue = nextQueue
+	}
+
+	nodeIDs := make(map[string]bool)
+	for _, n := range subgraph.Nodes {
+		nodeIDs[n.ID] = true
+	}
+
+	relationQuery := r.db.WithContext(ctx).Model(&model.Relation{})
+	if collectionID != "" {
+		relationQuery = relationQuery.Where("collection_id = ? OR collection_id = ''", collectionID)
+	}
+	var allRelations []*model.Relation
+	relationQuery.Find(&allRelations)
+
+	for _, rel := range allRelations {
+		if nodeIDs[rel.SourceID] && nodeIDs[rel.TargetID] {
+			subgraph.Edges = append(subgraph.Edges, rel)
+		}
+	}
+
+	subgraph.NodeCount = len(subgraph.Nodes)
+	subgraph.EdgeCount = len(subgraph.Edges)
+	return subgraph, nil
+}
+
+func (r *knowledgeRepository) GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*model.EntityPath, error) {
+	if maxDepth <= 0 {
+		maxDepth = 4
+	}
+	if maxDepth > 6 {
+		maxDepth = 6
+	}
+
+	var paths []*model.EntityPath
+
+	if r.neo4jManager != nil {
+		sourceEntity, _ := r.GetEntity(ctx, sourceID)
+		targetEntity, _ := r.GetEntity(ctx, targetID)
+		if sourceEntity != nil && targetEntity != nil {
+			neo4jPaths, err := r.neo4jManager.GetShortestPath(ctx, sourceEntity.Type, sourceID, targetEntity.Type, targetID, maxDepth)
+			if err == nil && len(neo4jPaths) > 0 {
+				for _, neo4jPath := range neo4jPaths {
+					path := &model.EntityPath{}
+					for _, nodeProps := range neo4jPath.Nodes {
+						id, _ := nodeProps["id"].(string)
+						if id != "" {
+							e, _ := r.GetEntity(ctx, id)
+							if e != nil {
+								path.Entities = append(path.Entities, e)
+							}
+						}
+					}
+					for _, relProps := range neo4jPath.Relationships {
+						id, _ := relProps["id"].(string)
+						if id != "" {
+							rel, _ := r.GetRelation(ctx, id)
+							if rel != nil {
+								path.Edges = append(path.Edges, rel)
+							}
+						}
+					}
+					path.Length = len(path.Edges)
+					paths = append(paths, path)
+				}
+				if len(paths) > 0 {
+					return paths, nil
+				}
+			}
+		}
+	}
+
+	path := r.findPathBFS(ctx, sourceID, targetID, maxDepth, collectionID)
+	if path != nil {
+		paths = append(paths, path)
+	}
+
+	if len(paths) == 0 {
+		return []*model.EntityPath{}, nil
+	}
+	return paths, nil
+}
+
+func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) *model.EntityPath {
+	type pathNode struct {
+		entityID string
+		path     []string
+		edges    []string
+	}
+
+	visited := make(map[string]bool)
+	queue := []pathNode{{entityID: sourceID, path: []string{sourceID}}}
+	visited[sourceID] = true
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if len(current.path)-1 >= maxDepth {
+			continue
+		}
+
+		related, err := r.GetRelatedEntities(ctx, current.entityID, "")
+		if err != nil {
+			continue
+		}
+
+		for _, relEntity := range related {
+			if collectionID != "" && relEntity.CollectionID != collectionID && relEntity.CollectionID != "" {
+				continue
+			}
+
+			if relEntity.ID == targetID {
+				fullPath := append(current.path, relEntity.ID)
+
+				var entities []*model.Entity
+				var edges []*model.Relation
+				for _, eid := range fullPath {
+					e, _ := r.GetEntity(ctx, eid)
+					if e != nil {
+						entities = append(entities, e)
+					}
+				}
+
+				for i := 0; i < len(fullPath)-1; i++ {
+					var rels []*model.Relation
+					r.db.WithContext(ctx).Model(&model.Relation{}).
+						Where("(source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)",
+							fullPath[i], fullPath[i+1], fullPath[i+1], fullPath[i]).
+						Find(&rels)
+					if len(rels) > 0 {
+						edges = append(edges, rels[0])
+					}
+				}
+
+				return &model.EntityPath{
+					Entities: entities,
+					Edges:    edges,
+					Length:   len(edges),
+				}
+			}
+
+			if !visited[relEntity.ID] {
+				visited[relEntity.ID] = true
+				queue = append(queue, pathNode{
+					entityID: relEntity.ID,
+					path:     append(append([]string{}, current.path...), relEntity.ID),
+				})
+			}
+		}
+	}
+
+	return nil
 }
 
 func (r *knowledgeRepository) WithTransaction(ctx context.Context, fn func(txRepo KnowledgeRepository) error) error {

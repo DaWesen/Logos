@@ -6,15 +6,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"Logos/pkg/logger"
 )
 
 const (
-	defaultTimeout = 90 * time.Second
-	defaultMaxTokens = 5000
+	defaultTimeout     = 90 * time.Second
+	defaultMaxTokens   = 5000
 	defaultTemperature = 0.1
 )
 
@@ -24,10 +26,10 @@ type Message struct {
 }
 
 type ChatCompletionRequest struct {
-	Model     string     `json:"model"`
-	Messages  []Message  `json:"messages"`
-	MaxTokens int        `json:"max_tokens,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Temperature float64   `json:"temperature,omitempty"`
 }
 
 type ChatCompletionResponse struct {
@@ -49,8 +51,15 @@ type RemoteAPIVLM struct {
 func NewRemoteAPIVLM(config *Config) (*RemoteAPIVLM, error) {
 	baseURL := config.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		if config.APIKey != "" {
+			baseURL = "https://api.openai.com/v1"
+		} else {
+			return nil, fmt.Errorf("VLM 配置缺少 BaseURL 且无 API Key，无法确定服务地址")
+		}
 	}
+	baseURL = strings.TrimRight(baseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/chat/completions")
+	baseURL = strings.TrimSuffix(baseURL, "/responses")
 
 	return &RemoteAPIVLM{
 		modelName: config.ModelName,
@@ -78,7 +87,7 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgData []byte, prompt strin
 					{
 						"type": "image_url",
 						"image_url": map[string]any{
-							"url": dataURL,
+							"url":    dataURL,
 							"detail": "auto",
 						},
 					},
@@ -89,7 +98,7 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgData []byte, prompt strin
 				},
 			},
 		},
-		MaxTokens: defaultMaxTokens,
+		MaxTokens:   defaultMaxTokens,
 		Temperature: defaultTemperature,
 	}
 
@@ -98,9 +107,9 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgData []byte, prompt strin
 		return "", fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	logger.Info("调用 VLM API", 
-		logger.StringField("model", v.modelName), 
-		logger.StringField("baseURL", v.baseURL), 
+	logger.Info("调用 VLM API",
+		logger.StringField("model", v.modelName),
+		logger.StringField("baseURL", v.baseURL),
 		logger.IntField("imageSize", len(imgData)))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", v.baseURL+"/chat/completions", bytes.NewReader(reqJSON))
@@ -117,8 +126,12 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgData []byte, prompt strin
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := json.MarshalIndent(resp, "", "  ")
-		return "", fmt.Errorf("API 返回失败状态码: %d, 响应: %s", resp.StatusCode, string(body))
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		bodyStr := ""
+		if readErr == nil {
+			bodyStr = string(bodyBytes)
+		}
+		return "", fmt.Errorf("API 返回失败状态码: %d, 响应: %s", resp.StatusCode, bodyStr)
 	}
 
 	var chatResponse ChatCompletionResponse

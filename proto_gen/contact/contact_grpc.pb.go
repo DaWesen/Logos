@@ -33,6 +33,7 @@ const (
 	ContactService_BlockUser_FullMethodName           = "/messaging.contact.ContactService/BlockUser"
 	ContactService_UnblockUser_FullMethodName         = "/messaging.contact.ContactService/UnblockUser"
 	ContactService_GetBlacklist_FullMethodName        = "/messaging.contact.ContactService/GetBlacklist"
+	ContactService_CheckFriendship_FullMethodName     = "/messaging.contact.ContactService/CheckFriendship"
 )
 
 // ContactServiceClient is the client API for ContactService service.
@@ -69,6 +70,8 @@ type ContactServiceClient interface {
 	UnblockUser(ctx context.Context, in *UnblockUserRequest, opts ...grpc.CallOption) (*UnblockUserResponse, error)
 	// 获取黑名单
 	GetBlacklist(ctx context.Context, in *GetBlacklistRequest, opts ...grpc.CallOption) (*GetBlacklistResponse, error)
+	// 检查好友关系
+	CheckFriendship(ctx context.Context, in *CheckFriendshipRequest, opts ...grpc.CallOption) (*CheckFriendshipResponse, error)
 }
 
 type contactServiceClient struct {
@@ -219,6 +222,16 @@ func (c *contactServiceClient) GetBlacklist(ctx context.Context, in *GetBlacklis
 	return out, nil
 }
 
+func (c *contactServiceClient) CheckFriendship(ctx context.Context, in *CheckFriendshipRequest, opts ...grpc.CallOption) (*CheckFriendshipResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckFriendshipResponse)
+	err := c.cc.Invoke(ctx, ContactService_CheckFriendship_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ContactServiceServer is the server API for ContactService service.
 // All implementations must embed UnimplementedContactServiceServer
 // for forward compatibility.
@@ -253,6 +266,8 @@ type ContactServiceServer interface {
 	UnblockUser(context.Context, *UnblockUserRequest) (*UnblockUserResponse, error)
 	// 获取黑名单
 	GetBlacklist(context.Context, *GetBlacklistRequest) (*GetBlacklistResponse, error)
+	// 检查好友关系
+	CheckFriendship(context.Context, *CheckFriendshipRequest) (*CheckFriendshipResponse, error)
 	mustEmbedUnimplementedContactServiceServer()
 }
 
@@ -304,6 +319,9 @@ func (UnimplementedContactServiceServer) UnblockUser(context.Context, *UnblockUs
 }
 func (UnimplementedContactServiceServer) GetBlacklist(context.Context, *GetBlacklistRequest) (*GetBlacklistResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBlacklist not implemented")
+}
+func (UnimplementedContactServiceServer) CheckFriendship(context.Context, *CheckFriendshipRequest) (*CheckFriendshipResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckFriendship not implemented")
 }
 func (UnimplementedContactServiceServer) mustEmbedUnimplementedContactServiceServer() {}
 func (UnimplementedContactServiceServer) testEmbeddedByValue()                        {}
@@ -578,6 +596,24 @@ func _ContactService_GetBlacklist_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ContactService_CheckFriendship_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckFriendshipRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ContactServiceServer).CheckFriendship(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ContactService_CheckFriendship_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ContactServiceServer).CheckFriendship(ctx, req.(*CheckFriendshipRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ContactService_ServiceDesc is the grpc.ServiceDesc for ContactService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -640,6 +676,10 @@ var ContactService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBlacklist",
 			Handler:    _ContactService_GetBlacklist_Handler,
+		},
+		{
+			MethodName: "CheckFriendship",
+			Handler:    _ContactService_CheckFriendship_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

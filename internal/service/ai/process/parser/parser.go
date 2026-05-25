@@ -41,6 +41,7 @@ func NewParserManagerWithOptions(vlmModel vlm.VLM, asrModel asr.ASR, videoExtrac
 
 func (pm *ParserManager) registerDefaultParsers(vlmModel vlm.VLM, asrModel asr.ASR, videoExtractor video.Extractor) {
 	parsers := []DocumentParser{
+		NewCrawlerParser(),
 		NewTextParser(),
 		NewImageParser(vlmModel),
 		NewAudioParser(asrModel),
@@ -75,4 +76,15 @@ func (pm *ParserManager) GetParser(fileType string) DocumentParser {
 func (pm *ParserManager) HasParser(fileType string) bool {
 	_, ok := pm.parsers[fileType]
 	return ok
+}
+
+func (pm *ParserManager) SetVLMModel(model vlm.VLM) {
+	for _, parser := range pm.parsers {
+		if imgParser, ok := parser.(*ImageParser); ok {
+			imgParser.SetVLMModel(model)
+		}
+		if vidParser, ok := parser.(*VideoParser); ok {
+			vidParser.SetVLMModel(model)
+		}
+	}
 }

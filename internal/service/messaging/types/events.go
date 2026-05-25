@@ -10,45 +10,72 @@ type EventType string
 const (
 	EventTypeMessage         EventType = "message"
 	EventTypeMessageRead     EventType = "message_read"
+	EventTypeMessageWithdraw EventType = "message_withdraw"
 	EventTypeTyping          EventType = "typing"
 	EventTypeUserOnline      EventType = "user_online"
 	EventTypeUserOffline     EventType = "user_offline"
 	EventTypeNotification    EventType = "notification"
-	EventTypeMessageWithdraw EventType = "message_withdraw"
-	EventTypeMessageEdit     EventType = "message_edit"
-	EventTypeGroupInvite     EventType = "group_invite"
-	EventTypeGroupKick       EventType = "group_kick"
 )
 
 type MessageEvent struct {
 	ID             string                 `json:"id"`
+	EventType      EventType              `json:"event_type"`
 	ChatID         string                 `json:"chat_id"`
 	ChatType       ChatType               `json:"chat_type"`
 	SenderID       string                 `json:"sender_id"`
+	SenderName     string                 `json:"sender_name,omitempty"`
+	SenderAvatar   string                 `json:"sender_avatar,omitempty"`
 	MessageType    MessageType            `json:"message_type"`
 	Content        string                 `json:"content"`
+	MediaURL       string                 `json:"media_url,omitempty"`
+	MediaMeta      json.RawMessage        `json:"media_meta,omitempty"`
 	Metadata       map[string]string      `json:"metadata,omitempty"`
 	Timestamp      time.Time              `json:"timestamp"`
 	ReplyToMessage string                 `json:"reply_to_message,omitempty"`
 	MentionUserIDs []string               `json:"mention_user_ids,omitempty"`
 	Extra          map[string]interface{} `json:"extra,omitempty"`
-	RecipientIDs   []string               `json:"recipient_ids,omitempty"` // 接收者列表
+	RecipientIDs   []string               `json:"recipient_ids,omitempty"`
 }
 
 type MessageReadEvent struct {
+	EventType    EventType `json:"event_type"`
 	MessageIDs   []string  `json:"message_ids"`
 	ReaderID     string    `json:"reader_id"`
 	ChatID       string    `json:"chat_id"`
 	ChatType     ChatType  `json:"chat_type,omitempty"`
-	RecipientIDs []string  `json:"recipient_ids,omitempty"` // 应该接收已读回执的用户列表
+	RecipientIDs []string  `json:"recipient_ids,omitempty"`
 	Timestamp    time.Time `json:"timestamp"`
 }
 
+type MessageWithdrawEvent struct {
+	EventType    EventType `json:"event_type"`
+	MessageID    string    `json:"message_id"`
+	ChatID       string    `json:"chat_id"`
+	ChatType     ChatType  `json:"chat_type"`
+	SenderID     string    `json:"sender_id"`
+	RecipientIDs []string  `json:"recipient_ids,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
+func (e *MessageWithdrawEvent) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+func MessageWithdrawEventFromJSON(data []byte) (*MessageWithdrawEvent, error) {
+	var e MessageWithdrawEvent
+	err := json.Unmarshal(data, &e)
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
 type TypingEvent struct {
+	EventType    EventType `json:"event_type"`
 	UserID       string    `json:"user_id"`
 	ChatID       string    `json:"chat_id"`
 	IsTyping     bool      `json:"is_typing"`
-	RecipientIDs []string  `json:"recipient_ids,omitempty"` // 应该接收输入状态的用户列表
+	RecipientIDs []string  `json:"recipient_ids,omitempty"`
 	Timestamp    time.Time `json:"timestamp"`
 }
 
@@ -63,6 +90,16 @@ func TypingEventFromJSON(data []byte) (*TypingEvent, error) {
 		return nil, err
 	}
 	return &e, nil
+}
+
+func DetectEventType(data []byte) EventType {
+	var partial struct {
+		EventType EventType `json:"event_type"`
+	}
+	if err := json.Unmarshal(data, &partial); err != nil {
+		return ""
+	}
+	return partial.EventType
 }
 
 type UserPresenceEvent struct {
@@ -82,29 +119,6 @@ type NotificationEvent struct {
 	Timestamp time.Time         `json:"timestamp"`
 }
 
-type MessageEditEvent struct {
-	MessageID string    `json:"message_id"`
-	EditorID  string    `json:"editor_id"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type MessageWithdrawEvent struct {
-	MessageID  string    `json:"message_id"`
-	WithdrawID string    `json:"withdraw_id"`
-	ChatID     string    `json:"chat_id"`
-	Timestamp  time.Time `json:"timestamp"`
-}
-
-type GroupEvent struct {
-	Type       string            `json:"type"`
-	GroupID    string            `json:"group_id"`
-	UserID     string            `json:"user_id"`
-	OperatorID string            `json:"operator_id"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
-	Timestamp  time.Time         `json:"timestamp"`
-}
-
 func NewMessageEvent(
 	id, chatID string,
 	chatType ChatType,
@@ -117,12 +131,44 @@ func NewMessageEvent(
 	recipientIDs []string,
 ) *MessageEvent {
 	return &MessageEvent{
+		EventType:      EventTypeMessage,
 		ID:             id,
 		ChatID:         chatID,
 		ChatType:       chatType,
 		SenderID:       senderID,
 		MessageType:    messageType,
 		Content:        content,
+		Metadata:       metadata,
+		Timestamp:      time.Now(),
+		ReplyToMessage: replyTo,
+		MentionUserIDs: mentionUserIDs,
+		RecipientIDs:   recipientIDs,
+	}
+}
+
+func NewMediaMessageEvent(
+	id, chatID string,
+	chatType ChatType,
+	senderID string,
+	messageType MessageType,
+	content string,
+	mediaURL string,
+	mediaMeta json.RawMessage,
+	metadata map[string]string,
+	replyTo string,
+	mentionUserIDs []string,
+	recipientIDs []string,
+) *MessageEvent {
+	return &MessageEvent{
+		EventType:      EventTypeMessage,
+		ID:             id,
+		ChatID:         chatID,
+		ChatType:       chatType,
+		SenderID:       senderID,
+		MessageType:    messageType,
+		Content:        content,
+		MediaURL:       mediaURL,
+		MediaMeta:      mediaMeta,
 		Metadata:       metadata,
 		Timestamp:      time.Now(),
 		ReplyToMessage: replyTo,

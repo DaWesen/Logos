@@ -55,6 +55,19 @@ func (c *ModerationClient) Close() error {
 	return nil
 }
 
+func (c *ModerationClient) Translate(ctx context.Context, content, sourceLang, targetLang, contentID string) (string, error) {
+	resp, err := c.client.Translate(ctx, &pb.TranslateRequest{
+		Content:    content,
+		SourceLang: sourceLang,
+		TargetLang: targetLang,
+		ContentId:  contentID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.GetTranslatedContent(), nil
+}
+
 type ModerationResult struct {
 	Code        int32
 	Message     string

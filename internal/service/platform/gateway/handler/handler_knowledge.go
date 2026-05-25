@@ -36,7 +36,7 @@ func (h *Handler) AddEntity(c *gin.Context) {
 
 func (h *Handler) UpdateEntity(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.UpdateEntityReq
@@ -58,7 +58,7 @@ func (h *Handler) UpdateEntity(c *gin.Context) {
 
 func (h *Handler) DeleteEntity(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	id := c.Param("id")
@@ -77,7 +77,7 @@ func (h *Handler) DeleteEntity(c *gin.Context) {
 
 func (h *Handler) GetEntity(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	id := c.Param("id")
@@ -95,15 +95,17 @@ func (h *Handler) GetEntity(c *gin.Context) {
 
 func (h *Handler) QueryEntities(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
+	pageSize, _ := strconv.Atoi(pageSizeStr)
 
 	req := &pb.QueryEntityReq{
-		Page:     int32(page),
-		PageSize: int32(pageSize),
+		Page:         int32(page),
+		PageSize:     int32(pageSize),
+		CollectionId: c.Query("collectionId"),
 	}
 	if entityType := c.Query("type"); entityType != "" {
 		req.Type = &entityType
@@ -126,17 +128,19 @@ func (h *Handler) QueryEntities(c *gin.Context) {
 
 func (h *Handler) SearchEntities(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	keyword := c.Query("keyword")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
+	pageSize, _ := strconv.Atoi(pageSizeStr)
 
 	req := &pb.SearchEntityReq{
-		Keyword:  keyword,
-		Page:     int32(page),
-		PageSize: int32(pageSize),
+		Keyword:      keyword,
+		Page:         int32(page),
+		PageSize:     int32(pageSize),
+		CollectionId: c.Query("collectionId"),
 	}
 	if entityType := c.Query("type"); entityType != "" {
 		req.Type = &entityType
@@ -156,7 +160,7 @@ func (h *Handler) SearchEntities(c *gin.Context) {
 
 func (h *Handler) AddRelation(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.AddRelationReq
@@ -178,7 +182,7 @@ func (h *Handler) AddRelation(c *gin.Context) {
 
 func (h *Handler) UpdateRelation(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.UpdateRelationReq
@@ -200,7 +204,7 @@ func (h *Handler) UpdateRelation(c *gin.Context) {
 
 func (h *Handler) DeleteRelation(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	id := c.Param("id")
@@ -219,7 +223,7 @@ func (h *Handler) DeleteRelation(c *gin.Context) {
 
 func (h *Handler) GetRelation(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	id := c.Param("id")
@@ -237,15 +241,17 @@ func (h *Handler) GetRelation(c *gin.Context) {
 
 func (h *Handler) QueryRelations(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
+	pageSize, _ := strconv.Atoi(pageSizeStr)
 
 	req := &pb.QueryRelationReq{
-		Page:     int32(page),
-		PageSize: int32(pageSize),
+		Page:         int32(page),
+		PageSize:     int32(pageSize),
+		CollectionId: c.Query("collectionId"),
 	}
 	if relType := c.Query("type"); relType != "" {
 		req.Type = &relType
@@ -271,10 +277,13 @@ func (h *Handler) QueryRelations(c *gin.Context) {
 
 func (h *Handler) GetGraphStats(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.KnowledgeClient.GetGraphStats(context.Background(), &pb.EmptyReq{})
+	req := &pb.EmptyReq{
+		CollectionId: c.Query("collectionId"),
+	}
+	resp, err := h.KnowledgeClient.GetGraphStats(context.Background(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -284,16 +293,16 @@ func (h *Handler) GetGraphStats(c *gin.Context) {
 		statusCode = int(resp.BaseResp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
-		"entityCount":       resp.EntityCount,
-		"relationCount":     resp.RelationCount,
-		"entityTypeCount":   resp.EntityTypeCount,
-		"relationTypeCount": resp.RelationTypeCount,
+		"entity_count":        resp.EntityCount,
+		"relation_count":      resp.RelationCount,
+		"entity_type_count":   resp.EntityTypeCount,
+		"relation_type_count": resp.RelationTypeCount,
 	}})
 }
 
 func (h *Handler) GetRelatedEntities(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	entityID := c.Param("entityId")
@@ -318,7 +327,7 @@ func (h *Handler) GetRelatedEntities(c *gin.Context) {
 
 func (h *Handler) ImportData(c *gin.Context) {
 	if h.KnowledgeClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "֪ʶ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.ImportDataReq
@@ -336,4 +345,121 @@ func (h *Handler) ImportData(c *gin.Context) {
 		statusCode = int(resp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: nil})
+}
+
+func (h *Handler) GetSubgraph(c *gin.Context) {
+	if h.KnowledgeClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
+		return
+	}
+	entityID := c.Param("id")
+	depth, _ := strconv.Atoi(c.DefaultQuery("depth", "2"))
+	collectionID := c.Query("collectionId")
+
+	req := &pb.GetSubgraphReq{
+		EntityId:     entityID,
+		Depth:        int32(depth),
+		CollectionId: collectionID,
+	}
+
+	resp, err := h.KnowledgeClient.GetSubgraph(context.Background(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	statusCode := 200
+	if resp.BaseResp != nil {
+		statusCode = int(resp.BaseResp.StatusCode)
+	}
+	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
+		"nodes":     resp.Nodes,
+		"edges":     resp.Edges,
+		"nodeCount": resp.NodeCount,
+		"edgeCount": resp.EdgeCount,
+	}})
+}
+
+func (h *Handler) ClearEntities(c *gin.Context) {
+	if h.KnowledgeClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
+		return
+	}
+
+	collectionID := c.Query("collectionId")
+
+	page := int32(1)
+	pageSize := int32(200)
+	var deletedCount int
+
+	for {
+		req := &pb.QueryEntityReq{
+			Page:         page,
+			PageSize:     pageSize,
+			CollectionId: collectionID,
+		}
+
+		resp, err := h.KnowledgeClient.QueryEntities(context.Background(), req)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+			return
+		}
+		if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
+			c.JSON(int(resp.BaseResp.StatusCode), model.Error(int(resp.BaseResp.StatusCode), resp.BaseResp.StatusMessage))
+			return
+		}
+
+		if len(resp.Entities) == 0 {
+			break
+		}
+
+		for _, entity := range resp.Entities {
+			delResp, delErr := h.KnowledgeClient.DeleteEntity(context.Background(), &pb.DeleteEntityReq{Id: entity.Id})
+			if delErr != nil {
+				continue
+			}
+			if delResp != nil && delResp.StatusCode == 0 {
+				deletedCount++
+			}
+		}
+
+		if int32(len(resp.Entities)) < pageSize {
+			break
+		}
+	}
+
+	c.JSON(http.StatusOK, model.Success(gin.H{"deleted_count": deletedCount}))
+}
+
+func (h *Handler) GetEntityPaths(c *gin.Context) {
+	if h.KnowledgeClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
+		return
+	}
+	sourceID := c.Query("sourceId")
+	targetID := c.Query("targetId")
+	maxDepth, _ := strconv.Atoi(c.DefaultQuery("maxDepth", "4"))
+	collectionID := c.Query("collectionId")
+
+	if sourceID == "" || targetID == "" {
+		c.JSON(http.StatusBadRequest, model.BadRequest("sourceId and targetId are required"))
+		return
+	}
+
+	req := &pb.GetEntityPathsReq{
+		SourceId:     sourceID,
+		TargetId:     targetID,
+		MaxDepth:     int32(maxDepth),
+		CollectionId: collectionID,
+	}
+
+	resp, err := h.KnowledgeClient.GetEntityPaths(context.Background(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	statusCode := 200
+	if resp.BaseResp != nil {
+		statusCode = int(resp.BaseResp.StatusCode)
+	}
+	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Paths})
 }

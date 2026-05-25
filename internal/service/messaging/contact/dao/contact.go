@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"math/big"
+	"strconv"
 	"time"
 
 	"Logos/internal/service/messaging/contact/model"
@@ -11,6 +12,14 @@ import (
 
 	"gorm.io/gorm"
 )
+
+func toInt64(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 type ContactRepository interface {
 	CreateFriendRequest(ctx context.Context, request *model.FriendRequest) error
@@ -45,9 +54,6 @@ func NewContactRepository(db *gorm.DB) ContactRepository {
 }
 
 func (r *contactRepositoryImpl) CreateFriendRequest(ctx context.Context, request *model.FriendRequest) error {
-	now := time.Now().UnixMilli()
-	request.CreatedAt = now
-	request.UpdatedAt = now
 	return r.db.WithContext(ctx).Create(request).Error
 }
 
@@ -64,7 +70,7 @@ func (r *contactRepositoryImpl) GetPendingFriendRequests(ctx context.Context, to
 	var requests []*model.FriendRequest
 	var total int64
 	query := r.db.WithContext(ctx).Model(&model.FriendRequest{}).
-		Where("to_user_id = ? AND status = ?", toUserID, model.FriendRequestStatusPending)
+		Where("to_user_id = ? AND status = ?", toInt64(toUserID), model.FriendRequestStatusPending)
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -77,7 +83,7 @@ func (r *contactRepositoryImpl) GetPendingFriendRequests(ctx context.Context, to
 }
 
 func (r *contactRepositoryImpl) UpdateFriendRequestStatus(ctx context.Context, id string, status model.FriendRequestStatus) error {
-	now := time.Now().UnixMilli()
+	now := time.Now()
 	return r.db.WithContext(ctx).Model(&model.FriendRequest{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
@@ -88,17 +94,14 @@ func (r *contactRepositoryImpl) UpdateFriendRequestStatus(ctx context.Context, i
 }
 
 func (r *contactRepositoryImpl) CreateFriendship(ctx context.Context, friendship *model.Friendship) error {
-	now := time.Now().UnixMilli()
-	friendship.CreatedAt = now
-	friendship.UpdatedAt = now
 	return r.db.WithContext(ctx).Create(friendship).Error
 }
 
 func (r *contactRepositoryImpl) GetFriendship(ctx context.Context, userID, friendID string) (*model.Friendship, error) {
 	var friendship model.Friendship
 	err := r.db.WithContext(ctx).First(&friendship,
-		"user_id = ? AND friend_id = ? AND status = ?",
-		userID, friendID, model.FriendshipStatusAccepted).Error
+		"user_id = ? AND friend_id = ?",
+		toInt64(userID), toInt64(friendID)).Error
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,7 @@ func (r *contactRepositoryImpl) GetFriends(ctx context.Context, userID string, g
 	var friendships []*model.Friendship
 	var total int64
 	query := r.db.WithContext(ctx).Model(&model.Friendship{}).
-		Where("user_id = ? AND status = ?", userID, model.FriendshipStatusAccepted)
+		Where("user_id = ? AND status = ?", toInt64(userID), model.FriendshipStatusAccepted)
 	if groupID != "" {
 		query = query.Where("group_id = ?", groupID)
 	}
@@ -125,45 +128,41 @@ func (r *contactRepositoryImpl) GetFriends(ctx context.Context, userID string, g
 }
 
 func (r *contactRepositoryImpl) UpdateFriendRemark(ctx context.Context, userID, friendID, remark string) error {
-	now := time.Now().UnixMilli()
 	return r.db.WithContext(ctx).Model(&model.Friendship{}).
-		Where("user_id = ? AND friend_id = ?", userID, friendID).
+		Where("user_id = ? AND friend_id = ?", toInt64(userID), toInt64(friendID)).
 		Updates(map[string]interface{}{
-			"remark":     remark,
-			"updated_at": now,
+			"remark": remark,
 		}).Error
 }
 
 func (r *contactRepositoryImpl) DeleteFriendship(ctx context.Context, userID, friendID string) error {
-	return r.db.WithContext(ctx).Where("user_id = ? AND friend_id = ?", userID, friendID).
+	return r.db.WithContext(ctx).Where("user_id = ? AND friend_id = ?", toInt64(userID), toInt64(friendID)).
 		Delete(&model.Friendship{}).Error
 }
 
 func (r *contactRepositoryImpl) BlockUser(ctx context.Context, userID, blockUserID string) error {
-	now := time.Now().UnixMilli()
+	uid := toInt64(userID)
+	bid := toInt64(blockUserID)
 	var existing model.Friendship
-	err := r.db.WithContext(ctx).First(&existing, "user_id = ? AND friend_id = ?", userID, blockUserID).Error
+	err := r.db.WithContext(ctx).First(&existing, "user_id = ? AND friend_id = ?", uid, bid).Error
 	if err == nil {
 		return r.db.WithContext(ctx).Model(&existing).
 			Updates(map[string]interface{}{
-				"status":     model.FriendshipStatusBlocked,
-				"updated_at": now,
+				"status": model.FriendshipStatusBlocked,
 			}).Error
 	}
 	friendship := &model.Friendship{
-		ID:        generateID(),
-		UserID:    userID,
-		FriendID:  blockUserID,
-		Status:    model.FriendshipStatusBlocked,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:       generateID(),
+		UserID:   uid,
+		FriendID: bid,
+		Status:   model.FriendshipStatusBlocked,
 	}
 	return r.db.WithContext(ctx).Create(friendship).Error
 }
 
 func (r *contactRepositoryImpl) UnblockUser(ctx context.Context, userID, unblockUserID string) error {
 	return r.db.WithContext(ctx).Where("user_id = ? AND friend_id = ? AND status = ?",
-		userID, unblockUserID, model.FriendshipStatusBlocked).
+		toInt64(userID), toInt64(unblockUserID), model.FriendshipStatusBlocked).
 		Delete(&model.Friendship{}).Error
 }
 
@@ -172,7 +171,7 @@ func (r *contactRepositoryImpl) GetBlacklist(ctx context.Context, userID string,
 	var total int64
 	offset := (page - 1) * pageSize
 
-	db := r.db.WithContext(ctx).Model(&model.Friendship{}).Where("user_id = ? AND status = ?", userID, model.FriendshipStatusBlocked)
+	db := r.db.WithContext(ctx).Model(&model.Friendship{}).Where("user_id = ? AND status = ?", toInt64(userID), model.FriendshipStatusBlocked)
 	if err := db.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -183,15 +182,12 @@ func (r *contactRepositoryImpl) GetBlacklist(ctx context.Context, userID string,
 }
 
 func (r *contactRepositoryImpl) CreateFriendGroup(ctx context.Context, group *model.FriendGroup) error {
-	now := time.Now().UnixMilli()
-	group.CreatedAt = now
-	group.UpdatedAt = now
 	return r.db.WithContext(ctx).Create(group).Error
 }
 
 func (r *contactRepositoryImpl) GetFriendGroups(ctx context.Context, userID string) ([]*model.FriendGroup, error) {
 	var groups []*model.FriendGroup
-	err := r.db.WithContext(ctx).Where("user_id = ?", userID).
+	err := r.db.WithContext(ctx).Where("user_id = ?", toInt64(userID)).
 		Order("sort ASC, created_at ASC").
 		Find(&groups).Error
 	return groups, err
@@ -199,7 +195,7 @@ func (r *contactRepositoryImpl) GetFriendGroups(ctx context.Context, userID stri
 
 func (r *contactRepositoryImpl) GetFriendGroupByID(ctx context.Context, userID, groupID string) (*model.FriendGroup, error) {
 	var group model.FriendGroup
-	err := r.db.WithContext(ctx).First(&group, "id = ? AND user_id = ?", groupID, userID).Error
+	err := r.db.WithContext(ctx).First(&group, "id = ? AND user_id = ?", groupID, toInt64(userID)).Error
 	if err != nil {
 		return nil, err
 	}
@@ -207,10 +203,7 @@ func (r *contactRepositoryImpl) GetFriendGroupByID(ctx context.Context, userID, 
 }
 
 func (r *contactRepositoryImpl) UpdateFriendGroup(ctx context.Context, userID, groupID, name string, sort int) error {
-	now := time.Now().UnixMilli()
-	updates := map[string]interface{}{
-		"updated_at": now,
-	}
+	updates := map[string]interface{}{}
 	if name != "" {
 		updates["name"] = name
 	}
@@ -218,45 +211,46 @@ func (r *contactRepositoryImpl) UpdateFriendGroup(ctx context.Context, userID, g
 		updates["sort"] = sort
 	}
 	return r.db.WithContext(ctx).Model(&model.FriendGroup{}).
-		Where("id = ? AND user_id = ?", groupID, userID).
+		Where("id = ? AND user_id = ?", groupID, toInt64(userID)).
 		Updates(updates).Error
 }
 
 func (r *contactRepositoryImpl) DeleteFriendGroup(ctx context.Context, userID, groupID string) error {
+	uid := toInt64(userID)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("group_id = ? AND user_id = ?", groupID, userID).
+		if err := tx.Where("group_id = ? AND user_id = ?", groupID, uid).
 			Delete(&model.FriendGroupMember{}).Error; err != nil {
 			logger.Error("删除分组成员失败", logger.ErrorField(err))
 		}
 		if err := tx.Model(&model.Friendship{}).
-			Where("user_id = ? AND group_id = ?", userID, groupID).
+			Where("user_id = ? AND group_id = ?", uid, groupID).
 			Update("group_id", "").Error; err != nil {
 			logger.Error("更新好友group_id失败", logger.ErrorField(err))
 		}
-		return tx.Where("id = ? AND user_id = ?", groupID, userID).
+		return tx.Where("id = ? AND user_id = ?", groupID, uid).
 			Delete(&model.FriendGroup{}).Error
 	})
 }
 
 func (r *contactRepositoryImpl) MoveFriendToGroup(ctx context.Context, userID, friendID, groupID string) error {
-	now := time.Now().UnixMilli()
+	uid := toInt64(userID)
+	fid := toInt64(friendID)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.Friendship{}).
-			Where("user_id = ? AND friend_id = ?", userID, friendID).
+			Where("user_id = ? AND friend_id = ?", uid, fid).
 			Update("group_id", groupID).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("user_id = ? AND friend_id = ?", userID, friendID).
+		if err := tx.Where("user_id = ? AND friend_id = ?", uid, fid).
 			Delete(&model.FriendGroupMember{}).Error; err != nil {
 			logger.Warn("删除旧分组成员失败", logger.ErrorField(err))
 		}
 		if groupID != "" {
 			member := &model.FriendGroupMember{
-				ID:        generateID(),
-				UserID:    userID,
-				FriendID:  friendID,
-				GroupID:   groupID,
-				CreatedAt: now,
+				ID:       generateID(),
+				UserID:   uid,
+				FriendID: fid,
+				GroupID:  groupID,
 			}
 			return tx.Create(member).Error
 		}

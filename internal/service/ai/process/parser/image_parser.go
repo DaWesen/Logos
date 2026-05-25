@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"Logos/internal/models/vlm"
+	"Logos/pkg/logger"
 )
 
 const (
@@ -18,7 +19,7 @@ const (
 		"5. 只输出提取的文本内容，不要添加任何HTML标签\n" +
 		"如果图片中没有可识别的文字内容，回复：No text content."
 
-	vlmCaptionPrompt = "用简洁的语言描述这张图片的主要内容"
+	vlmCaptionPrompt = "请详细描述这张图片的内容，包括角色特征、服饰、场景、色彩、动作等细节信息"
 )
 
 type ImageParser struct {
@@ -29,6 +30,10 @@ func NewImageParser(vlmModel vlm.VLM) *ImageParser {
 	return &ImageParser{
 		vlmModel: vlmModel,
 	}
+}
+
+func (p *ImageParser) SetVLMModel(model vlm.VLM) {
+	p.vlmModel = model
 }
 
 func (p *ImageParser) Parse(ctx context.Context, reader io.Reader, filename string) (string, map[string]interface{}, error) {
@@ -50,7 +55,9 @@ func (p *ImageParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	var hasOCR, hasCaption bool
 
 	ocrResult, ocrErr := p.vlmModel.Predict(ctx, imageData, vlmOCRPrompt)
-	if ocrErr == nil {
+	if ocrErr != nil {
+		logger.Warn("VLM OCR调用失败", logger.ErrorField(ocrErr))
+	} else {
 		ocrText = sanitizeOCRText(ocrResult)
 		if ocrText != "" {
 			hasOCR = true
@@ -59,7 +66,9 @@ func (p *ImageParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	}
 
 	captionResult, capErr := p.vlmModel.Predict(ctx, imageData, vlmCaptionPrompt)
-	if capErr == nil {
+	if capErr != nil {
+		logger.Warn("VLM Caption调用失败", logger.ErrorField(capErr))
+	} else {
 		caption = captionResult
 		if caption != "" {
 			hasCaption = true

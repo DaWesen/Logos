@@ -68,8 +68,11 @@ func InitProducer(brokers []string) (*Producer, error) {
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(brokers...),
 			Balancer:     &kafka.LeastBytes{},
-			WriteTimeout: 10 * time.Second,
-			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			ReadTimeout:  5 * time.Second,
+			RequiredAcks: kafka.RequireOne, // 只需要leader确认就返回，更快
+			BatchSize:    1,                // 每条消息立即发送，不批量
+			BatchTimeout: 1 * time.Millisecond,
 		},
 	}
 	return producer, nil
@@ -82,9 +85,9 @@ func NewConsumer(topic string, groupID string) *Consumer {
 			Brokers:         kafkaConfig.Brokers,
 			Topic:           topic,
 			GroupID:         groupID,
-			MinBytes:        10e3,
+			MinBytes:        1, // 只要有1字节就返回
 			MaxBytes:        10e6,
-			MaxWait:         10 * time.Second,
+			MaxWait:         100 * time.Millisecond, // 最多等100ms
 			ReadLagInterval: time.Second,
 		}),
 	}
@@ -119,6 +122,7 @@ const (
 	TopicSystemEvent         = "system_event"
 	TopicIM                  = "im_messages"
 	TopicChat                = "chat_messages"
+	TopicChatOutgoing        = "chat_outgoing"
 	TopicNotification        = "notifications"
 	TopicDocumentProcessed   = "document_processed"
 )
@@ -206,6 +210,10 @@ func (p *Producer) SendChatEvent(ctx context.Context, key string, value []byte) 
 	return p.Send(ctx, topic, key, value)
 }
 
+func (p *Producer) SendChatOutgoingEvent(ctx context.Context, key string, value []byte) error {
+	return p.Send(ctx, TopicChatOutgoing, key, value)
+}
+
 func (p *Producer) SendNotification(ctx context.Context, key string, value []byte) error {
 	cfg := config.GetConfig()
 	topic := cfg.Kafka.Topics["notifications"]
@@ -248,17 +256,31 @@ func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error 
 	}
 
 	go func() {
+		defer func() {
+			// 确保退出时关闭读取器
+			_ = c.Close()
+		}()
 		for {
 			select {
 			case <-ctx.Done():
+				// 上下文已取消，优雅退出
 				return
 			default:
 				msg, err := c.Receive(ctx)
 				if err != nil {
-					if ctx.Err() != nil {
+					// 检查是否是上下文取消或连接关闭错误
+					select {
+					case <-ctx.Done():
 						return
+					default:
 					}
-					logger.Warn("接收消息失败", logger.ErrorField(err))
+					// 如果是 EOF 或连接关闭错误，就不记录警告日志
+					if err.Error() != "读取消息失败: fetching message: EOF" &&
+						err.Error() != "读取消息失败: read tcp: read: connection reset by peer" {
+						logger.Warn("接收消息失败", logger.ErrorField(err))
+					}
+					// 如果是严重错误，稍等一下再重试，避免死循环
+					time.Sleep(100 * time.Millisecond)
 					continue
 				}
 				if err := handler(msg); err != nil {
@@ -316,12 +338,22 @@ func CreateTopics(ctx context.Context) error {
 			ReplicationFactor: 1,
 		},
 		{
+			Topic:             "chat_outgoing",
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
 			Topic:             "notifications",
 			NumPartitions:     3,
 			ReplicationFactor: 1,
 		},
 		{
 			Topic:             TopicDocumentProcessed,
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+		{
+			Topic:             "bot_events",
 			NumPartitions:     3,
 			ReplicationFactor: 1,
 		},

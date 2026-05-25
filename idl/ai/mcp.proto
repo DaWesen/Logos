@@ -124,6 +124,112 @@ message DeleteToolResponse {
   string message = 2;
 }
 
+// MCP 外部服务
+message MCPServiceInfo {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  bool enabled = 4;
+  string transport_type = 5;
+  string url = 6;
+  map<string, string> headers = 7;
+  map<string, string> auth_config = 8;
+  map<string, string> advanced_config = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+// 创建MCP服务请求
+message CreateMCPServiceRequest {
+  string name = 1;
+  string description = 2;
+  string transport_type = 3;
+  string url = 4;
+  map<string, string> headers = 5;
+  map<string, string> auth_config = 6;
+  map<string, string> advanced_config = 7;
+  bool enabled = 8;
+}
+
+// 创建MCP服务响应
+message CreateMCPServiceResponse {
+  int32 code = 1;
+  string message = 2;
+  MCPServiceInfo data = 3;
+}
+
+// 获取MCP服务请求
+message GetMCPServiceRequest {
+  string service_id = 1;
+}
+
+// 获取MCP服务响应
+message GetMCPServiceResponse {
+  int32 code = 1;
+  string message = 2;
+  MCPServiceInfo data = 3;
+}
+
+// 获取MCP服务列表请求
+message ListMCPServicesRequest {
+  bool enabled_only = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// 获取MCP服务列表响应
+message ListMCPServicesResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated MCPServiceInfo services = 3;
+  int32 total = 4;
+}
+
+// 更新MCP服务请求
+message UpdateMCPServiceRequest {
+  string service_id = 1;
+  string name = 2;
+  string description = 3;
+  string transport_type = 4;
+  string url = 5;
+  map<string, string> headers = 6;
+  map<string, string> auth_config = 7;
+  map<string, string> advanced_config = 8;
+  bool enabled = 9;
+}
+
+// 更新MCP服务响应
+message UpdateMCPServiceResponse {
+  int32 code = 1;
+  string message = 2;
+  MCPServiceInfo data = 3;
+}
+
+// 删除MCP服务请求
+message DeleteMCPServiceRequest {
+  string service_id = 1;
+}
+
+// 删除MCP服务响应
+message DeleteMCPServiceResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 测试MCP服务连接请求
+message TestMCPServiceRequest {
+  string url = 1;
+  string transport_type = 2;
+  map<string, string> headers = 3;
+  map<string, string> auth_config = 4;
+}
+
+// 测试MCP服务连接响应
+message TestMCPServiceResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
 // MCP 服务
 service MCPService {
   // 调用工具
@@ -143,4 +249,22 @@ service MCPService {
   
   // 删除工具
   rpc DeleteTool(DeleteToolRequest) returns (DeleteToolResponse);
+  
+  // 创建MCP服务
+  rpc CreateMCPService(CreateMCPServiceRequest) returns (CreateMCPServiceResponse);
+  
+  // 获取MCP服务
+  rpc GetMCPService(GetMCPServiceRequest) returns (GetMCPServiceResponse);
+  
+  // 获取MCP服务列表
+  rpc ListMCPServices(ListMCPServicesRequest) returns (ListMCPServicesResponse);
+  
+  // 更新MCP服务
+  rpc UpdateMCPService(UpdateMCPServiceRequest) returns (UpdateMCPServiceResponse);
+  
+  // 删除MCP服务
+  rpc DeleteMCPService(DeleteMCPServiceRequest) returns (DeleteMCPServiceResponse);
+  
+  // 测试MCP服务连接
+  rpc TestMCPService(TestMCPServiceRequest) returns (TestMCPServiceResponse);
 }

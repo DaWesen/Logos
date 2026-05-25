@@ -11,7 +11,6 @@ import (
 	pb "Logos/proto_gen/knowledge"
 )
 
-// KnowledgeServiceImpl implements the KnowledgeService interface.
 type KnowledgeServiceImpl struct {
 	pb.UnimplementedKnowledgeServiceServer
 	KnowledgeService service.KnowledgeService
@@ -22,12 +21,14 @@ func convertModelEntityToProtoEntity(me *model.Entity) *pb.Entity {
 		return nil
 	}
 	te := &pb.Entity{
-		Id:         me.ID,
-		Type:       me.Type,
-		Name:       me.Name,
-		Properties: map[string]string(me.Properties),
-		CreatedAt:  me.CreatedAt.Unix(),
-		UpdatedAt:  me.UpdatedAt.Unix(),
+		Id:           me.ID,
+		Type:         me.Type,
+		Name:         me.Name,
+		Properties:   map[string]string(me.Properties),
+		CreatedAt:    me.CreatedAt.Unix(),
+		UpdatedAt:    me.UpdatedAt.Unix(),
+		CollectionId: me.CollectionID,
+		Color:        me.Color,
 	}
 	if me.Description != nil {
 		te.Description = me.Description
@@ -40,13 +41,14 @@ func convertModelRelationToProtoRelation(mr *model.Relation) *pb.Relation {
 		return nil
 	}
 	tr := &pb.Relation{
-		Id:         mr.ID,
-		Type:       mr.Type,
-		SourceId:   mr.SourceID,
-		TargetId:   mr.TargetID,
-		Properties: map[string]string(mr.Properties),
-		CreatedAt:  mr.CreatedAt.Unix(),
-		UpdatedAt:  mr.UpdatedAt.Unix(),
+		Id:           mr.ID,
+		Type:         mr.Type,
+		SourceId:     mr.SourceID,
+		TargetId:     mr.TargetID,
+		Properties:   map[string]string(mr.Properties),
+		CreatedAt:    mr.CreatedAt.Unix(),
+		UpdatedAt:    mr.UpdatedAt.Unix(),
+		CollectionId: mr.CollectionID,
 	}
 	if mr.Description != nil {
 		tr.Description = mr.Description
@@ -70,11 +72,10 @@ func buildErrorBaseResp(message string) *pbCommon.BaseResp {
 	}
 }
 
-// AddEntity implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) AddEntity(ctx context.Context, req *pb.AddEntityReq) (*pb.EntityResp, error) {
 	resp := &pb.EntityResp{}
 
-	entity, err := s.KnowledgeService.AddEntity(ctx, req.Type, req.Name, req.Properties, req.Description)
+	entity, err := s.KnowledgeService.AddEntity(ctx, req.Type, req.Name, req.CollectionId, req.Properties, req.Description, req.Color)
 	if err != nil {
 		logger.Error("添加实体失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -86,7 +87,21 @@ func (s *KnowledgeServiceImpl) AddEntity(ctx context.Context, req *pb.AddEntityR
 	return resp, nil
 }
 
-// UpdateEntity implements the KnowledgeServiceImpl interface.
+func (s *KnowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, req *pb.AddEntityReq) (*pb.EntityResp, error) {
+	resp := &pb.EntityResp{}
+
+	entity, err := s.KnowledgeService.FindOrCreateEntity(ctx, req.Type, req.Name, req.CollectionId, req.Properties, req.Description, req.Color)
+	if err != nil {
+		logger.Error("查找或创建实体失败", logger.ErrorField(err))
+		resp.BaseResp = buildErrorBaseResp(err.Error())
+		return resp, nil
+	}
+
+	resp.BaseResp = buildSuccessBaseResp()
+	resp.Entity = convertModelEntityToProtoEntity(entity)
+	return resp, nil
+}
+
 func (s *KnowledgeServiceImpl) UpdateEntity(ctx context.Context, req *pb.UpdateEntityReq) (*pb.EntityResp, error) {
 	resp := &pb.EntityResp{}
 
@@ -104,10 +119,10 @@ func (s *KnowledgeServiceImpl) UpdateEntity(ctx context.Context, req *pb.UpdateE
 	}
 	var description *string
 	if req.Description != nil {
-		description = req.Description
+		description = strPtr(*req.Description)
 	}
 
-	entity, err := s.KnowledgeService.UpdateEntity(ctx, req.Id, entityType, name, properties, description)
+	entity, err := s.KnowledgeService.UpdateEntity(ctx, req.Id, entityType, name, req.CollectionId, properties, description, req.Color)
 	if err != nil {
 		logger.Error("更新实体失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -119,7 +134,8 @@ func (s *KnowledgeServiceImpl) UpdateEntity(ctx context.Context, req *pb.UpdateE
 	return resp, nil
 }
 
-// DeleteEntity implements the KnowledgeServiceImpl interface.
+func strPtr(s string) *string { return &s }
+
 func (s *KnowledgeServiceImpl) DeleteEntity(ctx context.Context, req *pb.DeleteEntityReq) (*pbCommon.BaseResp, error) {
 	err := s.KnowledgeService.DeleteEntity(ctx, req.Id)
 	if err != nil {
@@ -129,7 +145,6 @@ func (s *KnowledgeServiceImpl) DeleteEntity(ctx context.Context, req *pb.DeleteE
 	return buildSuccessBaseResp(), nil
 }
 
-// GetEntity implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) GetEntity(ctx context.Context, req *pb.GetByIdReq) (*pb.EntityResp, error) {
 	resp := &pb.EntityResp{}
 
@@ -145,7 +160,6 @@ func (s *KnowledgeServiceImpl) GetEntity(ctx context.Context, req *pb.GetByIdReq
 	return resp, nil
 }
 
-// QueryEntities implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) QueryEntities(ctx context.Context, req *pb.QueryEntityReq) (*pb.BatchEntityResp, error) {
 	resp := &pb.BatchEntityResp{}
 
@@ -162,7 +176,7 @@ func (s *KnowledgeServiceImpl) QueryEntities(ctx context.Context, req *pb.QueryE
 		properties = req.Properties
 	}
 
-	entities, _, err := s.KnowledgeService.QueryEntities(ctx, entityType, name, properties, int(req.Page), int(req.PageSize))
+	entities, _, err := s.KnowledgeService.QueryEntities(ctx, entityType, name, req.CollectionId, properties, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("查询实体失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -177,11 +191,10 @@ func (s *KnowledgeServiceImpl) QueryEntities(ctx context.Context, req *pb.QueryE
 	return resp, nil
 }
 
-// AddRelation implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) AddRelation(ctx context.Context, req *pb.AddRelationReq) (*pb.RelationResp, error) {
 	resp := &pb.RelationResp{}
 
-	relation, err := s.KnowledgeService.AddRelation(ctx, req.Type, req.SourceId, req.TargetId, req.Properties, req.Description)
+	relation, err := s.KnowledgeService.AddRelation(ctx, req.Type, req.SourceId, req.TargetId, req.CollectionId, req.Properties, req.Description)
 	if err != nil {
 		logger.Error("添加关系失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -193,7 +206,6 @@ func (s *KnowledgeServiceImpl) AddRelation(ctx context.Context, req *pb.AddRelat
 	return resp, nil
 }
 
-// UpdateRelation implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) UpdateRelation(ctx context.Context, req *pb.UpdateRelationReq) (*pb.RelationResp, error) {
 	resp := &pb.RelationResp{}
 
@@ -230,7 +242,6 @@ func (s *KnowledgeServiceImpl) UpdateRelation(ctx context.Context, req *pb.Updat
 	return resp, nil
 }
 
-// DeleteRelation implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) DeleteRelation(ctx context.Context, req *pb.DeleteRelationReq) (*pbCommon.BaseResp, error) {
 	err := s.KnowledgeService.DeleteRelation(ctx, req.Id)
 	if err != nil {
@@ -240,7 +251,6 @@ func (s *KnowledgeServiceImpl) DeleteRelation(ctx context.Context, req *pb.Delet
 	return buildSuccessBaseResp(), nil
 }
 
-// GetRelation implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) GetRelation(ctx context.Context, req *pb.GetByIdReq) (*pb.RelationResp, error) {
 	resp := &pb.RelationResp{}
 
@@ -256,7 +266,6 @@ func (s *KnowledgeServiceImpl) GetRelation(ctx context.Context, req *pb.GetByIdR
 	return resp, nil
 }
 
-// QueryRelations implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) QueryRelations(ctx context.Context, req *pb.QueryRelationReq) (*pb.BatchRelationResp, error) {
 	resp := &pb.BatchRelationResp{}
 
@@ -273,7 +282,7 @@ func (s *KnowledgeServiceImpl) QueryRelations(ctx context.Context, req *pb.Query
 		targetId = *req.TargetId
 	}
 
-	relations, _, err := s.KnowledgeService.QueryRelations(ctx, relationType, sourceId, targetId, int(req.Page), int(req.PageSize))
+	relations, _, err := s.KnowledgeService.QueryRelations(ctx, relationType, sourceId, targetId, req.CollectionId, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("查询关系失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -288,11 +297,15 @@ func (s *KnowledgeServiceImpl) QueryRelations(ctx context.Context, req *pb.Query
 	return resp, nil
 }
 
-// GetGraphStats implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) GetGraphStats(ctx context.Context, req *pb.EmptyReq) (*pb.GraphStatsResp, error) {
 	resp := &pb.GraphStatsResp{}
 
-	stats, err := s.KnowledgeService.GetGraphStats(ctx)
+	collectionID := ""
+	if req != nil {
+		collectionID = req.CollectionId
+	}
+
+	stats, err := s.KnowledgeService.GetGraphStats(ctx, collectionID)
 	if err != nil {
 		logger.Error("获取图谱统计失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -307,7 +320,6 @@ func (s *KnowledgeServiceImpl) GetGraphStats(ctx context.Context, req *pb.EmptyR
 	return resp, nil
 }
 
-// GetRelatedEntities implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) GetRelatedEntities(ctx context.Context, req *pb.GetRelatedEntitiesReq) (*pb.BatchEntityResp, error) {
 	resp := &pb.BatchEntityResp{}
 
@@ -331,7 +343,6 @@ func (s *KnowledgeServiceImpl) GetRelatedEntities(ctx context.Context, req *pb.G
 	return resp, nil
 }
 
-// ImportData implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) ImportData(ctx context.Context, req *pb.ImportDataReq) (*pbCommon.BaseResp, error) {
 	err := s.KnowledgeService.ImportData(ctx, req.DataType, req.Data)
 	if err != nil {
@@ -341,7 +352,6 @@ func (s *KnowledgeServiceImpl) ImportData(ctx context.Context, req *pb.ImportDat
 	return buildSuccessBaseResp(), nil
 }
 
-// SearchEntities implements the KnowledgeServiceImpl interface.
 func (s *KnowledgeServiceImpl) SearchEntities(ctx context.Context, req *pb.SearchEntityReq) (*pb.BatchEntityResp, error) {
 	resp := &pb.BatchEntityResp{}
 
@@ -350,7 +360,7 @@ func (s *KnowledgeServiceImpl) SearchEntities(ctx context.Context, req *pb.Searc
 		entityType = req.Type
 	}
 
-	entities, _, err := s.KnowledgeService.SearchEntities(ctx, req.Keyword, entityType, int(req.Page), int(req.PageSize))
+	entities, _, err := s.KnowledgeService.SearchEntities(ctx, req.Keyword, entityType, req.CollectionId, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("搜索实体失败", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
@@ -361,6 +371,67 @@ func (s *KnowledgeServiceImpl) SearchEntities(ctx context.Context, req *pb.Searc
 	resp.Entities = make([]*pb.Entity, 0, len(entities))
 	for _, e := range entities {
 		resp.Entities = append(resp.Entities, convertModelEntityToProtoEntity(e))
+	}
+	return resp, nil
+}
+
+func (s *KnowledgeServiceImpl) GetSubgraph(ctx context.Context, req *pb.GetSubgraphReq) (*pb.SubgraphResp, error) {
+	resp := &pb.SubgraphResp{}
+
+	depth := int(req.Depth)
+	if depth <= 0 {
+		depth = 2
+	}
+
+	subgraph, err := s.KnowledgeService.GetSubgraph(ctx, req.EntityId, depth, req.CollectionId)
+	if err != nil {
+		logger.Error("获取子图失败", logger.ErrorField(err))
+		resp.BaseResp = buildErrorBaseResp(err.Error())
+		return resp, nil
+	}
+
+	resp.BaseResp = buildSuccessBaseResp()
+	resp.Nodes = make([]*pb.Entity, 0, len(subgraph.Nodes))
+	for _, n := range subgraph.Nodes {
+		resp.Nodes = append(resp.Nodes, convertModelEntityToProtoEntity(n))
+	}
+	resp.Edges = make([]*pb.Relation, 0, len(subgraph.Edges))
+	for _, e := range subgraph.Edges {
+		resp.Edges = append(resp.Edges, convertModelRelationToProtoRelation(e))
+	}
+	resp.NodeCount = int32(subgraph.NodeCount)
+	resp.EdgeCount = int32(subgraph.EdgeCount)
+	return resp, nil
+}
+
+func (s *KnowledgeServiceImpl) GetEntityPaths(ctx context.Context, req *pb.GetEntityPathsReq) (*pb.EntityPathsResp, error) {
+	resp := &pb.EntityPathsResp{}
+
+	maxDepth := int(req.MaxDepth)
+	if maxDepth <= 0 {
+		maxDepth = 4
+	}
+
+	paths, err := s.KnowledgeService.GetEntityPaths(ctx, req.SourceId, req.TargetId, maxDepth, req.CollectionId)
+	if err != nil {
+		logger.Error("获取实体路径失败", logger.ErrorField(err))
+		resp.BaseResp = buildErrorBaseResp(err.Error())
+		return resp, nil
+	}
+
+	resp.BaseResp = buildSuccessBaseResp()
+	resp.Paths = make([]*pb.EntityPath, 0, len(paths))
+	for _, p := range paths {
+		protoPath := &pb.EntityPath{
+			Length: int32(p.Length),
+		}
+		for _, e := range p.Entities {
+			protoPath.Entities = append(protoPath.Entities, convertModelEntityToProtoEntity(e))
+		}
+		for _, r := range p.Edges {
+			protoPath.Relations = append(protoPath.Relations, convertModelRelationToProtoRelation(r))
+		}
+		resp.Paths = append(resp.Paths, protoPath)
 	}
 	return resp, nil
 }

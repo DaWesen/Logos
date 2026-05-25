@@ -43,7 +43,7 @@ func (r *userRepositoryImpl) Create(ctx context.Context, user *model.User) error
 
 func (r *userRepositoryImpl) FindByID(ctx context.Context, id int64) (*model.User, error) {
 	var user model.User
-	err := r.db.WithContext(ctx).First(&user, id).Error
+	err := r.db.WithContext(ctx).Select("id, username, email, avatar").First(&user, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -95,13 +95,13 @@ func (r *userRepositoryImpl) Delete(ctx context.Context, id int64) error {
 
 func (r *userRepositoryImpl) ListByIDs(ctx context.Context, ids []int64) ([]*model.User, error) {
 	var users []*model.User
-	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&users).Error
+	err := r.db.WithContext(ctx).Select("id, username, email, avatar").Where("id IN ?", ids).Find(&users).Error
 	return users, err
 }
 
 func (r *userRepositoryImpl) BatchGetByIDs(ctx context.Context, ids []int64) (map[int64]*model.User, error) {
 	var users []*model.User
-	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&users).Error
+	err := r.db.WithContext(ctx).Select("id, username, email, avatar").Where("id IN ?", ids).Find(&users).Error
 	if err != nil {
 		return nil, err
 	}
@@ -172,15 +172,21 @@ func (r *userRepositoryImpl) GetStats(ctx context.Context, userID int64) (*model
 	}
 
 	var questionCount int64
-	r.db.WithContext(ctx).Table("questions").Where("user_id = ?", userID).Count(&questionCount)
+	if err := r.db.WithContext(ctx).Table("qa_records").Where("user_id = ?", userID).Count(&questionCount).Error; err != nil {
+		questionCount = 0
+	}
 	stats.QuestionCount = questionCount
 
 	var answerCount int64
-	r.db.WithContext(ctx).Table("messages").Where("user_id = ? AND role = ?", userID, "assistant").Count(&answerCount)
+	if err := r.db.WithContext(ctx).Table("messages").Where("sender_id = ?", userID).Count(&answerCount).Error; err != nil {
+		answerCount = 0
+	}
 	stats.AnswerCount = answerCount
 
 	var recCount int64
-	r.db.WithContext(ctx).Table("recommendations").Where("user_id = ?", userID).Count(&recCount)
+	if err := r.db.WithContext(ctx).Table("recommendation_histories").Where("user_id = ?", userID).Count(&recCount).Error; err != nil {
+		recCount = 0
+	}
 	stats.RecommendationCount = recCount
 
 	return stats, nil

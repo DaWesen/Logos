@@ -1,4 +1,3 @@
-
 package dao
 
 import (
@@ -42,16 +41,14 @@ func (r *qaRepository) CreateQARecord(ctx context.Context, record *model.QARecor
 }
 
 func (r *qaRepository) GetQARecord(ctx context.Context, id string) (*model.QARecord, error) {
-	logger.Info("Getting QA record",
-		logger.StringField("question_id", id))
-
 	var record model.QARecord
-	result := r.db.WithContext(ctx).Where("id = ?", id).First(&record)
-	if result.Error != nil {
-		logger.Error("Failed to get QA record", logger.ErrorField(result.Error))
-		return nil, result.Error
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&record).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
 	}
-
 	return &record, nil
 }
 

@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collection
+  namespace: logos
+  labels:
+    app: collection
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collection
+  template:
+    metadata:
+      labels:
+        app: collection
+        domain: ai
+    spec:
+      containers:
+        - name: collection
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./collection"]
+          ports:
+            - containerPort: 9008
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9008
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collection-svc
+  namespace: logos
+spec:
+  selector:
+    app: collection
+  ports:
+    - port: 9008
+      targetPort: 9008

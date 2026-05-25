@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search
+  namespace: logos
+  labels:
+    app: search
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: search
+  template:
+    metadata:
+      labels:
+        app: search
+        domain: ai
+    spec:
+      containers:
+        - name: search
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./search"]
+          ports:
+            - containerPort: 9003
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-svc
+  namespace: logos
+spec:
+  selector:
+    app: search
+  ports:
+    - port: 9003
+      targetPort: 9003

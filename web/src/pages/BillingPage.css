@@ -1,0 +1,220 @@
+.billing-page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.billing-page h1 {
+  margin: 0 0 24px 0;
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.billing-card {
+  background: var(--ba-card);
+  border-radius: var(--ba-radius);
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: var(--ba-shadow);
+  border: 1px solid var(--ba-border);
+}
+
+.billing-card h2 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ba-text);
+}
+
+.balance-display {
+  text-align: center;
+  padding: 28px 0;
+}
+
+.balance-amount {
+  font-size: 44px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.deposit-form {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.deposit-form input {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid var(--ba-border);
+  border-radius: var(--ba-radius-sm);
+  font-size: 14px;
+  background: var(--ba-white);
+  color: var(--ba-text);
+  outline: none;
+  transition: var(--ba-transition);
+}
+
+.deposit-form input:focus {
+  border-color: var(--ba-blue);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.deposit-form input:disabled {
+  background: var(--ba-bg);
+  cursor: not-allowed;
+}
+
+.deposit-form button {
+  padding: 10px 28px;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-blue-light));
+  color: white;
+  border: none;
+  border-radius: var(--ba-radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--ba-transition);
+  box-shadow: 0 2px 8px rgba(96, 165, 250, 0.3);
+}
+
+.deposit-form button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(96, 165, 250, 0.4);
+}
+
+.deposit-form button:disabled {
+  background: var(--ba-border);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.transactions-list {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.no-transactions {
+  text-align: center;
+  padding: 48px 0;
+  color: var(--ba-text-light);
+  font-size: 14px;
+}
+
+.transaction-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--ba-border);
+}
+
+.transaction-item:last-child {
+  border-bottom: none;
+}
+
+.transaction-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.transaction-type {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.transaction-type-green {
+  background: rgba(78, 205, 196, 0.12);
+  color: var(--ba-success);
+}
+
+.transaction-type-red {
+  background: rgba(255, 107, 138, 0.12);
+  color: var(--ba-accent);
+}
+
+.transaction-type-orange {
+  background: rgba(255, 217, 61, 0.15);
+  color: #e6a817;
+}
+
+.transaction-type-blue {
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--ba-blue);
+}
+
+.transaction-type-gray {
+  background: var(--ba-bg);
+  color: var(--ba-text-light);
+}
+
+.transaction-description {
+  color: var(--ba-text-light);
+  font-size: 14px;
+}
+
+.transaction-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.transaction-amount {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.transaction-amount.positive {
+  color: var(--ba-success);
+}
+
+.transaction-amount.negative {
+  color: var(--ba-accent);
+}
+
+.transaction-time {
+  font-size: 12px;
+  color: var(--ba-text-light);
+}
+
+.billing-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 400px;
+  font-size: 16px;
+  color: var(--ba-text-light);
+}
+
+.usage-info {
+  color: var(--ba-text);
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.usage-info p {
+  margin: 8px 0;
+}
+
+.usage-info ol {
+  margin: 12px 0;
+  padding-left: 20px;
+}
+
+.usage-info li {
+  margin: 6px 0;
+  color: var(--ba-text-light);
+}

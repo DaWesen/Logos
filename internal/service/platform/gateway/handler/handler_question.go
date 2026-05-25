@@ -43,7 +43,7 @@ func (h *Handler) AskQuestion(c *gin.Context) {
 
 func (h *Handler) BatchAskQuestions(c *gin.Context) {
 	if h.QuestionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�ʴ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchQuestionReq
@@ -65,7 +65,7 @@ func (h *Handler) BatchAskQuestions(c *gin.Context) {
 
 func (h *Handler) GetHistory(c *gin.Context) {
 	if h.QuestionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�ʴ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	userID, _ := strconv.ParseInt(c.Query("user_id"), 10, 64)
@@ -101,7 +101,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 
 func (h *Handler) SubmitFeedback(c *gin.Context) {
 	if h.QuestionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�ʴ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.FeedbackReq
@@ -124,7 +124,7 @@ func (h *Handler) SubmitFeedback(c *gin.Context) {
 func (h *Handler) GetRecommendedQuestions(c *gin.Context) {
 	userID, _ := strconv.ParseInt(c.Param("userId"), 10, 64)
 	if h.QuestionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "�ʴ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.QuestionClient.GetRecommendedQuestions(context.Background(), &pb.GetRecommendedQuestionsReq{UserId: userID})

@@ -21,7 +21,9 @@ func InitPostgres() (*gorm.DB, error) {
 	var err error
 
 	for i := 0; i < 30; i++ {
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: newGormLogAdapter(),
+		})
 		if err == nil {
 			sqlDB, pingErr := db.DB()
 			if pingErr == nil {

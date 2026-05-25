@@ -72,6 +72,15 @@ func (c *ExtractionClient) ExtractFromText(ctx context.Context, text string, tas
 			"target_id": r.GetTargetId(),
 		})
 	}
+	for _, t := range resp.GetTriples() {
+		result.Triples = append(result.Triples, map[string]interface{}{
+			"id":          t.GetId(),
+			"subject":     t.GetSubject(),
+			"predicate":   t.GetPredicate(),
+			"object":      t.GetObject(),
+			"confidence":  t.GetConfidence(),
+		})
+	}
 	return result, nil
 }
 
@@ -85,5 +94,6 @@ func (c *ExtractionClient) Close() error {
 type ExtractionResult struct {
 	Entities  []map[string]interface{}
 	Relations []map[string]interface{}
+	Triples   []map[string]interface{}
 	Summary   string
 }

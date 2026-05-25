@@ -59,6 +59,7 @@ func (h *Handler) ProcessProcessFile(c *gin.Context) {
 	}
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	h.forwardAuthHeaders(c, req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -97,6 +98,7 @@ func (h *Handler) ProcessProcessURL(c *gin.Context) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	h.forwardAuthHeaders(c, req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -131,6 +133,8 @@ func (h *Handler) ProcessListDocuments(c *gin.Context) {
 		return
 	}
 
+	h.forwardAuthHeaders(c, req)
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -156,6 +160,8 @@ func (h *Handler) ProcessGetDocument(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
 	}
+
+	h.forwardAuthHeaders(c, req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -183,6 +189,8 @@ func (h *Handler) ProcessDeleteDocument(c *gin.Context) {
 		return
 	}
 
+	h.forwardAuthHeaders(c, req)
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -208,6 +216,8 @@ func (h *Handler) ProcessReprocessDocument(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
 	}
+
+	h.forwardAuthHeaders(c, req)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -235,6 +245,8 @@ func (h *Handler) ProcessGetDocumentChunks(c *gin.Context) {
 		return
 	}
 
+	h.forwardAuthHeaders(c, req)
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -250,4 +262,20 @@ func (h *Handler) ProcessGetDocumentChunks(c *gin.Context) {
 	}
 
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+}
+
+func (h *Handler) forwardAuthHeaders(c *gin.Context, req *http.Request) {
+	if auth := c.GetHeader("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	if userID, exists := c.Get("user_id"); exists {
+		if uid, ok := userID.(string); ok && uid != "" {
+			req.Header.Set("X-User-ID", uid)
+		}
+	}
+	if role, exists := c.Get("role"); exists {
+		if r, ok := role.(string); ok && r != "" {
+			req.Header.Set("X-User-Role", r)
+		}
+	}
 }

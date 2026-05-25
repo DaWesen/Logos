@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: im
+  namespace: logos
+  labels:
+    app: im
+    domain: messaging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: im
+  template:
+    metadata:
+      labels:
+        app: im
+        domain: messaging
+    spec:
+      containers:
+        - name: im
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./im"]
+          ports:
+            - containerPort: 9011
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9011
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: im-svc
+  namespace: logos
+spec:
+  selector:
+    app: im
+  ports:
+    - port: 9011
+      targetPort: 9011

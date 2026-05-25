@@ -182,7 +182,7 @@ func (s *SearchServiceImpl) AddDocument(ctx context.Context, req *pb.AddDocument
 
 	createdDoc, err := s.SearchService.AddDocument(ctx, doc)
 	if err != nil {
-		logger.Error("�����ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -223,7 +223,7 @@ func (s *SearchServiceImpl) UpdateDocument(ctx context.Context, req *pb.UpdateDo
 
 	updatedDoc, err := s.SearchService.UpdateDocument(ctx, doc)
 	if err != nil {
-		logger.Error("�����ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -238,7 +238,7 @@ func (s *SearchServiceImpl) UpdateDocument(ctx context.Context, req *pb.UpdateDo
 func (s *SearchServiceImpl) DeleteDocument(ctx context.Context, req *pb.DeleteDocumentReq) (*pbCommon.BaseResp, error) {
 	err := s.SearchService.DeleteDocument(ctx, req.Id)
 	if err != nil {
-		logger.Error("ɾ���ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -251,7 +251,7 @@ func (s *SearchServiceImpl) GetDocument(ctx context.Context, req *pb.GetByIdReq)
 
 	doc, err := s.SearchService.GetDocument(ctx, req.Id)
 	if err != nil {
-		logger.Error("��ȡ�ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -276,7 +276,7 @@ func (s *SearchServiceImpl) BatchAddDocuments(ctx context.Context, req *pb.Batch
 
 	err := s.SearchService.BatchAddDocuments(ctx, docs)
 	if err != nil {
-		logger.Error("���������ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -287,7 +287,7 @@ func (s *SearchServiceImpl) BatchAddDocuments(ctx context.Context, req *pb.Batch
 func (s *SearchServiceImpl) BatchDeleteDocuments(ctx context.Context, req *pb.BatchDeleteDocumentReq) (*pbCommon.BaseResp, error) {
 	err := s.SearchService.BatchDeleteDocuments(ctx, req.Ids)
 	if err != nil {
-		logger.Error("����ɾ���ĵ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -298,7 +298,7 @@ func (s *SearchServiceImpl) BatchDeleteDocuments(ctx context.Context, req *pb.Ba
 func (s *SearchServiceImpl) CreateIndex(ctx context.Context, req *pb.GetByIndexTypeReq) (*pbCommon.BaseResp, error) {
 	err := s.SearchService.CreateIndex(ctx, model.IndexType(req.Type))
 	if err != nil {
-		logger.Error("��������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -309,7 +309,7 @@ func (s *SearchServiceImpl) CreateIndex(ctx context.Context, req *pb.GetByIndexT
 func (s *SearchServiceImpl) DeleteIndex(ctx context.Context, req *pb.GetByIndexTypeReq) (*pbCommon.BaseResp, error) {
 	err := s.SearchService.DeleteIndex(ctx, model.IndexType(req.Type))
 	if err != nil {
-		logger.Error("ɾ������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -320,7 +320,7 @@ func (s *SearchServiceImpl) DeleteIndex(ctx context.Context, req *pb.GetByIndexT
 func (s *SearchServiceImpl) RefreshIndex(ctx context.Context, req *pb.GetByIndexTypeReq) (*pbCommon.BaseResp, error) {
 	err := s.SearchService.RefreshIndex(ctx, model.IndexType(req.Type))
 	if err != nil {
-		logger.Error("ˢ������ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -333,7 +333,7 @@ func (s *SearchServiceImpl) GetIndexStats(ctx context.Context, req *pb.EmptyReq)
 
 	stats, err := s.SearchService.GetIndexStats(ctx)
 	if err != nil {
-		logger.Error("��ȡ����ͳ��ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}

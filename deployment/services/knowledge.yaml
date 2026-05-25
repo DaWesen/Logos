@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge
+  namespace: logos
+  labels:
+    app: knowledge
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knowledge
+  template:
+    metadata:
+      labels:
+        app: knowledge
+        domain: ai
+    spec:
+      containers:
+        - name: knowledge
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./knowledge"]
+          ports:
+            - containerPort: 9002
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-svc
+  namespace: logos
+spec:
+  selector:
+    app: knowledge
+  ports:
+    - port: 9002
+      targetPort: 9002

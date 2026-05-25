@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"Logos/config"
+	"Logos/internal/mcp"
 	"Logos/internal/service/ai/mcp/dao"
 	"Logos/internal/service/ai/mcp/handler"
 	"Logos/internal/service/ai/mcp/model"
@@ -43,6 +44,10 @@ func main() {
 
 	mcpService := service.NewMCPService(repo, einoClient)
 
+	svcRepo := dao.NewMCPServiceRepository(db)
+	clientMgr := mcp.NewMCPClientManager()
+	mcpServiceSvc := service.NewMCPServiceService(svcRepo, clientMgr)
+
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("mcp")
 	defer shutdown(context.Background())
 
@@ -52,7 +57,8 @@ func main() {
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 	}, func(s *grpc.Server) {
 		pb.RegisterMCPServiceServer(s, &handler.MCPServiceImpl{
-			MCPService: mcpService,
+			MCPService:    mcpService,
+			MCPServiceSvc: mcpServiceSvc,
 		})
 	}, serverOpt); err != nil {
 		log.Fatalf("MCP service failed to run: %v", err)

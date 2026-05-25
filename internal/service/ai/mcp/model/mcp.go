@@ -37,6 +37,25 @@ func (ToolCallLog) TableName() string {
 	return "mcp_tool_call_logs"
 }
 
+type MCPService struct {
+	ID             string         `gorm:"primaryKey;size:64;comment:服务ID"`
+	Name           string         `gorm:"size:128;not null;uniqueIndex;comment:服务名称"`
+	Description    string         `gorm:"type:text;comment:服务描述"`
+	Enabled        bool           `gorm:"not null;default:true;comment:是否启用"`
+	TransportType  string         `gorm:"size:32;not null;comment:传输类型 sse/http-streamable"`
+	URL            string         `gorm:"size:512;not null;comment:服务URL"`
+	Headers        string         `gorm:"type:text;comment:请求头JSON"`
+	AuthConfig     string         `gorm:"type:text;comment:认证配置JSON"`
+	AdvancedConfig string         `gorm:"type:text;comment:高级配置JSON"`
+	CreatedAt      time.Time      `gorm:"autoCreateTime;comment:创建时间"`
+	UpdatedAt      time.Time      `gorm:"autoUpdateTime;comment:更新时间"`
+	DeletedAt      gorm.DeletedAt `gorm:"index;comment:删除时间"`
+}
+
+func (MCPService) TableName() string {
+	return "mcp_services"
+}
+
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&Tool{}, &ToolCallLog{})
+	return db.AutoMigrate(&Tool{}, &ToolCallLog{}, &MCPService{})
 }

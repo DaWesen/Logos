@@ -111,7 +111,7 @@ func (s *RecommendationServiceImpl) GetRelatedRecommendations(ctx context.Contex
 
 	items, total, err := s.RecommendService.GetRelatedRecommendations(ctx, req.EntityId, recommendType, limit)
 	if err != nil {
-		logger.Error("��ȡ����Ƽ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -130,7 +130,7 @@ func (s *RecommendationServiceImpl) GetRelatedRecommendations(ctx context.Contex
 func (s *RecommendationServiceImpl) SubmitFeedback(ctx context.Context, req *pb.FeedbackReq) (*pbCommon.BaseResp, error) {
 	err := s.RecommendService.SubmitFeedback(ctx, req.ItemId, req.UserId, req.Action, req.Timestamp)
 	if err != nil {
-		logger.Error("�ύ�Ƽ�����ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -143,7 +143,7 @@ func (s *RecommendationServiceImpl) GetRecommendationHistory(ctx context.Context
 
 	histories, total, err := s.RecommendService.GetRecommendationHistory(ctx, req.UserId, int(req.Page), int(req.PageSize))
 	if err != nil {
-		logger.Error("��ȡ�Ƽ���ʷʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -174,7 +174,7 @@ func (s *RecommendationServiceImpl) BatchGetRecommendations(ctx context.Context,
 
 	recommendations, err := s.RecommendService.BatchGetRecommendations(ctx, req.UserIds, recommendType, limit)
 	if err != nil {
-		logger.Error("������ȡ�Ƽ�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}

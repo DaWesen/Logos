@@ -8,7 +8,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"context"
-	"errors"
+	"strconv"
 	"time"
 )
 
@@ -25,8 +25,6 @@ type IMService interface {
 	Heartbeat(ctx context.Context, sessionID string) error
 	SendTypingStatus(ctx context.Context, fromUserID, chatID string, typing bool) error
 	BroadcastMessage(ctx context.Context, content string) error
-	GetOnlineUsers(ctx context.Context) ([]string, error)
-	ValidateSession(ctx context.Context, sessionID string) (string, error)
 	StartPresenceConsumer() error
 }
 
@@ -47,8 +45,13 @@ func NewIMService(repo dao.IMRepository, cache cache.Cache, ctx context.Context)
 }
 
 func (s *IMServiceImpl) Connect(ctx context.Context, userID, deviceID, sessionID string) error {
+	uid, err := strconv.ParseInt(userID, 10, 64)
+	if err != nil {
+		return err
+	}
+
 	record := &model.OnlineRecord{
-		UserID:    userID,
+		UserID:    uid,
 		DeviceID:  deviceID,
 		SessionID: sessionID,
 		Online:    true,
@@ -56,7 +59,7 @@ func (s *IMServiceImpl) Connect(ctx context.Context, userID, deviceID, sessionID
 		Platform:  "unknown",
 	}
 
-	if err := s.repo.CreateOnlineRecord(ctx, record); err != nil {
+	if err := s.repo.UpsertOnlineRecord(ctx, record); err != nil {
 		logger.Error("创建在线记录失败", logger.ErrorField(err))
 		return err
 	}
@@ -86,15 +89,16 @@ func (s *IMServiceImpl) Disconnect(ctx context.Context, sessionID string) error 
 	}
 
 	if record != nil {
-		records, err := s.repo.GetOnlineRecordsByUser(ctx, record.UserID)
+		userIDStr := strconv.FormatInt(record.UserID, 10)
+		records, err := s.repo.GetOnlineRecordsByUser(ctx, userIDStr)
 		if err == nil && len(records) == 0 {
-			cacheKey := onlineStatusCachePrefix + record.UserID
+			cacheKey := onlineStatusCachePrefix + userIDStr
 			if err := s.cache.Delete(ctx, cacheKey); err != nil {
 				logger.Warn("清除在线状态缓存失败", logger.ErrorField(err))
 			}
 		}
 		logger.Info("用户离线",
-			logger.StringField("user_id", record.UserID),
+			logger.StringField("user_id", userIDStr),
 			logger.StringField("session_id", sessionID))
 	}
 
@@ -170,7 +174,8 @@ func (s *IMServiceImpl) Heartbeat(ctx context.Context, sessionID string) error {
 
 	record, err := s.repo.GetOnlineRecordBySession(ctx, sessionID)
 	if err == nil && record != nil {
-		cacheKey := onlineStatusCachePrefix + record.UserID
+		userIDStr := strconv.FormatInt(record.UserID, 10)
+		cacheKey := onlineStatusCachePrefix + userIDStr
 		if err := s.cache.Expire(ctx, cacheKey, time.Second*time.Duration(heartbeatTimeout*2)); err != nil {
 			logger.Warn("更新缓存过期时间失败", logger.ErrorField(err))
 		}
@@ -221,21 +226,6 @@ func (s *IMServiceImpl) BroadcastMessage(ctx context.Context, content string) er
 	return nil
 }
 
-func (s *IMServiceImpl) GetOnlineUsers(ctx context.Context) ([]string, error) {
-	return s.repo.GetOnlineUsers(ctx)
-}
-
-func (s *IMServiceImpl) ValidateSession(ctx context.Context, sessionID string) (string, error) {
-	record, err := s.repo.GetOnlineRecordBySession(ctx, sessionID)
-	if err != nil {
-		return "", errors.New("会话不存在")
-	}
-	if !record.Online {
-		return "", errors.New("会话已失效")
-	}
-	return record.UserID, nil
-}
-
 func (s *IMServiceImpl) StartPresenceConsumer() error {
 	if s.eventBus == nil {
 		logger.Warn("EventBus未初始化，无法启动在线状态消费者")
@@ -270,15 +260,20 @@ func (s *IMServiceImpl) handlePresenceEvent(msg *mq.Message) error {
 	ctx := context.Background()
 
 	if event.Online {
+		uid, err := strconv.ParseInt(event.UserID, 10, 64)
+		if err != nil {
+			return err
+		}
+
 		record := &model.OnlineRecord{
-			UserID:    event.UserID,
+			UserID:    uid,
 			DeviceID:  event.DeviceID,
 			SessionID: "ws_" + event.UserID + "_" + event.DeviceID,
 			Online:    true,
 			LastSeen:  time.Now().UnixMilli(),
 			Platform:  "websocket",
 		}
-		if err := s.repo.CreateOnlineRecord(ctx, record); err != nil {
+		if err := s.repo.UpsertOnlineRecord(ctx, record); err != nil {
 			logger.Error("创建在线记录失败", logger.ErrorField(err))
 			return err
 		}

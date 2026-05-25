@@ -35,6 +35,12 @@ type Vector struct {
 }
 
 // 向量集合
+type ModelConfig struct {
+	Model   string `json:"model"`
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+}
+
 type VectorCollection struct {
 	ID         string            `json:"id"`
 	Name       string            `json:"name"`
@@ -43,6 +49,10 @@ type VectorCollection struct {
 	Dimension  int               `json:"dimension"`
 	Parameters map[string]string `json:"parameters"`
 	Size       int64             `json:"size"`
+	VLM        ModelConfig       `json:"vlm"`
+	LLM        ModelConfig       `json:"llm"`
+	ASR        ModelConfig       `json:"asr"`
+	Embedding  ModelConfig       `json:"embedding"`
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`
 }
@@ -79,4 +89,11 @@ func (s *SearchResultItem) GetMetadata() map[string]string {
 
 func (s *SearchResultItem) GetContent() string {
 	return s.Content
+}
+
+type VectorPreviewItem struct {
+	ID        string            `json:"id"`
+	Content   string            `json:"content"`
+	Metadata  map[string]string `json:"metadata"`
+	CreatedAt time.Time         `json:"created_at"`
 }

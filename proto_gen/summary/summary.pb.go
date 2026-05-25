@@ -23,7 +23,82 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// 待办事项
+type ModelConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey        string                 `protobuf:"bytes,3,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl       string                 `protobuf:"bytes,4,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	Temperature   float64                `protobuf:"fixed64,5,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModelConfig) Reset() {
+	*x = ModelConfig{}
+	mi := &file_ai_summary_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelConfig) ProtoMessage() {}
+
+func (x *ModelConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_summary_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelConfig.ProtoReflect.Descriptor instead.
+func (*ModelConfig) Descriptor() ([]byte, []int) {
+	return file_ai_summary_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ModelConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetTemperature() float64 {
+	if x != nil {
+		return x.Temperature
+	}
+	return 0
+}
+
 type TodoItem struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -37,7 +112,7 @@ type TodoItem struct {
 
 func (x *TodoItem) Reset() {
 	*x = TodoItem{}
-	mi := &file_ai_summary_proto_msgTypes[0]
+	mi := &file_ai_summary_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -49,7 +124,7 @@ func (x *TodoItem) String() string {
 func (*TodoItem) ProtoMessage() {}
 
 func (x *TodoItem) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[0]
+	mi := &file_ai_summary_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -62,7 +137,7 @@ func (x *TodoItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TodoItem.ProtoReflect.Descriptor instead.
 func (*TodoItem) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{0}
+	return file_ai_summary_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *TodoItem) GetId() string {
@@ -100,7 +175,6 @@ func (x *TodoItem) GetStatus() string {
 	return ""
 }
 
-// 回复候选
 type ReplyCandidate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -113,7 +187,7 @@ type ReplyCandidate struct {
 
 func (x *ReplyCandidate) Reset() {
 	*x = ReplyCandidate{}
-	mi := &file_ai_summary_proto_msgTypes[1]
+	mi := &file_ai_summary_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -125,7 +199,7 @@ func (x *ReplyCandidate) String() string {
 func (*ReplyCandidate) ProtoMessage() {}
 
 func (x *ReplyCandidate) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[1]
+	mi := &file_ai_summary_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -138,7 +212,7 @@ func (x *ReplyCandidate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplyCandidate.ProtoReflect.Descriptor instead.
 func (*ReplyCandidate) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{1}
+	return file_ai_summary_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ReplyCandidate) GetId() string {
@@ -169,7 +243,6 @@ func (x *ReplyCandidate) GetType() string {
 	return ""
 }
 
-// 总结请求
 type SummarizeMessagesRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	ChatId            string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
@@ -179,13 +252,15 @@ type SummarizeMessagesRequest struct {
 	EndTime           *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=end_time,json=endTime,proto3" json:"end_time,omitempty"`
 	IncludeTodos      bool                   `protobuf:"varint,6,opt,name=include_todos,json=includeTodos,proto3" json:"include_todos,omitempty"`
 	IncludeCandidates bool                   `protobuf:"varint,7,opt,name=include_candidates,json=includeCandidates,proto3" json:"include_candidates,omitempty"`
+	ModelConfig       *ModelConfig           `protobuf:"bytes,8,opt,name=model_config,json=modelConfig,proto3" json:"model_config,omitempty"`
+	MessageCount      int32                  `protobuf:"varint,9,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SummarizeMessagesRequest) Reset() {
 	*x = SummarizeMessagesRequest{}
-	mi := &file_ai_summary_proto_msgTypes[2]
+	mi := &file_ai_summary_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -197,7 +272,7 @@ func (x *SummarizeMessagesRequest) String() string {
 func (*SummarizeMessagesRequest) ProtoMessage() {}
 
 func (x *SummarizeMessagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[2]
+	mi := &file_ai_summary_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -210,7 +285,7 @@ func (x *SummarizeMessagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummarizeMessagesRequest.ProtoReflect.Descriptor instead.
 func (*SummarizeMessagesRequest) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{2}
+	return file_ai_summary_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SummarizeMessagesRequest) GetChatId() string {
@@ -262,7 +337,20 @@ func (x *SummarizeMessagesRequest) GetIncludeCandidates() bool {
 	return false
 }
 
-// 总结响应
+func (x *SummarizeMessagesRequest) GetModelConfig() *ModelConfig {
+	if x != nil {
+		return x.ModelConfig
+	}
+	return nil
+}
+
+func (x *SummarizeMessagesRequest) GetMessageCount() int32 {
+	if x != nil {
+		return x.MessageCount
+	}
+	return 0
+}
+
 type SummarizeMessagesResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Code            int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -278,7 +366,7 @@ type SummarizeMessagesResponse struct {
 
 func (x *SummarizeMessagesResponse) Reset() {
 	*x = SummarizeMessagesResponse{}
-	mi := &file_ai_summary_proto_msgTypes[3]
+	mi := &file_ai_summary_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +378,7 @@ func (x *SummarizeMessagesResponse) String() string {
 func (*SummarizeMessagesResponse) ProtoMessage() {}
 
 func (x *SummarizeMessagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[3]
+	mi := &file_ai_summary_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,7 +391,7 @@ func (x *SummarizeMessagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SummarizeMessagesResponse.ProtoReflect.Descriptor instead.
 func (*SummarizeMessagesResponse) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{3}
+	return file_ai_summary_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SummarizeMessagesResponse) GetCode() int32 {
@@ -355,7 +443,6 @@ func (x *SummarizeMessagesResponse) GetParticipants() []string {
 	return nil
 }
 
-// 生成回复候选请求
 type GenerateReplyCandidatesRequest struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	ChatId            string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
@@ -363,13 +450,14 @@ type GenerateReplyCandidatesRequest struct {
 	ContextMessageIds []string               `protobuf:"bytes,3,rep,name=context_message_ids,json=contextMessageIds,proto3" json:"context_message_ids,omitempty"`
 	CandidateCount    int32                  `protobuf:"varint,4,opt,name=candidate_count,json=candidateCount,proto3" json:"candidate_count,omitempty"`
 	Tone              string                 `protobuf:"bytes,5,opt,name=tone,proto3" json:"tone,omitempty"`
+	ModelConfig       *ModelConfig           `protobuf:"bytes,6,opt,name=model_config,json=modelConfig,proto3" json:"model_config,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GenerateReplyCandidatesRequest) Reset() {
 	*x = GenerateReplyCandidatesRequest{}
-	mi := &file_ai_summary_proto_msgTypes[4]
+	mi := &file_ai_summary_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -381,7 +469,7 @@ func (x *GenerateReplyCandidatesRequest) String() string {
 func (*GenerateReplyCandidatesRequest) ProtoMessage() {}
 
 func (x *GenerateReplyCandidatesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[4]
+	mi := &file_ai_summary_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -394,7 +482,7 @@ func (x *GenerateReplyCandidatesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateReplyCandidatesRequest.ProtoReflect.Descriptor instead.
 func (*GenerateReplyCandidatesRequest) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{4}
+	return file_ai_summary_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GenerateReplyCandidatesRequest) GetChatId() string {
@@ -432,7 +520,13 @@ func (x *GenerateReplyCandidatesRequest) GetTone() string {
 	return ""
 }
 
-// 生成回复候选响应
+func (x *GenerateReplyCandidatesRequest) GetModelConfig() *ModelConfig {
+	if x != nil {
+		return x.ModelConfig
+	}
+	return nil
+}
+
 type GenerateReplyCandidatesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -444,7 +538,7 @@ type GenerateReplyCandidatesResponse struct {
 
 func (x *GenerateReplyCandidatesResponse) Reset() {
 	*x = GenerateReplyCandidatesResponse{}
-	mi := &file_ai_summary_proto_msgTypes[5]
+	mi := &file_ai_summary_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -456,7 +550,7 @@ func (x *GenerateReplyCandidatesResponse) String() string {
 func (*GenerateReplyCandidatesResponse) ProtoMessage() {}
 
 func (x *GenerateReplyCandidatesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[5]
+	mi := &file_ai_summary_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -469,7 +563,7 @@ func (x *GenerateReplyCandidatesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GenerateReplyCandidatesResponse.ProtoReflect.Descriptor instead.
 func (*GenerateReplyCandidatesResponse) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{5}
+	return file_ai_summary_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GenerateReplyCandidatesResponse) GetCode() int32 {
@@ -493,19 +587,20 @@ func (x *GenerateReplyCandidatesResponse) GetCandidates() []*ReplyCandidate {
 	return nil
 }
 
-// 提取待办事项请求
 type ExtractTodosRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ChatId        string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
 	ChatType      chat.ChatType          `protobuf:"varint,2,opt,name=chat_type,json=chatType,proto3,enum=messaging.chat.ChatType" json:"chat_type,omitempty"`
 	MessageIds    []string               `protobuf:"bytes,3,rep,name=message_ids,json=messageIds,proto3" json:"message_ids,omitempty"`
+	ModelConfig   *ModelConfig           `protobuf:"bytes,4,opt,name=model_config,json=modelConfig,proto3" json:"model_config,omitempty"`
+	MessageCount  int32                  `protobuf:"varint,5,opt,name=message_count,json=messageCount,proto3" json:"message_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExtractTodosRequest) Reset() {
 	*x = ExtractTodosRequest{}
-	mi := &file_ai_summary_proto_msgTypes[6]
+	mi := &file_ai_summary_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -517,7 +612,7 @@ func (x *ExtractTodosRequest) String() string {
 func (*ExtractTodosRequest) ProtoMessage() {}
 
 func (x *ExtractTodosRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[6]
+	mi := &file_ai_summary_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -530,7 +625,7 @@ func (x *ExtractTodosRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtractTodosRequest.ProtoReflect.Descriptor instead.
 func (*ExtractTodosRequest) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{6}
+	return file_ai_summary_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ExtractTodosRequest) GetChatId() string {
@@ -554,7 +649,20 @@ func (x *ExtractTodosRequest) GetMessageIds() []string {
 	return nil
 }
 
-// 提取待办事项响应
+func (x *ExtractTodosRequest) GetModelConfig() *ModelConfig {
+	if x != nil {
+		return x.ModelConfig
+	}
+	return nil
+}
+
+func (x *ExtractTodosRequest) GetMessageCount() int32 {
+	if x != nil {
+		return x.MessageCount
+	}
+	return 0
+}
+
 type ExtractTodosResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
@@ -566,7 +674,7 @@ type ExtractTodosResponse struct {
 
 func (x *ExtractTodosResponse) Reset() {
 	*x = ExtractTodosResponse{}
-	mi := &file_ai_summary_proto_msgTypes[7]
+	mi := &file_ai_summary_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -578,7 +686,7 @@ func (x *ExtractTodosResponse) String() string {
 func (*ExtractTodosResponse) ProtoMessage() {}
 
 func (x *ExtractTodosResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_summary_proto_msgTypes[7]
+	mi := &file_ai_summary_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -591,7 +699,7 @@ func (x *ExtractTodosResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtractTodosResponse.ProtoReflect.Descriptor instead.
 func (*ExtractTodosResponse) Descriptor() ([]byte, []int) {
-	return file_ai_summary_proto_rawDescGZIP(), []int{7}
+	return file_ai_summary_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ExtractTodosResponse) GetCode() int32 {
@@ -620,7 +728,13 @@ var File_ai_summary_proto protoreflect.FileDescriptor
 const file_ai_summary_proto_rawDesc = "" +
 	"\n" +
 	"\x10ai/summary.proto\x12\n" +
-	"ai.summary\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x14messaging/chat.proto\"\xa0\x01\n" +
+	"ai.summary\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x14messaging/chat.proto\"\x95\x01\n" +
+	"\vModelConfig\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05model\x18\x02 \x01(\tR\x05model\x12\x17\n" +
+	"\aapi_key\x18\x03 \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\x04 \x01(\tR\abaseUrl\x12 \n" +
+	"\vtemperature\x18\x05 \x01(\x01R\vtemperature\"\xa0\x01\n" +
 	"\bTodoItem\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x1a\n" +
@@ -633,7 +747,7 @@ const file_ai_summary_proto_rawDesc = "" +
 	"\n" +
 	"confidence\x18\x03 \x01(\x02R\n" +
 	"confidence\x12\x12\n" +
-	"\x04type\x18\x04 \x01(\tR\x04type\"\xd1\x02\n" +
+	"\x04type\x18\x04 \x01(\tR\x04type\"\xb2\x03\n" +
 	"\x18SummarizeMessagesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x125\n" +
 	"\tchat_type\x18\x02 \x01(\x0e2\x18.messaging.chat.ChatTypeR\bchatType\x12\x1f\n" +
@@ -643,7 +757,9 @@ const file_ai_summary_proto_rawDesc = "" +
 	"start_time\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tstartTime\x125\n" +
 	"\bend_time\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\aendTime\x12#\n" +
 	"\rinclude_todos\x18\x06 \x01(\bR\fincludeTodos\x12-\n" +
-	"\x12include_candidates\x18\a \x01(\bR\x11includeCandidates\"\x99\x02\n" +
+	"\x12include_candidates\x18\a \x01(\bR\x11includeCandidates\x12:\n" +
+	"\fmodel_config\x18\b \x01(\v2\x17.ai.summary.ModelConfigR\vmodelConfig\x12#\n" +
+	"\rmessage_count\x18\t \x01(\x05R\fmessageCount\"\x99\x02\n" +
 	"\x19SummarizeMessagesResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
@@ -652,24 +768,27 @@ const file_ai_summary_proto_rawDesc = "" +
 	"\x10reply_candidates\x18\x05 \x03(\v2\x1a.ai.summary.ReplyCandidateR\x0freplyCandidates\x12\x1d\n" +
 	"\n" +
 	"key_points\x18\x06 \x03(\tR\tkeyPoints\x12\"\n" +
-	"\fparticipants\x18\a \x03(\tR\fparticipants\"\xdd\x01\n" +
+	"\fparticipants\x18\a \x03(\tR\fparticipants\"\x99\x02\n" +
 	"\x1eGenerateReplyCandidatesRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x125\n" +
 	"\tchat_type\x18\x02 \x01(\x0e2\x18.messaging.chat.ChatTypeR\bchatType\x12.\n" +
 	"\x13context_message_ids\x18\x03 \x03(\tR\x11contextMessageIds\x12'\n" +
 	"\x0fcandidate_count\x18\x04 \x01(\x05R\x0ecandidateCount\x12\x12\n" +
-	"\x04tone\x18\x05 \x01(\tR\x04tone\"\x8b\x01\n" +
+	"\x04tone\x18\x05 \x01(\tR\x04tone\x12:\n" +
+	"\fmodel_config\x18\x06 \x01(\v2\x17.ai.summary.ModelConfigR\vmodelConfig\"\x8b\x01\n" +
 	"\x1fGenerateReplyCandidatesResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
 	"\n" +
 	"candidates\x18\x03 \x03(\v2\x1a.ai.summary.ReplyCandidateR\n" +
-	"candidates\"\x86\x01\n" +
+	"candidates\"\xe7\x01\n" +
 	"\x13ExtractTodosRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x125\n" +
 	"\tchat_type\x18\x02 \x01(\x0e2\x18.messaging.chat.ChatTypeR\bchatType\x12\x1f\n" +
 	"\vmessage_ids\x18\x03 \x03(\tR\n" +
-	"messageIds\"p\n" +
+	"messageIds\x12:\n" +
+	"\fmodel_config\x18\x04 \x01(\v2\x17.ai.summary.ModelConfigR\vmodelConfig\x12#\n" +
+	"\rmessage_count\x18\x05 \x01(\x05R\fmessageCount\"p\n" +
 	"\x14ExtractTodosResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12*\n" +
@@ -691,41 +810,45 @@ func file_ai_summary_proto_rawDescGZIP() []byte {
 	return file_ai_summary_proto_rawDescData
 }
 
-var file_ai_summary_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_ai_summary_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_ai_summary_proto_goTypes = []any{
-	(*TodoItem)(nil),                        // 0: ai.summary.TodoItem
-	(*ReplyCandidate)(nil),                  // 1: ai.summary.ReplyCandidate
-	(*SummarizeMessagesRequest)(nil),        // 2: ai.summary.SummarizeMessagesRequest
-	(*SummarizeMessagesResponse)(nil),       // 3: ai.summary.SummarizeMessagesResponse
-	(*GenerateReplyCandidatesRequest)(nil),  // 4: ai.summary.GenerateReplyCandidatesRequest
-	(*GenerateReplyCandidatesResponse)(nil), // 5: ai.summary.GenerateReplyCandidatesResponse
-	(*ExtractTodosRequest)(nil),             // 6: ai.summary.ExtractTodosRequest
-	(*ExtractTodosResponse)(nil),            // 7: ai.summary.ExtractTodosResponse
-	(*timestamppb.Timestamp)(nil),           // 8: google.protobuf.Timestamp
-	(chat.ChatType)(0),                      // 9: messaging.chat.ChatType
+	(*ModelConfig)(nil),                     // 0: ai.summary.ModelConfig
+	(*TodoItem)(nil),                        // 1: ai.summary.TodoItem
+	(*ReplyCandidate)(nil),                  // 2: ai.summary.ReplyCandidate
+	(*SummarizeMessagesRequest)(nil),        // 3: ai.summary.SummarizeMessagesRequest
+	(*SummarizeMessagesResponse)(nil),       // 4: ai.summary.SummarizeMessagesResponse
+	(*GenerateReplyCandidatesRequest)(nil),  // 5: ai.summary.GenerateReplyCandidatesRequest
+	(*GenerateReplyCandidatesResponse)(nil), // 6: ai.summary.GenerateReplyCandidatesResponse
+	(*ExtractTodosRequest)(nil),             // 7: ai.summary.ExtractTodosRequest
+	(*ExtractTodosResponse)(nil),            // 8: ai.summary.ExtractTodosResponse
+	(*timestamppb.Timestamp)(nil),           // 9: google.protobuf.Timestamp
+	(chat.ChatType)(0),                      // 10: messaging.chat.ChatType
 }
 var file_ai_summary_proto_depIdxs = []int32{
-	8,  // 0: ai.summary.TodoItem.deadline:type_name -> google.protobuf.Timestamp
-	9,  // 1: ai.summary.SummarizeMessagesRequest.chat_type:type_name -> messaging.chat.ChatType
-	8,  // 2: ai.summary.SummarizeMessagesRequest.start_time:type_name -> google.protobuf.Timestamp
-	8,  // 3: ai.summary.SummarizeMessagesRequest.end_time:type_name -> google.protobuf.Timestamp
-	0,  // 4: ai.summary.SummarizeMessagesResponse.todos:type_name -> ai.summary.TodoItem
-	1,  // 5: ai.summary.SummarizeMessagesResponse.reply_candidates:type_name -> ai.summary.ReplyCandidate
-	9,  // 6: ai.summary.GenerateReplyCandidatesRequest.chat_type:type_name -> messaging.chat.ChatType
-	1,  // 7: ai.summary.GenerateReplyCandidatesResponse.candidates:type_name -> ai.summary.ReplyCandidate
-	9,  // 8: ai.summary.ExtractTodosRequest.chat_type:type_name -> messaging.chat.ChatType
-	0,  // 9: ai.summary.ExtractTodosResponse.todos:type_name -> ai.summary.TodoItem
-	2,  // 10: ai.summary.SummaryService.SummarizeMessages:input_type -> ai.summary.SummarizeMessagesRequest
-	4,  // 11: ai.summary.SummaryService.GenerateReplyCandidates:input_type -> ai.summary.GenerateReplyCandidatesRequest
-	6,  // 12: ai.summary.SummaryService.ExtractTodos:input_type -> ai.summary.ExtractTodosRequest
-	3,  // 13: ai.summary.SummaryService.SummarizeMessages:output_type -> ai.summary.SummarizeMessagesResponse
-	5,  // 14: ai.summary.SummaryService.GenerateReplyCandidates:output_type -> ai.summary.GenerateReplyCandidatesResponse
-	7,  // 15: ai.summary.SummaryService.ExtractTodos:output_type -> ai.summary.ExtractTodosResponse
-	13, // [13:16] is the sub-list for method output_type
-	10, // [10:13] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	9,  // 0: ai.summary.TodoItem.deadline:type_name -> google.protobuf.Timestamp
+	10, // 1: ai.summary.SummarizeMessagesRequest.chat_type:type_name -> messaging.chat.ChatType
+	9,  // 2: ai.summary.SummarizeMessagesRequest.start_time:type_name -> google.protobuf.Timestamp
+	9,  // 3: ai.summary.SummarizeMessagesRequest.end_time:type_name -> google.protobuf.Timestamp
+	0,  // 4: ai.summary.SummarizeMessagesRequest.model_config:type_name -> ai.summary.ModelConfig
+	1,  // 5: ai.summary.SummarizeMessagesResponse.todos:type_name -> ai.summary.TodoItem
+	2,  // 6: ai.summary.SummarizeMessagesResponse.reply_candidates:type_name -> ai.summary.ReplyCandidate
+	10, // 7: ai.summary.GenerateReplyCandidatesRequest.chat_type:type_name -> messaging.chat.ChatType
+	0,  // 8: ai.summary.GenerateReplyCandidatesRequest.model_config:type_name -> ai.summary.ModelConfig
+	2,  // 9: ai.summary.GenerateReplyCandidatesResponse.candidates:type_name -> ai.summary.ReplyCandidate
+	10, // 10: ai.summary.ExtractTodosRequest.chat_type:type_name -> messaging.chat.ChatType
+	0,  // 11: ai.summary.ExtractTodosRequest.model_config:type_name -> ai.summary.ModelConfig
+	1,  // 12: ai.summary.ExtractTodosResponse.todos:type_name -> ai.summary.TodoItem
+	3,  // 13: ai.summary.SummaryService.SummarizeMessages:input_type -> ai.summary.SummarizeMessagesRequest
+	5,  // 14: ai.summary.SummaryService.GenerateReplyCandidates:input_type -> ai.summary.GenerateReplyCandidatesRequest
+	7,  // 15: ai.summary.SummaryService.ExtractTodos:input_type -> ai.summary.ExtractTodosRequest
+	4,  // 16: ai.summary.SummaryService.SummarizeMessages:output_type -> ai.summary.SummarizeMessagesResponse
+	6,  // 17: ai.summary.SummaryService.GenerateReplyCandidates:output_type -> ai.summary.GenerateReplyCandidatesResponse
+	8,  // 18: ai.summary.SummaryService.ExtractTodos:output_type -> ai.summary.ExtractTodosResponse
+	16, // [16:19] is the sub-list for method output_type
+	13, // [13:16] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_ai_summary_proto_init() }
@@ -739,7 +862,7 @@ func file_ai_summary_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_summary_proto_rawDesc), len(file_ai_summary_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

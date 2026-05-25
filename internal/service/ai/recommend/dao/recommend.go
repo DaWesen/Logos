@@ -44,31 +44,30 @@ func (r *recommendRepository) SaveRecommendation(ctx context.Context, item *mode
 }
 
 func (r *recommendRepository) GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int) ([]*model.RecommendationItem, int64, error) {
-	logger.Info("Getting personalized recommendations",
-		logger.Int64Field("user_id", userID),
-		logger.StringField("type", recommendType),
-		logger.IntField("limit", limit))
-
 	var items []*model.RecommendationItem
 	var total int64
+
+	var seenEntityIDs []string
+	r.db.WithContext(ctx).Model(&model.RecommendationHistory{}).
+		Where("user_id = ?", userID).
+		Pluck("item_id", &seenEntityIDs)
 
 	query := r.db.WithContext(ctx).Model(&model.RecommendationItem{})
 	if recommendType != "" {
 		query = query.Where("type = ?", recommendType)
 	}
-
-	result := query.Count(&total)
-	if result.Error != nil {
-		logger.Error("Failed to get recommendation count", logger.ErrorField(result.Error))
-		return nil, 0, result.Error
+	if len(seenEntityIDs) > 0 {
+		query = query.Where("id NOT IN ?", seenEntityIDs)
 	}
 
-	result = query.Order("score DESC, created_at DESC").
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.Order("score DESC, created_at DESC").
 		Limit(limit).
-		Find(&items)
-	if result.Error != nil {
-		logger.Error("Failed to get recommendation list", logger.ErrorField(result.Error))
-		return nil, 0, result.Error
+		Find(&items).Error; err != nil {
+		return nil, 0, err
 	}
 
 	return items, total, nil

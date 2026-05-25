@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"time"
+	"strconv"
 
 	"Logos/internal/service/messaging/contact/model"
 	"Logos/internal/service/messaging/contact/service"
@@ -89,13 +89,13 @@ func (s *ContactServiceImpl) GetFriendRequests(ctx context.Context, req *pb.GetF
 	for _, reqItem := range requests {
 		respRequests = append(respRequests, &pb.FriendRequest{
 			Id:         reqItem.ID,
-			FromUserId: reqItem.FromUserID,
-			ToUserId:   reqItem.ToUserID,
+			FromUserId: strconv.FormatInt(reqItem.FromUserID, 10),
+			ToUserId:   strconv.FormatInt(reqItem.ToUserID, 10),
 			Remark:     reqItem.Remark,
 			Message:    reqItem.Message,
 			Status:     friendRequestStatusToProto(reqItem.Status),
-			CreatedAt:  timestamppb.New(int64ToTime(reqItem.CreatedAt)),
-			UpdatedAt:  timestamppb.New(int64ToTime(reqItem.UpdatedAt)),
+			CreatedAt:  timestamppb.New(reqItem.CreatedAt),
+			UpdatedAt:  timestamppb.New(reqItem.UpdatedAt),
 		})
 	}
 	return &pb.GetFriendRequestsResponse{
@@ -160,12 +160,12 @@ func (s *ContactServiceImpl) GetFriendList(ctx context.Context, req *pb.GetFrien
 	for _, friend := range friends {
 		respFriends = append(respFriends, &pb.Friendship{
 			Id:        friend.ID,
-			UserId:    friend.UserID,
-			FriendId:  friend.FriendID,
+			UserId:    strconv.FormatInt(friend.UserID, 10),
+			FriendId:  strconv.FormatInt(friend.FriendID, 10),
 			Remark:    friend.Remark,
 			GroupId:   friend.GroupID,
-			CreatedAt: timestamppb.New(int64ToTime(friend.CreatedAt)),
-			UpdatedAt: timestamppb.New(int64ToTime(friend.UpdatedAt)),
+			CreatedAt: timestamppb.New(friend.CreatedAt),
+			UpdatedAt: timestamppb.New(friend.UpdatedAt),
 		})
 	}
 	return &pb.GetFriendListResponse{
@@ -189,11 +189,11 @@ func (s *ContactServiceImpl) CreateFriendGroup(ctx context.Context, req *pb.Crea
 
 	respGroup := &pb.FriendGroup{
 		Id:        group.ID,
-		UserId:    group.UserID,
+		UserId:    strconv.FormatInt(group.UserID, 10),
 		Name:      group.Name,
 		SortOrder: int32(group.Sort),
-		CreatedAt: timestamppb.New(int64ToTime(group.CreatedAt)),
-		UpdatedAt: timestamppb.New(int64ToTime(group.UpdatedAt)),
+		CreatedAt: timestamppb.New(group.CreatedAt),
+		UpdatedAt: timestamppb.New(group.UpdatedAt),
 	}
 
 	return &pb.CreateFriendGroupResponse{
@@ -248,11 +248,11 @@ func (s *ContactServiceImpl) GetFriendGroups(ctx context.Context, req *pb.GetFri
 	for _, group := range groups {
 		respGroups = append(respGroups, &pb.FriendGroup{
 			Id:        group.ID,
-			UserId:    group.UserID,
+			UserId:    strconv.FormatInt(group.UserID, 10),
 			Name:      group.Name,
 			SortOrder: int32(group.Sort),
-			CreatedAt: timestamppb.New(int64ToTime(group.CreatedAt)),
-			UpdatedAt: timestamppb.New(int64ToTime(group.UpdatedAt)),
+			CreatedAt: timestamppb.New(group.CreatedAt),
+			UpdatedAt: timestamppb.New(group.UpdatedAt),
 		})
 	}
 	return &pb.GetFriendGroupsResponse{
@@ -322,9 +322,9 @@ func (s *ContactServiceImpl) GetBlacklist(ctx context.Context, req *pb.GetBlackl
 	for _, r := range records {
 		pbRecords = append(pbRecords, &pb.BlacklistRecord{
 			Id:            r.ID,
-			UserId:        r.UserID,
-			BlockedUserId: r.FriendID,
-			CreatedAt:     timestamppb.New(time.UnixMilli(r.CreatedAt)),
+			UserId:        strconv.FormatInt(r.UserID, 10),
+			BlockedUserId: strconv.FormatInt(r.FriendID, 10),
+			CreatedAt:     timestamppb.New(r.CreatedAt),
 		})
 	}
 
@@ -333,6 +333,38 @@ func (s *ContactServiceImpl) GetBlacklist(ctx context.Context, req *pb.GetBlackl
 		Message: "success",
 		Records: pbRecords,
 		Total:   int32(total),
+	}, nil
+}
+
+func (s *ContactServiceImpl) CheckFriendship(ctx context.Context, req *pb.CheckFriendshipRequest) (*pb.CheckFriendshipResponse, error) {
+	logger.Info("\x1b[36m🔵 [Contact] 检查好友关系\x1b[0m",
+		logger.StringField("user_id", req.UserId),
+		logger.StringField("friend_id", req.FriendId))
+
+	friendship, err := s.service.GetFriendship(ctx, req.UserId, req.FriendId)
+	if err != nil {
+		logger.Warn("\x1b[33m🟡 [Contact] 好友关系记录不存在\x1b[0m", logger.ErrorField(err))
+		return &pb.CheckFriendshipResponse{
+			Code:      200,
+			Message:   "查询成功",
+			IsFriend:  false,
+			IsBlocked: false,
+		}, nil
+	}
+
+	isFriend := friendship.Status == model.FriendshipStatusAccepted
+	isBlocked := friendship.Status == model.FriendshipStatusBlocked
+
+	logger.Info("\x1b[32m🟢 [Contact] 检查好友关系完成\x1b[0m",
+		logger.BoolField("is_friend", isFriend),
+		logger.BoolField("is_blocked", isBlocked),
+		logger.StringField("status", string(friendship.Status)))
+
+	return &pb.CheckFriendshipResponse{
+		Code:      200,
+		Message:   "查询成功",
+		IsFriend:  isFriend,
+		IsBlocked: isBlocked,
 	}, nil
 }
 
@@ -347,11 +379,4 @@ func friendRequestStatusToProto(status model.FriendRequestStatus) pb.FriendReque
 	default:
 		return pb.FriendRequestStatus_FRIEND_REQUEST_STATUS_UNSPECIFIED
 	}
-}
-
-func int64ToTime(t int64) time.Time {
-	if t == 0 {
-		return time.Now()
-	}
-	return time.UnixMilli(t)
 }

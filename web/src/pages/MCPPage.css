@@ -1,0 +1,270 @@
+.mcp-page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.mcp-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.mcp-header h2 {
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.mcp-subtitle {
+  font-size: 13px;
+  color: var(--ba-text-light);
+  margin-top: 4px;
+}
+
+.mcp-section {
+  margin-bottom: 32px;
+}
+
+.mcp-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--ba-text);
+}
+
+.mcp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.mcp-card {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mcp-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mcp-card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.1), rgba(34, 211, 238, 0.1));
+  color: var(--ba-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mcp-card-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-card-name {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.mcp-card-desc {
+  font-size: 13px;
+  color: var(--ba-text-light);
+  margin-top: 4px;
+}
+
+.mcp-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--ba-text-light);
+  margin-top: 4px;
+}
+
+.mcp-card-meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mcp-card-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ba-border);
+}
+
+.mcp-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mcp-tag-sse {
+  background: rgba(96, 165, 250, 0.1);
+  color: var(--ba-blue);
+}
+
+.mcp-tag-http {
+  background: rgba(125, 211, 232, 0.1);
+  color: var(--ba-cyan);
+}
+
+.mcp-tag-builtin {
+  background: rgba(80, 200, 120, 0.1);
+  color: var(--ba-success);
+}
+
+.mcp-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--ba-text-light);
+}
+
+.mcp-empty p {
+  margin-top: 12px;
+  font-size: 16px;
+}
+
+.mcp-empty-hint {
+  font-size: 13px !important;
+  opacity: 0.7;
+}
+
+.mcp-toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--ba-border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+  border: none;
+  padding: 0;
+}
+
+.mcp-toggle.active {
+  background: var(--ba-blue);
+}
+
+.mcp-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #e2e8f0;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.mcp-toggle.active::after {
+  transform: translateX(16px);
+}
+
+.mcp-test-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.mcp-test-success {
+  background: rgba(80, 200, 120, 0.1);
+  border: 1px solid rgba(80, 200, 120, 0.2);
+}
+
+.mcp-test-fail {
+  background: rgba(240, 80, 80, 0.1);
+  border: 1px solid rgba(240, 80, 80, 0.2);
+}
+
+.mcp-tool-list {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mcp-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--ba-bg-hover);
+  color: var(--ba-text);
+}
+
+.mcp-call-box {
+  padding: 20px;
+}
+
+.mcp-result-box {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--ba-bg);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.mcp-result-box pre {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ba-text-light);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mcp-logs-box {
+  padding: 0;
+  overflow-x: auto;
+}
+
+.mcp-logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mcp-logs-table th {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ba-border);
+  font-weight: 600;
+  color: var(--ba-text-light);
+  font-size: 12px;
+}
+
+.mcp-logs-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ba-border);
+}
+
+.mcp-logs-table tr:last-child td {
+  border-bottom: none;
+}
+
+.mcp-logs-table tr:hover {
+  background: var(--ba-bg-hover);
+}

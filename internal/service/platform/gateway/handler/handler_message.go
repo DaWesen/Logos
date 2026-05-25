@@ -37,7 +37,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 
 func (h *Handler) BatchSendMessage(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchSendMessageReq
@@ -59,7 +59,7 @@ func (h *Handler) BatchSendMessage(c *gin.Context) {
 
 func (h *Handler) Subscribe(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.SubscribeReq
@@ -81,7 +81,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 
 func (h *Handler) ConsumeMessages(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.ConsumeMessageReq
@@ -103,7 +103,7 @@ func (h *Handler) ConsumeMessages(c *gin.Context) {
 
 func (h *Handler) AcknowledgeMessage(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.AcknowledgeMessageReq
@@ -125,7 +125,7 @@ func (h *Handler) AcknowledgeMessage(c *gin.Context) {
 
 func (h *Handler) BatchAcknowledgeMessages(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchAcknowledgeMessageReq
@@ -147,7 +147,7 @@ func (h *Handler) BatchAcknowledgeMessages(c *gin.Context) {
 
 func (h *Handler) GetMessageStats(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.MessageClient.GetMessageStats(context.Background(), &pb.EmptyReq{})
@@ -164,7 +164,7 @@ func (h *Handler) GetMessageStats(c *gin.Context) {
 
 func (h *Handler) CreateTopic(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.GetByTopicReq
@@ -187,7 +187,7 @@ func (h *Handler) CreateTopic(c *gin.Context) {
 func (h *Handler) DeleteTopic(c *gin.Context) {
 	topicID, _ := strconv.ParseInt(c.Param("topic"), 10, 64)
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	req := &pb.GetByTopicReq{Topic: pb.Topic(topicID)}
@@ -205,7 +205,7 @@ func (h *Handler) DeleteTopic(c *gin.Context) {
 
 func (h *Handler) ClearMessages(c *gin.Context) {
 	if h.MessageClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��Ϣ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.GetByTopicReq

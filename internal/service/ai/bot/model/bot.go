@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -31,11 +32,15 @@ type Bot struct {
 
 // Conversation 对话数据模型
 type Conversation struct {
-	ID        string         `gorm:"primaryKey;size:36;comment:对话ID" json:"id"`
-	BotID     string         `gorm:"index;size:36;not null;comment:BotID" json:"botId"`
-	UserID    string         `gorm:"index;size:36;not null;comment:用户ID" json:"userId"`
+	ID        string         `gorm:"type:varchar(100);primaryKey;comment:对话ID" json:"id"`
+	ChatID    string         `gorm:"type:varchar(100);index;comment:聊天ID" json:"chatId"`
+	ChatType  int            `gorm:"type:integer;index;comment:聊天类型" json:"chatType"`
+	Name      string         `gorm:"type:varchar(255);comment:名称" json:"name"`
+	Avatar    string         `gorm:"type:varchar(255);comment:头像" json:"avatar"`
+	BotID     string         `gorm:"type:varchar(36);index;comment:BotID" json:"botId"`
+	UserID    string         `gorm:"type:varchar(36);index;comment:用户ID" json:"userId"`
 	Title     string         `gorm:"type:text;comment:对话标题" json:"title"`
-	Status    string         `gorm:"size:20;default:active;comment:状态" json:"status"`
+	Status    string         `gorm:"type:varchar(20);default:active;comment:状态" json:"status"`
 	Messages  []Message      `gorm:"foreignKey:ConversationID;comment:消息列表" json:"messages"`
 	CreatedAt time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
 	UpdatedAt time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
@@ -44,13 +49,27 @@ type Conversation struct {
 
 // Message 消息数据模型
 type Message struct {
-	ID             string    `gorm:"primaryKey;size:36;comment:消息ID" json:"id"`
-	BotID          string    `gorm:"index;size:36;comment:BotID" json:"botId"`
-	ConversationID string    `gorm:"index;size:36;not null;comment:对话ID" json:"conversationId"`
-	Role           string    `gorm:"size:50;not null;comment:角色" json:"role"`
-	Content        string    `gorm:"type:text;not null;comment:消息内容" json:"content"`
-	Metadata       JSONMap   `gorm:"type:jsonb;comment:元数据" json:"metadata"`
-	CreatedAt      time.Time `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
+	ID             string         `gorm:"type:varchar(36);primaryKey;comment:消息ID" json:"id"`
+	RequestID      string         `gorm:"type:varchar(36);comment:请求ID" json:"requestId"`
+	ConversationID string         `gorm:"type:varchar(100);index;comment:会话ID" json:"conversationId"`
+	ChatID         string         `gorm:"type:varchar(100);index;comment:聊天ID" json:"chatId"`
+	ChatType       int            `gorm:"type:integer;comment:聊天类型" json:"chatType"`
+	SenderID       string         `gorm:"type:varchar(36);index;not null;comment:发送者ID" json:"senderId"`
+	BotID          string         `gorm:"type:varchar(36);index;comment:BotID" json:"botId"`
+	MessageType    int            `gorm:"type:integer;default:1;comment:消息类型" json:"messageType"`
+	Content        string         `gorm:"type:text;comment:消息内容" json:"content"`
+	MediaURL       string         `gorm:"type:varchar(500);comment:媒体URL" json:"mediaUrl"`
+	MediaMeta      string         `gorm:"type:text;comment:媒体元数据" json:"mediaMeta"`
+	Metadata       JSONMap        `gorm:"type:jsonb;comment:元数据" json:"metadata"`
+	MentionUserIDs []string       `gorm:"type:jsonb;comment:提及用户ID列表" json:"mentionUserIds"`
+	ReplyToMessage string         `gorm:"type:varchar(36);comment:回复消息ID" json:"replyToMessage"`
+	Status         string         `gorm:"type:varchar(50);default:'sent';comment:消息状态" json:"status"`
+	IsRead         bool           `gorm:"default:false;comment:是否已读" json:"isRead"`
+	Channel        string         `gorm:"type:varchar(50);default:'web';comment:消息渠道" json:"channel"`
+	Role           string         `gorm:"type:varchar(50);default:'user';comment:角色" json:"role"`
+	CreatedAt      time.Time      `gorm:"type:timestamptz;comment:创建时间" json:"createdAt"`
+	UpdatedAt      time.Time      `gorm:"type:timestamptz;comment:更新时间" json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
 }
 
 // Prompt 提示词模型
@@ -71,20 +90,26 @@ type Prompt struct {
 
 // UserMemory 用户记忆模型
 type UserMemory struct {
-	ID        string         `gorm:"primaryKey;size:36;comment:记忆ID" json:"id"`
-	UserID    string         `gorm:"index;size:36;not null;comment:用户ID" json:"userId"`
-	BotID     string         `gorm:"index;size:36;not null;comment:BotID" json:"botId"`
-	Key       string         `gorm:"size:255;not null;comment:记忆键" json:"key"`
-	Value     string         `gorm:"type:text;not null;comment:记忆值" json:"value"`
-	CreatedAt time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
-	UpdatedAt time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
+	ID         string         `gorm:"primaryKey;size:36" json:"id"`
+	UserID     string         `gorm:"index;size:36;not null" json:"userId"`
+	BotID      string         `gorm:"index;size:36;not null" json:"botId"`
+	Key        string         `gorm:"size:255;not null" json:"key"`
+	Value      string         `gorm:"type:text;not null" json:"value"`
+	Category   string         `gorm:"size:50;index" json:"category"`
+	Source     string         `gorm:"size:50" json:"source"`
+	Confidence float64        `gorm:"type:decimal(3,2);default:0.8" json:"confidence"`
+	CreatedAt  time.Time      `gorm:"autoCreateTime" json:"createdAt"`
+	UpdatedAt  time.Time      `gorm:"autoUpdateTime" json:"updatedAt"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // JSONMap JSON映射类型
 type JSONMap map[string]string
 
 func (j JSONMap) Value() (driver.Value, error) {
+	if j == nil {
+		return json.Marshal(map[string]string{})
+	}
 	return json.Marshal(j)
 }
 
@@ -96,7 +121,35 @@ func (j *JSONMap) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, j)
 }
 
+func (m *Message) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == "" {
+		m.ID = uuid.New().String()
+	}
+	if m.RequestID == "" {
+		m.RequestID = m.ID
+	}
+	if m.Metadata == nil {
+		m.Metadata = make(JSONMap)
+	}
+	if m.MentionUserIDs == nil {
+		m.MentionUserIDs = []string{}
+	}
+	if m.MediaMeta == "" {
+		m.MediaMeta = "{}"
+	}
+	return nil
+}
+
 // AutoMigrate 自动迁移数据库表
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{})
+	if err := db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{}); err != nil {
+		return err
+	}
+
+	// 创建复合索引
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_bots_user_deleted_created ON bots(user_id, deleted_at, created_at DESC)`).Error; err != nil {
+		return err
+	}
+
+	return nil
 }

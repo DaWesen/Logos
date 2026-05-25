@@ -74,18 +74,29 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 
 - **内置聊天 Bot**：接入多家厂商模型接口，用户可直接 @Bot 对话
 - **RAG 知识库 Bot**：用户可上传多种格式的文档构建私有知识库，Bot 可基于知识库回答问题
+- **自动存入知识库**：Bot 聊天界面可开启"自动存入知识库"开关，每条对话自动向量化存入关联的 RAG 知识库
+- **向量模型自动同步**：Bot 配置向量模型时自动同步到关联的 RAG 知识库，确保向量化一致性
 - **MCP 工具集成**：Bot 可调用外部工具（天气查询、代码执行、Web 搜索、计算器等），扩展能力边界
 - **多 Bot 协作**：支持配置多个不同人设/能力的 Bot，按场景自动路由或由用户指定
 - **记忆能力**：Bot 记住用户偏好与历史交互，跨会话保持上下文
 - **消息总结**：一键总结群聊/单聊历史消息，生成要点摘要与待办提取
 - **智能回复候选**：根据上下文生成回复候选，用户可一键选用
-- **实时多语言翻译**
+- **实时多语言翻译**：支持前端配置翻译模型（DeepSeek/OpenAI 等），不再硬编码
 - **消息审核**：接入模型对消息内容进行实时审核与过滤
 
 ### 计费管理
 
 - 支持用户提供自己的 API Key，也可使用平台模型
 - 完整的计费记录与余额管理
+- 多 Provider 计费支持（DeepSeek/OpenAI/Claude 等），根据模型名称自动推断 Provider
+- 交易记录正确展示金额与时间（兼容 proto Timestamp 对象格式）
+
+### 系统监控
+
+- **服务状态面板**：实时展示所有微服务运行状态（UP/DOWN/未上报）
+- **双模式连接信息**：同时展示 etcd 服务发现名称和本地直连地址
+- **指标/日志/告警**：支持按服务、类型、级别等多维度查询
+- **自动采集**：Monitoring 服务启动后自动通过 etcd 采集各服务注册状态
 
 ## 快速开始
 
@@ -193,7 +204,7 @@ Authorization: Bearer <token>
 | `/api/v1/chat`       | 聊天     | POST /message, POST /search, GET /history, POST /group |
 | `/api/v1/im`         | 即时通讯   | POST /connect, POST /online-status, GET /stream        |
 | `/api/v1/message`    | 消息队列   | POST /send, POST /subscribe, GET /consume, POST /ack   |
-| `/api/v1/bot`        | AI 机器人 | POST, GET, POST /message, GET /history                 |
+| `/api/v1/bot`        | AI 机器人 | POST, GET, POST /message, GET /history, POST /auto-save-kb |
 | `/api/v1/knowledge`  | 知识图谱   | POST /entities, POST /relations, POST /search          |
 | `/api/v1/search`     | 全文搜索   | POST, POST /documents, POST /indexes/:type             |
 | `/api/v1/vector`     | 向量检索   | POST /collections, POST /vectorize, POST /search       |
@@ -206,7 +217,7 @@ Authorization: Bearer <token>
 | `/api/v1/mcp`        | MCP 工具 | POST /call, POST /tools, GET /tools                    |
 | `/api/v1/moderation` | 内容审核   | POST /translate, POST /content, GET /records           |
 | `/api/v1/billing`    | 计费     | POST /deposit, GET /account, GET /transactions         |
-| `/api/v1/monitoring` | 监控     | POST /metric, POST /log, GET /alerts                   |
+| `/api/v1/monitoring` | 监控     | POST /metric, POST /log, GET /alerts, GET /services, GET /service-status/list |
 | `/api/v1/file`       | 文件上传   | POST /upload, DELETE, GET /url                         |
 
 ## 服务端口

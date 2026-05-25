@@ -24,6 +24,7 @@ type RegisterFunc func(server *grpc.Server)
 type ServerConfig struct {
 	ServiceName string
 	Port        int
+	Host        string // 注册到 etcd 的 host，默认 127.0.0.1
 	Etcd        EtcdConfig
 	Governance  *governance.Config
 }
@@ -44,8 +45,12 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 			MaxConnectionIdle:     15 * time.Minute,
 			MaxConnectionAge:      30 * time.Minute,
 			MaxConnectionAgeGrace: 10 * time.Second,
-			Time:                  30 * time.Second,
-			Timeout:               10 * time.Second,
+			Time:                  60 * time.Second,
+			Timeout:               20 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             30 * time.Second,
+			PermitWithoutStream: true,
 		}),
 	}
 
@@ -85,7 +90,10 @@ func registerEtcd(cfg ServerConfig) error {
 		return fmt.Errorf("failed to create etcd resolver: %w", err)
 	}
 
-	hostname := os.Getenv("SERVICE_HOST")
+	hostname := cfg.Host
+	if hostname == "" {
+		hostname = os.Getenv("SERVICE_HOST")
+	}
 	if hostname == "" {
 		hostname = os.Getenv("HOSTNAME")
 	}
@@ -93,7 +101,7 @@ func registerEtcd(cfg ServerConfig) error {
 		hostname = "127.0.0.1"
 	}
 	serviceAddr := fmt.Sprintf("%s:%d", hostname, cfg.Port)
-	lease, err := etcdCli.Grant(context.Background(), 10)
+	lease, err := etcdCli.Grant(context.Background(), 60)
 	if err != nil {
 		return fmt.Errorf("failed to create etcd lease: %w", err)
 	}
@@ -130,17 +138,17 @@ func NewDirectClientConn(host string, port int, opts ...grpc.DialOption) (*grpc.
 	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
+			Time:                60 * time.Second,
+			Timeout:             20 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	}
 
 	defaultOpts = append(defaultOpts, opts...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 增加超时时间到 10 秒
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	conn, err := grpc.DialContext(ctx, target, defaultOpts...)
@@ -166,10 +174,11 @@ func NewGRPCClientConnWithGovernance(etcdEndpoints []string, serviceName string,
 		grpc.WithResolvers(etcdResolver),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
+			Time:                60 * time.Second,
+			Timeout:             20 * time.Second,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	}
 
 	if govCfg == nil {

@@ -22,21 +22,24 @@ var (
 )
 
 type KnowledgeService interface {
-	AddEntity(ctx context.Context, entityType, name string, properties map[string]string, description *string) (*model.Entity, error)
-	UpdateEntity(ctx context.Context, id, entityType, name string, properties map[string]string, description *string) (*model.Entity, error)
+	AddEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error)
+	FindOrCreateEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error)
+	UpdateEntity(ctx context.Context, id, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error)
 	DeleteEntity(ctx context.Context, id string) error
 	GetEntity(ctx context.Context, id string) (*model.Entity, error)
-	QueryEntities(ctx context.Context, entityType, name string, properties map[string]string, page, pageSize int) ([]*model.Entity, int64, error)
-	SearchEntities(ctx context.Context, keyword string, entityType *string, page, pageSize int) ([]*model.Entity, int64, error)
+	QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, page, pageSize int) ([]*model.Entity, int64, error)
+	SearchEntities(ctx context.Context, keyword string, entityType *string, collectionID string, page, pageSize int) ([]*model.Entity, int64, error)
 
-	AddRelation(ctx context.Context, relationType, sourceId, targetId string, properties map[string]string, description *string) (*model.Relation, error)
+	AddRelation(ctx context.Context, relationType, sourceId, targetId, collectionID string, properties map[string]string, description *string) (*model.Relation, error)
 	UpdateRelation(ctx context.Context, id, relationType, sourceId, targetId string, properties map[string]string, description *string) (*model.Relation, error)
 	DeleteRelation(ctx context.Context, id string) error
 	GetRelation(ctx context.Context, id string) (*model.Relation, error)
-	QueryRelations(ctx context.Context, relationType, sourceId, targetId string, page, pageSize int) ([]*model.Relation, int64, error)
+	QueryRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string, page, pageSize int) ([]*model.Relation, int64, error)
 
-	GetGraphStats(ctx context.Context) (*model.GraphStats, error)
+	GetGraphStats(ctx context.Context, collectionID string) (*model.GraphStats, error)
 	GetRelatedEntities(ctx context.Context, entityId, relationType string) ([]*model.Entity, error)
+	GetSubgraph(ctx context.Context, entityID string, depth int, collectionID string) (*model.Subgraph, error)
+	GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*model.EntityPath, error)
 
 	ImportData(ctx context.Context, dataType string, data []string) error
 
@@ -59,17 +62,20 @@ func NewKnowledgeService(repo dao.KnowledgeRepository, cache cache.Cache, produc
 	}
 }
 
-func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name string, properties map[string]string, description *string) (*model.Entity, error) {
+func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error) {
 	logger.Info("添加实体请求",
 		logger.StringField("type", entityType),
-		logger.StringField("name", name))
+		logger.StringField("name", name),
+		logger.StringField("collectionId", collectionID))
 
 	entity := &model.Entity{
-		Type:       entityType,
-		Name:       name,
-		Properties: model.JSONMap(properties),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		Type:         entityType,
+		Name:         name,
+		CollectionID: collectionID,
+		Color:        color,
+		Properties:   model.JSONMap(properties),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 	if description != nil {
 		entity.Description = description
@@ -80,28 +86,9 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name s
 		return nil, ErrInternalServer
 	}
 
-	cacheKey := fmt.Sprintf("entity:%s", entity.ID)
-	entityJSON, _ := json.Marshal(entity)
-	if s.cache != nil {
-		if err := s.cache.Set(ctx, cacheKey, string(entityJSON), 1*time.Hour); err != nil {
-			logger.Warn("缓存实体失败",
-				logger.StringField("id", entity.ID),
-				logger.ErrorField(err))
-		}
-	}
-
-	if s.producer != nil {
-		event := map[string]interface{}{
-			"action": "create",
-			"entity": entity,
-		}
-		eventJSON, _ := json.Marshal(event)
-		if err := s.producer.SendKnowledgeEvent(ctx, entity.ID, eventJSON); err != nil {
-			logger.Warn("发送知识变更事件失败",
-				logger.StringField("id", entity.ID),
-				logger.ErrorField(err))
-		}
-	}
+	s.cacheEntity(ctx, entity)
+	s.indexEntityToES(ctx, entity)
+	s.sendEntityEvent(ctx, "create", entity)
 
 	logger.Info("添加实体成功",
 		logger.StringField("id", entity.ID),
@@ -110,7 +97,86 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name s
 	return entity, nil
 }
 
-func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType, name string, properties map[string]string, description *string) (*model.Entity, error) {
+func (s *knowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error) {
+	existing, err := s.repo.FindEntityByNameAndType(ctx, name, entityType, collectionID)
+	if err != nil {
+		logger.Warn("查询已有实体失败",
+			logger.StringField("name", name),
+			logger.StringField("type", entityType),
+			logger.ErrorField(err))
+	}
+
+	if existing != nil {
+		needUpdate := false
+		if description != nil && existing.Description == nil {
+			existing.Description = description
+			needUpdate = true
+		}
+		if properties != nil && len(properties) > 0 {
+			if existing.Properties == nil {
+				existing.Properties = model.JSONMap(properties)
+				needUpdate = true
+			} else {
+				for k, v := range properties {
+					if _, ok := existing.Properties[k]; !ok {
+						existing.Properties[k] = v
+						needUpdate = true
+					}
+				}
+			}
+		}
+
+		if needUpdate {
+			existing.UpdatedAt = time.Now()
+			if err := s.repo.UpdateEntity(ctx, existing); err != nil {
+				logger.Warn("更新已有实体失败",
+					logger.StringField("id", existing.ID),
+					logger.ErrorField(err))
+			} else {
+				s.cacheEntity(ctx, existing)
+			}
+		}
+
+		logger.Info("复用已有实体",
+			logger.StringField("id", existing.ID),
+			logger.StringField("name", name),
+			logger.StringField("type", entityType))
+
+		return existing, nil
+	}
+
+	entity := &model.Entity{
+		Type:         entityType,
+		Name:         name,
+		CollectionID: collectionID,
+		Color:        color,
+		Properties:   model.JSONMap(properties),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if description != nil {
+		entity.Description = description
+	}
+
+	if err := s.repo.CreateEntity(ctx, entity); err != nil {
+		logger.Error("创建实体失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	s.cacheEntity(ctx, entity)
+	s.indexEntityToES(ctx, entity)
+	s.sendEntityEvent(ctx, "create", entity)
+
+	logger.Info("创建新实体",
+		logger.StringField("id", entity.ID),
+		logger.StringField("name", name),
+		logger.StringField("type", entityType),
+		logger.StringField("collectionId", collectionID))
+
+	return entity, nil
+}
+
+func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error) {
 	logger.Info("更新实体请求",
 		logger.StringField("id", id))
 
@@ -130,6 +196,9 @@ func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType,
 	if name != "" {
 		entity.Name = name
 	}
+	if collectionID != "" {
+		entity.CollectionID = collectionID
+	}
 	if properties != nil {
 		entity.Properties = model.JSONMap(properties)
 	}
@@ -143,28 +212,8 @@ func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType,
 		return nil, ErrInternalServer
 	}
 
-	cacheKey := fmt.Sprintf("entity:%s", id)
-	entityJSON, _ := json.Marshal(entity)
-	if s.cache != nil {
-		if err := s.cache.Set(ctx, cacheKey, string(entityJSON), 1*time.Hour); err != nil {
-			logger.Warn("更新实体缓存失败",
-				logger.StringField("id", id),
-				logger.ErrorField(err))
-		}
-	}
-
-	if s.producer != nil {
-		event := map[string]interface{}{
-			"action": "update",
-			"entity": entity,
-		}
-		eventJSON, _ := json.Marshal(event)
-		if err := s.producer.SendKnowledgeEvent(ctx, id, eventJSON); err != nil {
-			logger.Warn("发送知识变更事件失败",
-				logger.StringField("id", id),
-				logger.ErrorField(err))
-		}
-	}
+	s.cacheEntity(ctx, entity)
+	s.sendEntityEvent(ctx, "update", entity)
 
 	logger.Info("更新实体成功", logger.StringField("id", id))
 	return entity, nil
@@ -228,31 +277,24 @@ func (s *knowledgeServiceImpl) GetEntity(ctx context.Context, id string) (*model
 		return nil, ErrEntityNotFound
 	}
 
-	if s.cache != nil {
-		entityJSON, _ := json.Marshal(entity)
-		if err := s.cache.Set(ctx, cacheKey, string(entityJSON), 1*time.Hour); err != nil {
-			logger.Warn("缓存实体失败",
-				logger.StringField("id", id),
-				logger.ErrorField(err))
-		}
-	}
-
+	s.cacheEntity(ctx, entity)
 	return entity, nil
 }
 
-func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, name string, properties map[string]string, page, pageSize int) ([]*model.Entity, int64, error) {
+func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, page, pageSize int) ([]*model.Entity, int64, error) {
 	logger.Info("查询实体请求",
 		logger.StringField("type", entityType),
-		logger.StringField("name", name))
+		logger.StringField("name", name),
+		logger.StringField("collectionId", collectionID))
 
 	offset := (page - 1) * pageSize
-	entities, err := s.repo.QueryEntities(ctx, entityType, name, properties, offset, pageSize)
+	entities, err := s.repo.QueryEntities(ctx, entityType, name, collectionID, properties, offset, pageSize)
 	if err != nil {
 		logger.Error("查询实体失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
 	}
 
-	total, err := s.repo.CountEntities(ctx, entityType, name, properties)
+	total, err := s.repo.CountEntities(ctx, entityType, name, collectionID, properties)
 	if err != nil {
 		logger.Error("统计实体失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
@@ -261,19 +303,21 @@ func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, na
 	return entities, total, nil
 }
 
-func (s *knowledgeServiceImpl) AddRelation(ctx context.Context, relationType, sourceId, targetId string, properties map[string]string, description *string) (*model.Relation, error) {
+func (s *knowledgeServiceImpl) AddRelation(ctx context.Context, relationType, sourceId, targetId, collectionID string, properties map[string]string, description *string) (*model.Relation, error) {
 	logger.Info("添加关系请求",
 		logger.StringField("type", relationType),
 		logger.StringField("sourceId", sourceId),
-		logger.StringField("targetId", targetId))
+		logger.StringField("targetId", targetId),
+		logger.StringField("collectionId", collectionID))
 
 	relation := &model.Relation{
-		Type:       relationType,
-		SourceID:   sourceId,
-		TargetID:   targetId,
-		Properties: model.JSONMap(properties),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		Type:         relationType,
+		SourceID:     sourceId,
+		TargetID:     targetId,
+		CollectionID: collectionID,
+		Properties:   model.JSONMap(properties),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 	if description != nil {
 		relation.Description = description
@@ -357,20 +401,21 @@ func (s *knowledgeServiceImpl) GetRelation(ctx context.Context, id string) (*mod
 	return relation, nil
 }
 
-func (s *knowledgeServiceImpl) QueryRelations(ctx context.Context, relationType, sourceId, targetId string, page, pageSize int) ([]*model.Relation, int64, error) {
+func (s *knowledgeServiceImpl) QueryRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string, page, pageSize int) ([]*model.Relation, int64, error) {
 	logger.Info("查询关系请求",
 		logger.StringField("type", relationType),
 		logger.StringField("sourceId", sourceId),
-		logger.StringField("targetId", targetId))
+		logger.StringField("targetId", targetId),
+		logger.StringField("collectionId", collectionID))
 
 	offset := (page - 1) * pageSize
-	relations, err := s.repo.QueryRelations(ctx, relationType, sourceId, targetId, offset, pageSize)
+	relations, err := s.repo.QueryRelations(ctx, relationType, sourceId, targetId, collectionID, offset, pageSize)
 	if err != nil {
 		logger.Error("查询关系失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
 	}
 
-	total, err := s.repo.CountRelations(ctx, relationType, sourceId, targetId)
+	total, err := s.repo.CountRelations(ctx, relationType, sourceId, targetId, collectionID)
 	if err != nil {
 		logger.Error("统计关系失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
@@ -379,10 +424,11 @@ func (s *knowledgeServiceImpl) QueryRelations(ctx context.Context, relationType,
 	return relations, total, nil
 }
 
-func (s *knowledgeServiceImpl) GetGraphStats(ctx context.Context) (*model.GraphStats, error) {
-	logger.Info("获取图谱统计信息请求")
+func (s *knowledgeServiceImpl) GetGraphStats(ctx context.Context, collectionID string) (*model.GraphStats, error) {
+	logger.Info("获取图谱统计信息请求",
+		logger.StringField("collectionId", collectionID))
 
-	stats, err := s.repo.GetGraphStats(ctx)
+	stats, err := s.repo.GetGraphStats(ctx, collectionID)
 	if err != nil {
 		logger.Error("获取图谱统计信息失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
@@ -403,6 +449,36 @@ func (s *knowledgeServiceImpl) GetRelatedEntities(ctx context.Context, entityId,
 	}
 
 	return entities, nil
+}
+
+func (s *knowledgeServiceImpl) GetSubgraph(ctx context.Context, entityID string, depth int, collectionID string) (*model.Subgraph, error) {
+	logger.Info("获取子图请求",
+		logger.StringField("entityId", entityID),
+		logger.IntField("depth", depth),
+		logger.StringField("collectionId", collectionID))
+
+	subgraph, err := s.repo.GetSubgraph(ctx, entityID, depth, collectionID)
+	if err != nil {
+		logger.Error("获取子图失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	return subgraph, nil
+}
+
+func (s *knowledgeServiceImpl) GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*model.EntityPath, error) {
+	logger.Info("获取实体路径请求",
+		logger.StringField("sourceId", sourceID),
+		logger.StringField("targetId", targetID),
+		logger.IntField("maxDepth", maxDepth))
+
+	paths, err := s.repo.GetEntityPaths(ctx, sourceID, targetID, maxDepth, collectionID)
+	if err != nil {
+		logger.Error("获取实体路径失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	return paths, nil
 }
 
 func (s *knowledgeServiceImpl) WithTransaction(ctx context.Context, fn func(txService KnowledgeService) error) error {
@@ -449,6 +525,8 @@ func (s *knowledgeServiceImpl) importEntities(ctx context.Context, data []string
 			continue
 		}
 
+		collectionID, _ := entityData["collection_id"].(string)
+
 		properties := make(map[string]string)
 		if props, ok := entityData["properties"].(map[string]interface{}); ok {
 			for k, v := range props {
@@ -463,7 +541,7 @@ func (s *knowledgeServiceImpl) importEntities(ctx context.Context, data []string
 			description = &desc
 		}
 
-		if _, err := s.AddEntity(ctx, entityType, name, properties, description); err != nil {
+		if _, err := s.FindOrCreateEntity(ctx, entityType, name, collectionID, properties, description, ""); err != nil {
 			logger.Warn("导入实体失败",
 				logger.StringField("name", name),
 				logger.ErrorField(err))
@@ -506,7 +584,7 @@ func (s *knowledgeServiceImpl) importRelations(ctx context.Context, data []strin
 			description = &desc
 		}
 
-		if _, err := s.AddRelation(ctx, relationType, sourceId, targetId, properties, description); err != nil {
+		if _, err := s.AddRelation(ctx, relationType, sourceId, targetId, "", properties, description); err != nil {
 			logger.Warn("导入关系失败",
 				logger.StringField("type", relationType),
 				logger.ErrorField(err))
@@ -517,15 +595,16 @@ func (s *knowledgeServiceImpl) importRelations(ctx context.Context, data []strin
 	return nil
 }
 
-func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword string, entityType *string, page, pageSize int) ([]*model.Entity, int64, error) {
+func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword string, entityType *string, collectionID string, page, pageSize int) ([]*model.Entity, int64, error) {
 	logger.Info("搜索实体请求",
 		logger.StringField("keyword", keyword),
+		logger.StringField("collectionId", collectionID),
 		logger.IntField("page", page),
 		logger.IntField("pageSize", pageSize))
 
 	if s.esManager == nil {
 		logger.Warn("ES未初始化，降级到数据库搜索")
-		return s.searchEntitiesFallback(ctx, keyword, entityType, page, pageSize)
+		return s.searchEntitiesFallback(ctx, keyword, entityType, collectionID, page, pageSize)
 	}
 
 	from := (page - 1) * pageSize
@@ -544,15 +623,24 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 		},
 	}
 
+	filters := []map[string]interface{}{}
 	if entityType != nil && *entityType != "" {
-		boolQuery := query["bool"].(map[string]interface{})
-		boolQuery["filter"] = []map[string]interface{}{
-			{
-				"term": map[string]interface{}{
-					"type": *entityType,
-				},
+		filters = append(filters, map[string]interface{}{
+			"term": map[string]interface{}{
+				"type": *entityType,
 			},
-		}
+		})
+	}
+	if collectionID != "" {
+		filters = append(filters, map[string]interface{}{
+			"term": map[string]interface{}{
+				"collectionId": collectionID,
+			},
+		})
+	}
+	if len(filters) > 0 {
+		boolQuery := query["bool"].(map[string]interface{})
+		boolQuery["filter"] = filters
 	}
 
 	searchQuery := es.SearchQuery{
@@ -564,7 +652,7 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 	var result es.SearchResult
 	if err := s.esManager.Search("entities", searchQuery, &result); err != nil {
 		logger.Warn("ES搜索失败，降级到数据库搜索", logger.ErrorField(err))
-		return s.searchEntitiesFallback(ctx, keyword, entityType, page, pageSize)
+		return s.searchEntitiesFallback(ctx, keyword, entityType, collectionID, page, pageSize)
 	}
 
 	var entities []*model.Entity
@@ -575,6 +663,11 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 		}
 	}
 
+	if len(entities) == 0 {
+		logger.Info("ES搜索无结果，降级到数据库搜索")
+		return s.searchEntitiesFallback(ctx, keyword, entityType, collectionID, page, pageSize)
+	}
+
 	logger.Info("ES搜索实体成功",
 		logger.IntField("count", len(entities)),
 		logger.Int64Field("total", result.Hits.Total.Value))
@@ -582,14 +675,54 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 	return entities, result.Hits.Total.Value, nil
 }
 
-func (s *knowledgeServiceImpl) searchEntitiesFallback(ctx context.Context, keyword string, entityType *string, page, pageSize int) ([]*model.Entity, int64, error) {
+func (s *knowledgeServiceImpl) searchEntitiesFallback(ctx context.Context, keyword string, entityType *string, collectionID string, page, pageSize int) ([]*model.Entity, int64, error) {
 	et := ""
 	if entityType != nil {
 		et = *entityType
 	}
-	entities, total, err := s.QueryEntities(ctx, et, keyword, nil, page, pageSize)
+	entities, total, err := s.QueryEntities(ctx, et, keyword, collectionID, nil, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 	return entities, total, nil
+}
+
+func (s *knowledgeServiceImpl) cacheEntity(ctx context.Context, entity *model.Entity) {
+	if s.cache == nil {
+		return
+	}
+	cacheKey := fmt.Sprintf("entity:%s", entity.ID)
+	entityJSON, _ := json.Marshal(entity)
+	if err := s.cache.Set(ctx, cacheKey, string(entityJSON), 1*time.Hour); err != nil {
+		logger.Warn("缓存实体失败",
+			logger.StringField("id", entity.ID),
+			logger.ErrorField(err))
+	}
+}
+
+func (s *knowledgeServiceImpl) indexEntityToES(ctx context.Context, entity *model.Entity) {
+	if s.esManager == nil {
+		return
+	}
+	if err := s.esManager.AddDocument("entities", entity.ID, entity); err != nil {
+		logger.Warn("同步实体到ES失败",
+			logger.StringField("id", entity.ID),
+			logger.ErrorField(err))
+	}
+}
+
+func (s *knowledgeServiceImpl) sendEntityEvent(ctx context.Context, action string, entity *model.Entity) {
+	if s.producer == nil {
+		return
+	}
+	event := map[string]interface{}{
+		"action": action,
+		"entity": entity,
+	}
+	eventJSON, _ := json.Marshal(event)
+	if err := s.producer.SendKnowledgeEvent(ctx, entity.ID, eventJSON); err != nil {
+		logger.Warn("发送知识变更事件失败",
+			logger.StringField("id", entity.ID),
+			logger.ErrorField(err))
+	}
 }

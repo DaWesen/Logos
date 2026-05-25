@@ -1,8 +1,10 @@
 package bot
 
 import (
+	"Logos/config"
 	"Logos/internal/bot/agent"
 	"Logos/internal/bot/agent/presets"
+	"Logos/internal/bot/provider"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 )
@@ -19,6 +21,15 @@ var (
 // Init 初始化 Bot 模块
 func Init() error {
 	logger.Info("Initializing Bot module...")
+
+	cfg := config.GetConfig()
+
+	// 初始化平台 Provider
+	provider.InitPlatformProvider(
+		cfg.Eino.APIKey,
+		cfg.Eino.BaseURL,
+		cfg.Eino.Model,
+	)
 
 	// 初始化 Eino
 	einoManager, err := eino.InitEino()

@@ -46,8 +46,11 @@ type BotRepository interface {
 	CountPrompts(ctx context.Context, userId, promptType string, isPreset, isPublic *bool) (int64, error)
 
 	GetUserMemory(ctx context.Context, userID, botID string) ([]*model.UserMemory, error)
+	GetUserMemoryByKey(ctx context.Context, userID, botID, key string) (*model.UserMemory, error)
+	GetUserMemoriesByUser(ctx context.Context, userID, botID string) ([]*model.UserMemory, error)
 	SetUserMemory(ctx context.Context, memory *model.UserMemory) error
 	DeleteUserMemory(ctx context.Context, userID, botID, key string) error
+	DeleteUserMemoryByID(ctx context.Context, id string) error
 
 	WithTransaction(ctx context.Context, fn func(txRepo BotRepository) error) error
 }
@@ -292,6 +295,28 @@ func (r *botRepository) GetUserMemory(ctx context.Context, userID, botID string)
 	return memories, err
 }
 
+func (r *botRepository) GetUserMemoryByKey(ctx context.Context, userID, botID, key string) (*model.UserMemory, error) {
+	var memory model.UserMemory
+	err := r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", userID, botID, key).First(&memory).Error
+	if err != nil {
+		return nil, err
+	}
+	return &memory, nil
+}
+
+func (r *botRepository) GetUserMemoriesByUser(ctx context.Context, userID, botID string) ([]*model.UserMemory, error) {
+	var memories []*model.UserMemory
+	query := r.db.WithContext(ctx).Model(&model.UserMemory{})
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	if botID != "" {
+		query = query.Where("bot_id = ?", botID)
+	}
+	err := query.Order("category, updated_at DESC").Find(&memories).Error
+	return memories, err
+}
+
 func (r *botRepository) SetUserMemory(ctx context.Context, memory *model.UserMemory) error {
 	var existing model.UserMemory
 	err := r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", memory.UserID, memory.BotID, memory.Key).First(&existing).Error
@@ -310,6 +335,10 @@ func (r *botRepository) SetUserMemory(ctx context.Context, memory *model.UserMem
 
 func (r *botRepository) DeleteUserMemory(ctx context.Context, userID, botID, key string) error {
 	return r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", userID, botID, key).Delete(&model.UserMemory{}).Error
+}
+
+func (r *botRepository) DeleteUserMemoryByID(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.UserMemory{}).Error
 }
 
 func (r *botRepository) WithTransaction(ctx context.Context, fn func(txRepo BotRepository) error) error {

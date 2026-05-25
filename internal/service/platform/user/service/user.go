@@ -31,7 +31,7 @@ var (
 
 type UserService interface {
 	Register(ctx context.Context, username, password, email, phone string) (*model.User, string, int64, error)
-	Login(ctx context.Context, account, password string) (*model.User, string, int64, error)
+	Login(ctx context.Context, username, password string) (*model.User, string, int64, error)
 	GetUserInfo(ctx context.Context, userID int64) (*model.User, error)
 	GetUserInfoByUsername(ctx context.Context, username string) (*model.User, error)
 	BatchGetUserInfo(ctx context.Context, userIDs []int64) (map[int64]*model.User, error)
@@ -64,7 +64,7 @@ func NewUserService(repo dao.UserRepository, jwtManager *jwt.JWTManager, cache c
 }
 
 func (s *userServiceImpl) Register(ctx context.Context, username, password string, email, phone string) (*model.User, string, int64, error) {
-	logger.Info("�û�ע������",
+	logger.Info("用户注册请求",
 		logger.StringField("username", username))
 
 	if err := s.checkRegisterRateLimit(ctx, username); err != nil {
@@ -73,20 +73,20 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 
 	exists, err := s.repo.CheckUsernameExists(ctx, username)
 	if err != nil {
-		logger.Error("����û���ʧ��",
+		logger.Error("检查用户名失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return nil, "", 0, ErrInternalServer
 	}
 	if exists {
-		logger.Warn("�û����Ѵ���",
+		logger.Warn("用户名已存在",
 			logger.StringField("username", username))
 		return nil, "", 0, ErrUserAlreadyExists
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		logger.Error("�������ʧ��",
+		logger.Error("密码加密失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return nil, "", 0, ErrInternalServer
@@ -105,7 +105,7 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 	}
 
 	if err := s.repo.Create(ctx, u); err != nil {
-		logger.Error("�����û�ʧ��",
+		logger.Error("创建用户失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return nil, "", 0, ErrInternalServer
@@ -113,13 +113,13 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 
 	token, err := s.jwtManager.GenerateToken(strconv.FormatInt(u.ID, 10), "user")
 	if err != nil {
-		logger.Error("��������ʧ��",
+		logger.Error("生成令牌失败",
 			logger.ErrorField(err),
 			logger.Int64Field("user_id", u.ID))
 		return nil, "", 0, ErrInternalServer
 	}
 
-	expireAt := time.Now().Add(time.Hour * 24).Unix()
+	expireAt := time.Now().Add(time.Duration(s.jwtManager.GetTokenExpireHours()) * time.Hour).Unix()
 
 	if s.producer != nil {
 		eventData, _ := json.Marshal(map[string]interface{}{
@@ -130,7 +130,7 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 			"phone":         u.Phone,
 		})
 		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
-		logger.Info("�����û�ע���¼�",
+		logger.Info("发送用户注册事件",
 			logger.Int64Field("user_id", u.ID))
 	}
 
@@ -145,76 +145,76 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 		}
 		err = s.esManager.AddDocument("users", fmt.Sprintf("%d", u.ID), esUser)
 		if err != nil {
-			logger.Error("ͬ���û���ESʧ��",
+			logger.Error("同步用户到ES失败",
 				logger.ErrorField(err),
 				logger.Int64Field("user_id", u.ID))
 		}
 	}
 
-	logger.Info("�û�ע��ɹ�",
+	logger.Info("用户注册成功",
 		logger.Int64Field("user_id", u.ID),
 		logger.StringField("username", username))
 
 	return u, token, expireAt, nil
 }
 
-func (s *userServiceImpl) Login(ctx context.Context, account, password string) (*model.User, string, int64, error) {
-	logger.Info("�û���¼����",
-		logger.StringField("account", account))
+func (s *userServiceImpl) Login(ctx context.Context, username, password string) (*model.User, string, int64, error) {
+	logger.Info("用户登录请求",
+		logger.StringField("username", username))
 
-	if err := s.checkLoginRateLimit(ctx, account); err != nil {
+	if err := s.checkLoginRateLimit(ctx, username); err != nil {
 		return nil, "", 0, err
 	}
 
 	var u *model.User
 	var err error
 
-	u, err = s.repo.FindByUsername(ctx, account)
+	u, err = s.repo.FindByUsername(ctx, username)
 	if err != nil {
-		logger.Error("ͨ���û�����ѯ�û�ʧ��",
+		logger.Error("通过用户名查询用户失败",
 			logger.ErrorField(err),
-			logger.StringField("account", account))
+			logger.StringField("username", username))
 		return nil, "", 0, ErrInternalServer
 	}
 	if u == nil {
-		u, err = s.repo.FindByEmail(ctx, account)
+		u, err = s.repo.FindByEmail(ctx, username)
 		if err != nil {
-			logger.Error("ͨ�������ѯ�û�ʧ��",
+			logger.Error("通过邮箱查询用户失败",
 				logger.ErrorField(err),
-				logger.StringField("account", account))
+				logger.StringField("username", username))
 			return nil, "", 0, ErrInternalServer
 		}
 		if u == nil {
-			u, err = s.repo.FindByPhone(ctx, account)
+			u, err = s.repo.FindByPhone(ctx, username)
 			if err != nil {
-				logger.Error("ͨ���ֻ��Ų�ѯ�û�ʧ��",
+				logger.Error("通过手机号查询用户失败",
 					logger.ErrorField(err),
-					logger.StringField("account", account))
+					logger.StringField("username", username))
 				return nil, "", 0, ErrInternalServer
 			}
 			if u == nil {
-				logger.Warn("�û�������",
-					logger.StringField("account", account))
+				logger.Warn("用户不存在",
+					logger.StringField("username", username))
 				return nil, "", 0, ErrUserNotFound
 			}
 		}
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password)); err != nil {
-		logger.Warn("�������",
-			logger.StringField("account", account))
+		logger.Warn("密码错误",
+			logger.StringField("username", username))
 		return nil, "", 0, ErrWrongPassword
 	}
 
 	token, err := s.jwtManager.GenerateToken(strconv.FormatInt(u.ID, 10), "user")
 	if err != nil {
-		logger.Error("��������ʧ��",
+		logger.Error("生成令牌失败",
 			logger.ErrorField(err),
 			logger.Int64Field("user_id", u.ID))
 		return nil, "", 0, ErrInternalServer
 	}
 
-	expireAt := time.Now().Add(time.Hour * 24).Unix()
+	expireAt := time.Now().Add(time.Duration(s.jwtManager.GetTokenExpireHours()) * time.Hour).Unix()
 
 	if s.producer != nil {
 		eventData, _ := json.Marshal(map[string]interface{}{
@@ -223,19 +223,19 @@ func (s *userServiceImpl) Login(ctx context.Context, account, password string) (
 			"logged_at": time.Now(),
 		})
 		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
-		logger.Info("�����û���¼�¼�",
+		logger.Info("发送用户登录事件",
 			logger.Int64Field("user_id", u.ID))
 	}
 
-	logger.Info("�û���¼�ɹ�",
+	logger.Info("用户登录成功",
 		logger.Int64Field("user_id", u.ID),
-		logger.StringField("account", account))
+		logger.StringField("username", username))
 
 	return u, token, expireAt, nil
 }
 
 func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model.User, error) {
-	logger.Info("��ȡ�û���Ϣ����",
+	logger.Info("获取用户信息请求",
 		logger.Int64Field("user_id", userID))
 
 	if s.cache != nil {
@@ -244,7 +244,7 @@ func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model
 		if err == nil && cachedUser != "" {
 			var user model.User
 			if json.Unmarshal([]byte(cachedUser), &user) == nil {
-				logger.Info("�ӻ����ȡ�û���Ϣ�ɹ�",
+				logger.Info("从缓存获取用户信息成功",
 					logger.Int64Field("user_id", userID))
 				return &user, nil
 			}
@@ -253,13 +253,13 @@ func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model
 
 	u, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("��ѯ�û�ʧ��",
+		logger.Error("查询用户失败",
 			logger.ErrorField(err),
 			logger.Int64Field("user_id", userID))
 		return nil, ErrInternalServer
 	}
 	if u == nil {
-		logger.Warn("�û�������",
+		logger.Warn("用户不存在",
 			logger.Int64Field("user_id", userID))
 		return nil, ErrUserNotFound
 	}
@@ -269,7 +269,7 @@ func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model
 		userData, err := json.Marshal(u)
 		if err == nil {
 			s.cache.Set(ctx, userKey, string(userData), 10*time.Minute)
-			logger.Info("�û���Ϣ���뻺��ɹ�",
+			logger.Info("用户信息写入缓存成功",
 				logger.Int64Field("user_id", userID))
 		}
 	}
@@ -278,18 +278,18 @@ func (s *userServiceImpl) GetUserInfo(ctx context.Context, userID int64) (*model
 }
 
 func (s *userServiceImpl) GetUserInfoByUsername(ctx context.Context, username string) (*model.User, error) {
-	logger.Info("ͨ���û�����ȡ�û���Ϣ����",
+	logger.Info("通过用户名获取用户信息请求",
 		logger.StringField("username", username))
 
 	u, err := s.repo.FindByUsername(ctx, username)
 	if err != nil {
-		logger.Error("ͨ���û�����ѯ�û�ʧ��",
+		logger.Error("通过用户名查询用户失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return nil, ErrInternalServer
 	}
 	if u == nil {
-		logger.Warn("�û�������",
+		logger.Warn("用户不存在",
 			logger.StringField("username", username))
 		return nil, ErrUserNotFound
 	}
@@ -297,25 +297,25 @@ func (s *userServiceImpl) GetUserInfoByUsername(ctx context.Context, username st
 }
 
 func (s *userServiceImpl) BatchGetUserInfo(ctx context.Context, userIDs []int64) (map[int64]*model.User, error) {
-	logger.Info("������ȡ�û���Ϣ����",
+	logger.Info("批量获取用户信息请求",
 		logger.AnyField("user_ids", userIDs))
 
 	return s.repo.BatchGetByIDs(ctx, userIDs)
 }
 
 func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, phone, avatar string, preferences map[string]string, interests []string, oldPassword, newPassword string) error {
-	logger.Info("�����û�����",
+	logger.Info("更新用户数据",
 		logger.Int64Field("user_id", userID))
 
 	u, err := s.repo.FindByID(ctx, userID)
 	if err != nil {
-		logger.Error("��ѯ�û�ʧ��",
+		logger.Error("查询用户失败",
 			logger.ErrorField(err),
 			logger.Int64Field("user_id", userID))
 		return ErrInternalServer
 	}
 	if u == nil {
-		logger.Warn("�û�������",
+		logger.Warn("用户不存在",
 			logger.Int64Field("user_id", userID))
 		return ErrUserNotFound
 	}
@@ -338,13 +338,13 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 
 	if oldPassword != "" && newPassword != "" {
 		if err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(oldPassword)); err != nil {
-			logger.Warn("���������",
+			logger.Warn("旧密码错误",
 				logger.Int64Field("user_id", userID))
 			return ErrOldPasswordWrong
 		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
-			logger.Error("���������ʧ��",
+			logger.Error("密码加密失败",
 				logger.ErrorField(err),
 				logger.Int64Field("user_id", userID))
 			return ErrInternalServer
@@ -353,7 +353,7 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 	}
 
 	if err := s.repo.Update(ctx, u); err != nil {
-		logger.Error("�����û�ʧ��",
+		logger.Error("更新用户失败",
 			logger.ErrorField(err),
 			logger.Int64Field("user_id", userID))
 		return ErrInternalServer
@@ -362,7 +362,7 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 	if s.cache != nil {
 		userKey := cache.GenerateUserKey(userID)
 		s.cache.Delete(ctx, userKey)
-		logger.Info("ɾ���û�����ɹ�",
+		logger.Info("删除用户缓存成功",
 			logger.Int64Field("user_id", userID))
 	}
 
@@ -379,33 +379,33 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 			}
 			err = s.esManager.UpdateDocument("users", fmt.Sprintf("%d", userID), esUser)
 			if err != nil {
-				logger.Error("�����û���ESʧ��",
+				logger.Error("更新用户到ES失败",
 					logger.ErrorField(err),
 					logger.Int64Field("user_id", userID))
 			}
 		}
 	}
 
-	logger.Info("�û����³ɹ�",
+	logger.Info("用户更新成功",
 		logger.Int64Field("user_id", userID))
 
 	return nil
 }
 
 func (s *userServiceImpl) UpdateAvatar(ctx context.Context, userID int64, avatar string) error {
-	logger.Info("����ͷ������",
+	logger.Info("更新头像请求",
 		logger.Int64Field("user_id", userID))
 
 	return s.repo.UpdateAvatar(ctx, userID, avatar)
 }
 
 func (s *userServiceImpl) CheckUsername(ctx context.Context, username string) (bool, error) {
-	logger.Info("����û�������",
+	logger.Info("检查用户名请求",
 		logger.StringField("username", username))
 
 	exists, err := s.repo.CheckUsernameExists(ctx, username)
 	if err != nil {
-		logger.Error("����û���ʧ��",
+		logger.Error("检查用户名失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return false, ErrInternalServer
@@ -414,7 +414,7 @@ func (s *userServiceImpl) CheckUsername(ctx context.Context, username string) (b
 }
 
 func (s *userServiceImpl) BatchCheckUsernames(ctx context.Context, usernames []string) (map[string]bool, error) {
-	logger.Info("��������û�������",
+	logger.Info("批量检查用户名请求",
 		logger.AnyField("usernames", usernames))
 
 	result, err := s.repo.BatchCheckUsername(ctx, usernames)
@@ -431,7 +431,7 @@ func (s *userServiceImpl) BatchCheckUsernames(ctx context.Context, usernames []s
 }
 
 func (s *userServiceImpl) GetUserStats(ctx context.Context, userID int64) (*model.UserStats, int64, error) {
-	logger.Info("��ȡ�û�ͳ����Ϣ����",
+	logger.Info("获取用户统计信息请求",
 		logger.Int64Field("user_id", userID))
 
 	stats, err := s.repo.GetStats(ctx, userID)
@@ -446,7 +446,7 @@ func (s *userServiceImpl) GetUserStats(ctx context.Context, userID int64) (*mode
 }
 
 func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error) {
-	logger.Info("�����û�����",
+	logger.Info("搜索用户请求",
 		logger.StringField("keyword", keyword),
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
@@ -506,11 +506,11 @@ func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page,
 }
 
 func (s *userServiceImpl) VerifyToken(ctx context.Context, token string) (int64, error) {
-	logger.Debug("��֤��������")
+	logger.Debug("验证令牌请求")
 
 	claims, err := s.jwtManager.ParseToken(token)
 	if err != nil {
-		logger.Warn("��Ч����",
+		logger.Warn("无效令牌",
 			logger.ErrorField(err))
 		return 0, ErrTokenInvalid
 	}
@@ -528,16 +528,16 @@ func (s *userServiceImpl) WithTransaction(ctx context.Context, fn func(txService
 	})
 }
 
-func (s *userServiceImpl) checkLoginRateLimit(ctx context.Context, account string) error {
+func (s *userServiceImpl) checkLoginRateLimit(ctx context.Context, username string) error {
 	if s.cache == nil {
 		return nil
 	}
 
-	key := fmt.Sprintf("ratelimit:login:%s", account)
+	key := fmt.Sprintf("ratelimit:login:%s", username)
 
 	current, err := s.cache.IncrBy(ctx, key, 1)
 	if err != nil {
-		logger.Warn("��¼��������ʧ�ܣ�����",
+		logger.Warn("登录频率检查失败，允许",
 			logger.ErrorField(err))
 		return nil
 	}
@@ -547,10 +547,10 @@ func (s *userServiceImpl) checkLoginRateLimit(ctx context.Context, account strin
 	}
 
 	if current > 5 {
-		logger.Warn("��¼Ƶ�ʳ���",
-			logger.StringField("account", account),
+		logger.Warn("登录频率超出",
+			logger.StringField("username", username),
 			logger.Int64Field("count", current))
-		return fmt.Errorf("��������Ƶ������%d�������", 60)
+		return fmt.Errorf("登录频率过高，请%d秒后再试", 60)
 	}
 
 	return nil
@@ -565,7 +565,7 @@ func (s *userServiceImpl) checkRegisterRateLimit(ctx context.Context, username s
 
 	current, err := s.cache.IncrBy(ctx, key, 1)
 	if err != nil {
-		logger.Warn("ע����������ʧ�ܣ�����",
+		logger.Warn("注册频率检查失败，允许",
 			logger.ErrorField(err))
 		return nil
 	}
@@ -575,10 +575,10 @@ func (s *userServiceImpl) checkRegisterRateLimit(ctx context.Context, username s
 	}
 
 	if current > 3 {
-		logger.Warn("ע��Ƶ�ʳ���",
+		logger.Warn("注册频率超出",
 			logger.StringField("username", username),
 			logger.Int64Field("count", current))
-		return fmt.Errorf("ע�����Ƶ������%vСʱ������", 1)
+		return fmt.Errorf("注册过于频繁，请%v小时后再试", 1)
 	}
 
 	return nil

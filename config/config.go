@@ -253,6 +253,7 @@ func bindEnvVars() {
 		{"REDIS_PASSWORD", "redis.password"},
 		{"ELASTICSEARCH_URL", "elasticsearch.url"},
 		{"NEO4J_URI", "neo4j.uri"},
+		{"NEO4J_USERNAME", "neo4j.user"},
 		{"NEO4J_PASSWORD", "neo4j.password"},
 		{"MILVUS_HOST", "milvus.host"},
 		{"MINIO_ENDPOINT", "minio.endpoint"},
@@ -260,6 +261,7 @@ func bindEnvVars() {
 		{"MINIO_SECRET_KEY", "minio.secret_key"},
 		{"ARK_API_KEY", "eino.api_key"},
 		{"ARK_MODEL", "eino.model"},
+		{"ARK_BASE_URL", "eino.base_url"},
 		{"JWT_SECRET", "jwt.secret"},
 	}
 
@@ -319,6 +321,9 @@ func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("NEO4J_URI"); v != "" {
 		cfg.Neo4j.URI = v
 	}
+	if v := os.Getenv("NEO4J_USERNAME"); v != "" {
+		cfg.Neo4j.User = v
+	}
 	if v := os.Getenv("NEO4J_PASSWORD"); v != "" {
 		cfg.Neo4j.Password = v
 	}
@@ -336,6 +341,9 @@ func overrideFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARK_MODEL"); v != "" {
 		cfg.Eino.Model = v
+	}
+	if v := os.Getenv("ARK_BASE_URL"); v != "" {
+		cfg.Eino.BaseURL = v
 	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v

@@ -6,10 +6,18 @@ import (
 	"Logos/pkg/logger"
 	"context"
 	"fmt"
-	"time"
+	"strconv"
 
 	"github.com/google/uuid"
 )
+
+func toInt64(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 type ContactService interface {
 	SendFriendRequest(ctx context.Context, fromUserID, toUserID, remark, message string) (*model.FriendRequest, error)
@@ -17,6 +25,7 @@ type ContactService interface {
 	RejectFriendRequest(ctx context.Context, requestID, toUserID string) error
 	GetPendingFriendRequests(ctx context.Context, toUserID string, page, pageSize int) ([]*model.FriendRequest, int64, error)
 
+	GetFriendship(ctx context.Context, userID, friendID string) (*model.Friendship, error)
 	GetFriends(ctx context.Context, userID, groupID string, page, pageSize int) ([]*model.Friendship, int64, error)
 	DeleteFriend(ctx context.Context, userID, friendID string) error
 	UpdateFriendRemark(ctx context.Context, userID, friendID, remark string) error
@@ -42,69 +51,73 @@ func NewContactService(repo dao.ContactRepository, ctx context.Context) ContactS
 }
 
 func (s *ContactServiceImpl) SendFriendRequest(ctx context.Context, fromUserID, toUserID, remark, message string) (*model.FriendRequest, error) {
+	logger.Info("\x1b[36m🔵 [Contact] 1️⃣ 开始处理好友申请\x1b[0m", logger.StringField("from_user", fromUserID), logger.StringField("to_user", toUserID))
 	if fromUserID == toUserID {
+		logger.Warn("\x1b[31m🔴 [Contact] 拒绝添加自己\x1b[0m", logger.StringField("user", fromUserID))
 		return nil, fmt.Errorf("不能添加自己为好友")
 	}
 	if existingFriend, _ := s.repo.GetFriendship(ctx, fromUserID, toUserID); existingFriend != nil {
+		logger.Warn("\x1b[33m🟡 [Contact] 已经是好友\x1b[0m", logger.StringField("from_user", fromUserID), logger.StringField("to_user", toUserID))
 		return nil, fmt.Errorf("已经是好友")
 	}
 	request := &model.FriendRequest{
 		ID:         uuid.NewString(),
-		FromUserID: fromUserID,
-		ToUserID:   toUserID,
+		FromUserID: toInt64(fromUserID),
+		ToUserID:   toInt64(toUserID),
 		Remark:     remark,
 		Message:    message,
 		Status:     model.FriendRequestStatusPending,
 	}
 	if err := s.repo.CreateFriendRequest(ctx, request); err != nil {
-		logger.Error("创建好友申请失败", logger.ErrorField(err))
+		logger.Error("\x1b[31m🔴 [Contact] 创建好友申请失败\x1b[0m", logger.ErrorField(err))
 		return nil, err
 	}
-	logger.Info("发送好友申请", logger.StringField("from_user", fromUserID), logger.StringField("to_user", toUserID))
+	logger.Info("\x1b[32m🟢 [Contact] 2️⃣ 好友申请发送成功\x1b[0m", logger.StringField("from_user", fromUserID), logger.StringField("to_user", toUserID))
 	return request, nil
 }
 
 func (s *ContactServiceImpl) AcceptFriendRequest(ctx context.Context, requestID, toUserID string) error {
+	logger.Info("\x1b[36m🔵 [Contact] 1️⃣ 开始接受好友申请\x1b[0m", logger.StringField("request_id", requestID), logger.StringField("to_user", toUserID))
 	request, err := s.repo.GetFriendRequestByID(ctx, requestID)
 	if err != nil {
+		logger.Error("\x1b[31m🔴 [Contact] 申请不存在\x1b[0m", logger.StringField("request_id", requestID))
 		return fmt.Errorf("申请不存在")
 	}
-	if request.ToUserID != toUserID {
+	if request.ToUserID != toInt64(toUserID) {
+		logger.Warn("\x1b[31m🔴 [Contact] 无权处理此申请\x1b[0m", logger.StringField("request_id", requestID))
 		return fmt.Errorf("无权处理此申请")
 	}
 	if request.Status != model.FriendRequestStatusPending {
+		logger.Warn("\x1b[33m🟡 [Contact] 申请已处理\x1b[0m", logger.StringField("request_id", requestID))
 		return fmt.Errorf("申请已处理")
 	}
-	now := time.Now().UnixMilli()
+	logger.Info("\x1b[36m🔵 [Contact] 2️⃣ 开始创建好友关系\x1b[0m", logger.StringField("user1", toUserID), logger.StringField("user2", strconv.FormatInt(request.FromUserID, 10)))
 	friendship1 := &model.Friendship{
-		ID:        uuid.NewString(),
-		UserID:    toUserID,
-		FriendID:  request.FromUserID,
-		Status:    model.FriendshipStatusAccepted,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:       uuid.NewString(),
+		UserID:   toInt64(toUserID),
+		FriendID: request.FromUserID,
+		Status:   model.FriendshipStatusAccepted,
 	}
 	friendship2 := &model.Friendship{
-		ID:        uuid.NewString(),
-		UserID:    request.FromUserID,
-		FriendID:  toUserID,
-		Status:    model.FriendshipStatusAccepted,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:       uuid.NewString(),
+		UserID:   request.FromUserID,
+		FriendID: toInt64(toUserID),
+		Status:   model.FriendshipStatusAccepted,
 	}
 	if err := s.repo.CreateFriendship(ctx, friendship1); err != nil {
-		logger.Error("创建好友关系失败", logger.ErrorField(err))
+		logger.Error("\x1b[31m🔴 [Contact] 创建好友关系1失败\x1b[0m", logger.ErrorField(err))
 		return err
 	}
 	if err := s.repo.CreateFriendship(ctx, friendship2); err != nil {
-		logger.Error("创建好友关系失败", logger.ErrorField(err))
+		logger.Error("\x1b[31m🔴 [Contact] 创建好友关系2失败\x1b[0m", logger.ErrorField(err))
 		return err
 	}
+	logger.Info("\x1b[36m🔵 [Contact] 3️⃣ 更新申请状态为accepted\x1b[0m")
 	if err := s.repo.UpdateFriendRequestStatus(ctx, requestID, model.FriendRequestStatusAccepted); err != nil {
-		logger.Error("更新申请状态失败", logger.ErrorField(err))
+		logger.Error("\x1b[31m🔴 [Contact] 更新申请状态失败\x1b[0m", logger.ErrorField(err))
 		return err
 	}
-	logger.Info("接受好友申请", logger.StringField("from_user", request.FromUserID), logger.StringField("to_user", toUserID))
+	logger.Info("\x1b[32m🟢 [Contact] ✅ 好友关系建立成功\x1b[0m", logger.StringField("user1", toUserID), logger.StringField("user2", strconv.FormatInt(request.FromUserID, 10)))
 	return nil
 }
 
@@ -113,19 +126,23 @@ func (s *ContactServiceImpl) RejectFriendRequest(ctx context.Context, requestID,
 	if err != nil {
 		return fmt.Errorf("申请不存在")
 	}
-	if request.ToUserID != toUserID {
+	if request.ToUserID != toInt64(toUserID) {
 		return fmt.Errorf("无权处理此申请")
 	}
 	if err := s.repo.UpdateFriendRequestStatus(ctx, requestID, model.FriendRequestStatusRejected); err != nil {
 		logger.Error("拒绝好友申请失败", logger.ErrorField(err))
 		return err
 	}
-	logger.Info("拒绝好友申请", logger.StringField("from_user", request.FromUserID), logger.StringField("to_user", toUserID))
+	logger.Info("拒绝好友申请", logger.StringField("from_user", strconv.FormatInt(request.FromUserID, 10)), logger.StringField("to_user", toUserID))
 	return nil
 }
 
 func (s *ContactServiceImpl) GetPendingFriendRequests(ctx context.Context, toUserID string, page, pageSize int) ([]*model.FriendRequest, int64, error) {
 	return s.repo.GetPendingFriendRequests(ctx, toUserID, page, pageSize)
+}
+
+func (s *ContactServiceImpl) GetFriendship(ctx context.Context, userID, friendID string) (*model.Friendship, error) {
+	return s.repo.GetFriendship(ctx, userID, friendID)
 }
 
 func (s *ContactServiceImpl) GetFriends(ctx context.Context, userID, groupID string, page, pageSize int) ([]*model.Friendship, int64, error) {
@@ -180,7 +197,7 @@ func (s *ContactServiceImpl) GetBlacklist(ctx context.Context, userID string, pa
 func (s *ContactServiceImpl) CreateFriendGroup(ctx context.Context, userID, name string) (*model.FriendGroup, error) {
 	group := &model.FriendGroup{
 		ID:     uuid.NewString(),
-		UserID: userID,
+		UserID: toInt64(userID),
 		Name:   name,
 	}
 	if err := s.repo.CreateFriendGroup(ctx, group); err != nil {

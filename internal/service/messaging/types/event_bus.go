@@ -48,6 +48,78 @@ func (eb *EventBus) PublishMessageEvent(ctx context.Context, event *MessageEvent
 	return eb.producer.SendChatEvent(ctx, key, data)
 }
 
+func (eb *EventBus) PublishOutgoingMessageEvent(ctx context.Context, event *MessageEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	key := event.ChatID
+	logger.Info("发布出站消息事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("event_id", event.ID))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
+func (eb *EventBus) PublishOutgoingTypingEvent(ctx context.Context, event *TypingEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	key := event.ChatID
+	logger.Info("发布出站输入状态事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("user_id", event.UserID))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
+func (eb *EventBus) PublishOutgoingReadEvent(ctx context.Context, event *MessageReadEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	key := event.ChatID
+	logger.Info("发布出站已读回执事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("reader_id", event.ReaderID))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
+func (eb *EventBus) PublishOutgoingWithdrawEvent(ctx context.Context, event *MessageWithdrawEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	key := event.ChatID
+	logger.Info("发布出站撤回事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("message_id", event.MessageID))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
 func (eb *EventBus) PublishPresenceEvent(ctx context.Context, event *UserPresenceEvent) error {
 	if eb.producer == nil {
 		return fmt.Errorf("producer not initialized")
@@ -165,6 +237,28 @@ func (eb *EventBus) SubscribeChatEvents(ctx context.Context, handler mq.MessageH
 	return consumer.Subscribe(ctx, handler)
 }
 
+func (eb *EventBus) SubscribeChatOutgoing(ctx context.Context, handler mq.MessageHandler, groupID ...string) error {
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	consumerGroupID := "gateway-chat-outgoing-consumer"
+	if len(groupID) > 0 && groupID[0] != "" {
+		consumerGroupID = groupID[0]
+	}
+
+	consumerKey := "chat-outgoing-" + consumerGroupID
+	if _, exists := eb.consumers[consumerKey]; exists {
+		logger.Warn("ChatOutgoing消费者已存在", logger.StringField("group_id", consumerGroupID))
+		return nil
+	}
+
+	consumer := mq.NewConsumer(mq.TopicChatOutgoing, consumerGroupID)
+	eb.consumers[consumerKey] = consumer
+
+	logger.Info("开始订阅ChatOutgoing事件", logger.StringField("group_id", consumerGroupID))
+	return consumer.Subscribe(ctx, handler)
+}
+
 func (eb *EventBus) SubscribeNotifications(ctx context.Context, handler mq.MessageHandler) error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
@@ -189,11 +283,18 @@ func (eb *EventBus) Close() error {
 		_ = eb.producer.Close()
 	}
 
+	// 并行关闭消费者，加快关闭速度
+	var wg sync.WaitGroup
 	for name, consumer := range eb.consumers {
-		_ = consumer.Close()
+		wg.Add(1)
+		go func(n string, c *mq.Consumer) {
+			defer wg.Done()
+			_ = c.Close()
+			logger.Info("关闭消费者", logger.StringField("name", n))
+		}(name, consumer)
 		delete(eb.consumers, name)
-		logger.Info("关闭消费者", logger.StringField("name", name))
 	}
+	wg.Wait()
 
 	return nil
 }

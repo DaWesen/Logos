@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user
+  namespace: logos
+  labels:
+    app: user
+    domain: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user
+  template:
+    metadata:
+      labels:
+        app: user
+        domain: platform
+    spec:
+      containers:
+        - name: user
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./user"]
+          ports:
+            - containerPort: 9001
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-svc
+  namespace: logos
+spec:
+  selector:
+    app: user
+  ports:
+    - port: 9001
+      targetPort: 9001

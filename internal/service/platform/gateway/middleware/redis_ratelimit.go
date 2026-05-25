@@ -57,12 +57,12 @@ func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cac
 	}
 
 	if !allowed {
-		logger.Warn("����ȫ��API����",
+		logger.Warn("API rate limit",
 			logger.StringField("ip", ip),
 			logger.StringField("path", path),
 			logger.StringField("method", method))
 
-		c.JSON(http.StatusTooManyRequests, model.Error(429, "��������æ�����Ժ�����"))
+		c.JSON(http.StatusTooManyRequests, model.Error(429, "operation"))
 		c.Abort()
 		return false
 	}
@@ -120,7 +120,7 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 
 	allowed, err := limiter.Allow(context.Background(), userKey)
 	if err != nil {
-		logger.Warn("�û��������ʧ�ܣ���������",
+		logger.Warn("operation",
 			logger.StringField("user_id", userID),
 			logger.ErrorField(err))
 		return true
@@ -129,7 +129,7 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 	if !allowed {
 		remaining, _ := limiter.GetRemaining(context.Background(), userKey)
 
-		logger.Warn("�����û�Ƶ������",
+		logger.Warn("operation",
 			logger.StringField("user_id", userID),
 			logger.StringField("path", path),
 			logger.Int64Field("remaining", remaining))
@@ -138,7 +138,7 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 		c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
 		c.Header("Retry-After", strconv.FormatInt(int64(window.Seconds()), 10))
 
-		c.JSON(http.StatusTooManyRequests, model.Error(429, "��������Ƶ�������Ժ�����"))
+		c.JSON(http.StatusTooManyRequests, model.Error(429, "operation"))
 		c.Abort()
 		return false
 	}
@@ -163,7 +163,7 @@ func IPBasedRateLimit(cache cache.Cache, requests int, window time.Duration) gin
 
 		allowed, err := limiter.Allow(context.Background(), key)
 		if err != nil {
-			logger.Warn("IP�������ʧ��",
+			logger.Warn("IP rate limit",
 				logger.StringField("ip", ip),
 				logger.ErrorField(err))
 			c.Next()
@@ -171,11 +171,11 @@ func IPBasedRateLimit(cache cache.Cache, requests int, window time.Duration) gin
 		}
 
 		if !allowed {
-			logger.Warn("IP����Ƶ�ʳ���",
+			logger.Warn("IP rate limit",
 				logger.StringField("ip", ip),
 				logger.IntField("requests", requests))
 
-			c.JSON(http.StatusTooManyRequests, model.Error(429, "���ķ��ʹ���Ƶ�������Ժ�����"))
+			c.JSON(http.StatusTooManyRequests, model.Error(429, "operation"))
 			c.Abort()
 			return
 		}
@@ -193,9 +193,9 @@ func ConcurrentRequestLimit(cache cache.Cache, maxConcurrent int, timeout time.D
 			defer func() { <-semaphore }()
 			c.Next()
 		default:
-			logger.Warn("������������������")
+			logger.Warn("operation")
 
-			c.JSON(http.StatusServiceUnavailable, model.Error(503, "ϵͳ��æ�����Ժ�����"))
+			c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 			c.Abort()
 		}
 	}
@@ -222,14 +222,14 @@ func BurstProtection(cache cache.Cache, threshold int, cooldown time.Duration) g
 		}
 
 		if current > int64(threshold) {
-			logger.Warn("��⵽ͻ����������",
+			logger.Warn("operation",
 				logger.StringField("ip", ip),
 				logger.Int64Field("count", current))
 
 			blockedKey := fmt.Sprintf("blocked:%s", ip)
 			cache.Set(context.Background(), blockedKey, "1", cooldown*2)
 
-			c.JSON(http.StatusForbidden, model.Error(403, "���ķ����ѱ���ʱ����"))
+			c.JSON(http.StatusForbidden, model.Error(403, "operation"))
 			c.Abort()
 			return
 		}

@@ -18,10 +18,28 @@ type ModerationServiceImpl struct {
 	ModerationService service.ModerationService
 }
 
+func protoToModelConfig(pbCfg *pb.ModelConfig) *service.ModelConfig {
+	if pbCfg == nil {
+		return nil
+	}
+	if pbCfg.ApiKey == "" || pbCfg.Model == "" {
+		return nil
+	}
+	return &service.ModelConfig{
+		Provider:    pbCfg.Provider,
+		Model:       pbCfg.Model,
+		ApiKey:      pbCfg.ApiKey,
+		BaseUrl:     pbCfg.BaseUrl,
+		Temperature: pbCfg.Temperature,
+	}
+}
+
 func (s *ModerationServiceImpl) Translate(ctx context.Context, req *pb.TranslateRequest) (*pb.TranslateResponse, error) {
 	resp := &pb.TranslateResponse{}
 
-	record, err := s.ModerationService.Translate(ctx, req.Content, req.SourceLang, req.TargetLang, req.ContentId)
+	cfg := protoToModelConfig(req.ModelConfig)
+
+	record, err := s.ModerationService.Translate(ctx, req.Content, req.SourceLang, req.TargetLang, req.ContentId, cfg)
 	if err != nil {
 		logger.Error("翻译失败", logger.ErrorField(err))
 		resp.Code = 1
@@ -40,7 +58,9 @@ func (s *ModerationServiceImpl) Translate(ctx context.Context, req *pb.Translate
 func (s *ModerationServiceImpl) ModerateContent(ctx context.Context, req *pb.ModerateContentRequest) (*pb.ModerateContentResponse, error) {
 	resp := &pb.ModerateContentResponse{}
 
-	record, err := s.ModerationService.ModerateContent(ctx, req.Content, req.ContentId, req.ContentType)
+	cfg := protoToModelConfig(req.ModelConfig)
+
+	record, err := s.ModerationService.ModerateContent(ctx, req.Content, req.ContentId, req.ContentType, cfg)
 	if err != nil {
 		logger.Error("审核失败", logger.ErrorField(err))
 		resp.Code = 1

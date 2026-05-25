@@ -31,6 +31,8 @@ type Entity struct {
 	Description   *string                `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	CreatedAt     int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     int64                  `protobuf:"varint,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,8,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	Color         string                 `protobuf:"bytes,9,opt,name=color,proto3" json:"color,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -114,6 +116,20 @@ func (x *Entity) GetUpdatedAt() int64 {
 	return 0
 }
 
+func (x *Entity) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+func (x *Entity) GetColor() string {
+	if x != nil {
+		return x.Color
+	}
+	return ""
+}
+
 type Relation struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -124,6 +140,7 @@ type Relation struct {
 	Description   *string                `protobuf:"bytes,6,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	CreatedAt     int64                  `protobuf:"varint,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     int64                  `protobuf:"varint,8,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,9,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -214,12 +231,21 @@ func (x *Relation) GetUpdatedAt() int64 {
 	return 0
 }
 
+func (x *Relation) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
 type AddEntityReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Properties    map[string]string      `protobuf:"bytes,3,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Description   *string                `protobuf:"bytes,4,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,5,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	Color         string                 `protobuf:"bytes,6,opt,name=color,proto3" json:"color,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -282,6 +308,20 @@ func (x *AddEntityReq) GetDescription() string {
 	return ""
 }
 
+func (x *AddEntityReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+func (x *AddEntityReq) GetColor() string {
+	if x != nil {
+		return x.Color
+	}
+	return ""
+}
+
 type UpdateEntityReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -289,6 +329,8 @@ type UpdateEntityReq struct {
 	Name          *string                `protobuf:"bytes,3,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	Properties    map[string]string      `protobuf:"bytes,4,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Description   *string                `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,6,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	Color         string                 `protobuf:"bytes,7,opt,name=color,proto3" json:"color,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -354,6 +396,20 @@ func (x *UpdateEntityReq) GetProperties() map[string]string {
 func (x *UpdateEntityReq) GetDescription() string {
 	if x != nil && x.Description != nil {
 		return *x.Description
+	}
+	return ""
+}
+
+func (x *UpdateEntityReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+func (x *UpdateEntityReq) GetColor() string {
+	if x != nil {
+		return x.Color
 	}
 	return ""
 }
@@ -513,6 +569,7 @@ type AddRelationReq struct {
 	TargetId      string                 `protobuf:"bytes,3,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`
 	Properties    map[string]string      `protobuf:"bytes,4,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Description   *string                `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,6,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -582,6 +639,13 @@ func (x *AddRelationReq) GetDescription() string {
 	return ""
 }
 
+func (x *AddRelationReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
 type UpdateRelationReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -590,6 +654,7 @@ type UpdateRelationReq struct {
 	TargetId      *string                `protobuf:"bytes,4,opt,name=target_id,json=targetId,proto3,oneof" json:"target_id,omitempty"`
 	Properties    map[string]string      `protobuf:"bytes,5,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Description   *string                `protobuf:"bytes,6,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,7,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -662,6 +727,13 @@ func (x *UpdateRelationReq) GetProperties() map[string]string {
 func (x *UpdateRelationReq) GetDescription() string {
 	if x != nil && x.Description != nil {
 		return *x.Description
+	}
+	return ""
+}
+
+func (x *UpdateRelationReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
 	}
 	return ""
 }
@@ -821,6 +893,7 @@ type QueryEntityReq struct {
 	Properties    map[string]string      `protobuf:"bytes,3,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`
 	PageSize      int32                  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,6,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -890,6 +963,13 @@ func (x *QueryEntityReq) GetPageSize() int32 {
 	return 0
 }
 
+func (x *QueryEntityReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
 type QueryRelationReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          *string                `protobuf:"bytes,1,opt,name=type,proto3,oneof" json:"type,omitempty"`
@@ -897,6 +977,7 @@ type QueryRelationReq struct {
 	TargetId      *string                `protobuf:"bytes,3,opt,name=target_id,json=targetId,proto3,oneof" json:"target_id,omitempty"`
 	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`
 	PageSize      int32                  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,6,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -964,6 +1045,13 @@ func (x *QueryRelationReq) GetPageSize() int32 {
 		return x.PageSize
 	}
 	return 0
+}
+
+func (x *QueryRelationReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
 }
 
 type GraphStatsResp struct {
@@ -1100,6 +1188,7 @@ type SearchEntityReq struct {
 	Type          *string                `protobuf:"bytes,2,opt,name=type,proto3,oneof" json:"type,omitempty"`
 	Page          int32                  `protobuf:"varint,3,opt,name=page,proto3" json:"page,omitempty"`
 	PageSize      int32                  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,5,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1160,6 +1249,13 @@ func (x *SearchEntityReq) GetPageSize() int32 {
 		return x.PageSize
 	}
 	return 0
+}
+
+func (x *SearchEntityReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
 }
 
 type GetByIdReq struct {
@@ -1260,6 +1356,7 @@ func (x *GetRelatedEntitiesReq) GetRelationType() string {
 
 type EmptyReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	CollectionId  string                 `protobuf:"bytes,1,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1294,11 +1391,334 @@ func (*EmptyReq) Descriptor() ([]byte, []int) {
 	return file_ai_knowledge_proto_rawDescGZIP(), []int{19}
 }
 
+func (x *EmptyReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+type GetSubgraphReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EntityId      string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	Depth         int32                  `protobuf:"varint,2,opt,name=depth,proto3" json:"depth,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,3,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetSubgraphReq) Reset() {
+	*x = GetSubgraphReq{}
+	mi := &file_ai_knowledge_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetSubgraphReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetSubgraphReq) ProtoMessage() {}
+
+func (x *GetSubgraphReq) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_knowledge_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetSubgraphReq.ProtoReflect.Descriptor instead.
+func (*GetSubgraphReq) Descriptor() ([]byte, []int) {
+	return file_ai_knowledge_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *GetSubgraphReq) GetEntityId() string {
+	if x != nil {
+		return x.EntityId
+	}
+	return ""
+}
+
+func (x *GetSubgraphReq) GetDepth() int32 {
+	if x != nil {
+		return x.Depth
+	}
+	return 0
+}
+
+func (x *GetSubgraphReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+type SubgraphResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
+	Nodes         []*Entity              `protobuf:"bytes,2,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges         []*Relation            `protobuf:"bytes,3,rep,name=edges,proto3" json:"edges,omitempty"`
+	NodeCount     int32                  `protobuf:"varint,4,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	EdgeCount     int32                  `protobuf:"varint,5,opt,name=edge_count,json=edgeCount,proto3" json:"edge_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubgraphResp) Reset() {
+	*x = SubgraphResp{}
+	mi := &file_ai_knowledge_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubgraphResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubgraphResp) ProtoMessage() {}
+
+func (x *SubgraphResp) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_knowledge_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubgraphResp.ProtoReflect.Descriptor instead.
+func (*SubgraphResp) Descriptor() ([]byte, []int) {
+	return file_ai_knowledge_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SubgraphResp) GetBaseResp() *common.BaseResp {
+	if x != nil {
+		return x.BaseResp
+	}
+	return nil
+}
+
+func (x *SubgraphResp) GetNodes() []*Entity {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *SubgraphResp) GetEdges() []*Relation {
+	if x != nil {
+		return x.Edges
+	}
+	return nil
+}
+
+func (x *SubgraphResp) GetNodeCount() int32 {
+	if x != nil {
+		return x.NodeCount
+	}
+	return 0
+}
+
+func (x *SubgraphResp) GetEdgeCount() int32 {
+	if x != nil {
+		return x.EdgeCount
+	}
+	return 0
+}
+
+type GetEntityPathsReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SourceId      string                 `protobuf:"bytes,1,opt,name=source_id,json=sourceId,proto3" json:"source_id,omitempty"`
+	TargetId      string                 `protobuf:"bytes,2,opt,name=target_id,json=targetId,proto3" json:"target_id,omitempty"`
+	MaxDepth      int32                  `protobuf:"varint,3,opt,name=max_depth,json=maxDepth,proto3" json:"max_depth,omitempty"`
+	CollectionId  string                 `protobuf:"bytes,4,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetEntityPathsReq) Reset() {
+	*x = GetEntityPathsReq{}
+	mi := &file_ai_knowledge_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetEntityPathsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetEntityPathsReq) ProtoMessage() {}
+
+func (x *GetEntityPathsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_knowledge_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetEntityPathsReq.ProtoReflect.Descriptor instead.
+func (*GetEntityPathsReq) Descriptor() ([]byte, []int) {
+	return file_ai_knowledge_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetEntityPathsReq) GetSourceId() string {
+	if x != nil {
+		return x.SourceId
+	}
+	return ""
+}
+
+func (x *GetEntityPathsReq) GetTargetId() string {
+	if x != nil {
+		return x.TargetId
+	}
+	return ""
+}
+
+func (x *GetEntityPathsReq) GetMaxDepth() int32 {
+	if x != nil {
+		return x.MaxDepth
+	}
+	return 0
+}
+
+func (x *GetEntityPathsReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+type EntityPath struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Entities      []*Entity              `protobuf:"bytes,1,rep,name=entities,proto3" json:"entities,omitempty"`
+	Relations     []*Relation            `protobuf:"bytes,2,rep,name=relations,proto3" json:"relations,omitempty"`
+	Length        int32                  `protobuf:"varint,3,opt,name=length,proto3" json:"length,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntityPath) Reset() {
+	*x = EntityPath{}
+	mi := &file_ai_knowledge_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntityPath) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntityPath) ProtoMessage() {}
+
+func (x *EntityPath) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_knowledge_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EntityPath.ProtoReflect.Descriptor instead.
+func (*EntityPath) Descriptor() ([]byte, []int) {
+	return file_ai_knowledge_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *EntityPath) GetEntities() []*Entity {
+	if x != nil {
+		return x.Entities
+	}
+	return nil
+}
+
+func (x *EntityPath) GetRelations() []*Relation {
+	if x != nil {
+		return x.Relations
+	}
+	return nil
+}
+
+func (x *EntityPath) GetLength() int32 {
+	if x != nil {
+		return x.Length
+	}
+	return 0
+}
+
+type EntityPathsResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
+	Paths         []*EntityPath          `protobuf:"bytes,2,rep,name=paths,proto3" json:"paths,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntityPathsResp) Reset() {
+	*x = EntityPathsResp{}
+	mi := &file_ai_knowledge_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntityPathsResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntityPathsResp) ProtoMessage() {}
+
+func (x *EntityPathsResp) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_knowledge_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EntityPathsResp.ProtoReflect.Descriptor instead.
+func (*EntityPathsResp) Descriptor() ([]byte, []int) {
+	return file_ai_knowledge_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *EntityPathsResp) GetBaseResp() *common.BaseResp {
+	if x != nil {
+		return x.BaseResp
+	}
+	return nil
+}
+
+func (x *EntityPathsResp) GetPaths() []*EntityPath {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
 var File_ai_knowledge_proto protoreflect.FileDescriptor
 
 const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
-	"\x12ai/knowledge.proto\x12\tknowledge\x1a\fcommon.proto\"\xb7\x02\n" +
+	"\x12ai/knowledge.proto\x12\tknowledge\x1a\fcommon.proto\"\xf2\x02\n" +
 	"\x06Entity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x12\n" +
@@ -1310,11 +1730,13 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\a \x01(\x03R\tupdatedAt\x1a=\n" +
+	"updated_at\x18\a \x01(\x03R\tupdatedAt\x12#\n" +
+	"\rcollection_id\x18\b \x01(\tR\fcollectionId\x12\x14\n" +
+	"\x05color\x18\t \x01(\tR\x05color\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
-	"\f_description\"\xe1\x02\n" +
+	"\f_description\"\x86\x03\n" +
 	"\bRelation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1b\n" +
@@ -1327,22 +1749,25 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\a \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\b \x01(\x03R\tupdatedAt\x1a=\n" +
+	"updated_at\x18\b \x01(\x03R\tupdatedAt\x12#\n" +
+	"\rcollection_id\x18\t \x01(\tR\fcollectionId\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
-	"\f_description\"\xf5\x01\n" +
+	"\f_description\"\xb0\x02\n" +
 	"\fAddEntityReq\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12G\n" +
 	"\n" +
 	"properties\x18\x03 \x03(\v2'.knowledge.AddEntityReq.PropertiesEntryR\n" +
 	"properties\x12%\n" +
-	"\vdescription\x18\x04 \x01(\tH\x00R\vdescription\x88\x01\x01\x1a=\n" +
+	"\vdescription\x18\x04 \x01(\tH\x00R\vdescription\x88\x01\x01\x12#\n" +
+	"\rcollection_id\x18\x05 \x01(\tR\fcollectionId\x12\x14\n" +
+	"\x05color\x18\x06 \x01(\tR\x05color\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
-	"\f_description\"\xa7\x02\n" +
+	"\f_description\"\xe2\x02\n" +
 	"\x0fUpdateEntityReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\x04type\x18\x02 \x01(\tH\x00R\x04type\x88\x01\x01\x12\x17\n" +
@@ -1350,7 +1775,9 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
 	"properties\x18\x04 \x03(\v2*.knowledge.UpdateEntityReq.PropertiesEntryR\n" +
 	"properties\x12%\n" +
-	"\vdescription\x18\x05 \x01(\tH\x02R\vdescription\x88\x01\x01\x1a=\n" +
+	"\vdescription\x18\x05 \x01(\tH\x02R\vdescription\x88\x01\x01\x12#\n" +
+	"\rcollection_id\x18\x06 \x01(\tR\fcollectionId\x12\x14\n" +
+	"\x05color\x18\a \x01(\tR\x05color\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
@@ -1365,7 +1792,7 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\x06entity\x18\x02 \x01(\v2\x11.knowledge.EntityR\x06entity\"o\n" +
 	"\x0fBatchEntityResp\x12-\n" +
 	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12-\n" +
-	"\bentities\x18\x02 \x03(\v2\x11.knowledge.EntityR\bentities\"\x9f\x02\n" +
+	"\bentities\x18\x02 \x03(\v2\x11.knowledge.EntityR\bentities\"\xc4\x02\n" +
 	"\x0eAddRelationReq\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1b\n" +
 	"\tsource_id\x18\x02 \x01(\tR\bsourceId\x12\x1b\n" +
@@ -1373,11 +1800,12 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
 	"properties\x18\x04 \x03(\v2).knowledge.AddRelationReq.PropertiesEntryR\n" +
 	"properties\x12%\n" +
-	"\vdescription\x18\x05 \x01(\tH\x00R\vdescription\x88\x01\x01\x1a=\n" +
+	"\vdescription\x18\x05 \x01(\tH\x00R\vdescription\x88\x01\x01\x12#\n" +
+	"\rcollection_id\x18\x06 \x01(\tR\fcollectionId\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x0e\n" +
-	"\f_description\"\xe9\x02\n" +
+	"\f_description\"\x8e\x03\n" +
 	"\x11UpdateRelationReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\x04type\x18\x02 \x01(\tH\x00R\x04type\x88\x01\x01\x12 \n" +
@@ -1386,7 +1814,8 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\n" +
 	"properties\x18\x05 \x03(\v2,.knowledge.UpdateRelationReq.PropertiesEntryR\n" +
 	"properties\x12%\n" +
-	"\vdescription\x18\x06 \x01(\tH\x03R\vdescription\x88\x01\x01\x1a=\n" +
+	"\vdescription\x18\x06 \x01(\tH\x03R\vdescription\x88\x01\x01\x12#\n" +
+	"\rcollection_id\x18\a \x01(\tR\fcollectionId\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
@@ -1403,7 +1832,7 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\brelation\x18\x02 \x01(\v2\x13.knowledge.RelationR\brelation\"u\n" +
 	"\x11BatchRelationResp\x12-\n" +
 	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x121\n" +
-	"\trelations\x18\x02 \x03(\v2\x13.knowledge.RelationR\trelations\"\x8f\x02\n" +
+	"\trelations\x18\x02 \x03(\v2\x13.knowledge.RelationR\trelations\"\xb4\x02\n" +
 	"\x0eQueryEntityReq\x12\x17\n" +
 	"\x04type\x18\x01 \x01(\tH\x00R\x04type\x88\x01\x01\x12\x17\n" +
 	"\x04name\x18\x02 \x01(\tH\x01R\x04name\x88\x01\x01\x12I\n" +
@@ -1411,18 +1840,20 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"properties\x18\x03 \x03(\v2).knowledge.QueryEntityReq.PropertiesEntryR\n" +
 	"properties\x12\x12\n" +
 	"\x04page\x18\x04 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x1a=\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12#\n" +
+	"\rcollection_id\x18\x06 \x01(\tR\fcollectionId\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\a\n" +
 	"\x05_typeB\a\n" +
-	"\x05_name\"\xc5\x01\n" +
+	"\x05_name\"\xea\x01\n" +
 	"\x10QueryRelationReq\x12\x17\n" +
 	"\x04type\x18\x01 \x01(\tH\x00R\x04type\x88\x01\x01\x12 \n" +
 	"\tsource_id\x18\x02 \x01(\tH\x01R\bsourceId\x88\x01\x01\x12 \n" +
 	"\ttarget_id\x18\x03 \x01(\tH\x02R\btargetId\x88\x01\x01\x12\x12\n" +
 	"\x04page\x18\x04 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x05 \x01(\x05R\bpageSizeB\a\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12#\n" +
+	"\rcollection_id\x18\x06 \x01(\tR\fcollectionIdB\a\n" +
 	"\x05_typeB\f\n" +
 	"\n" +
 	"_source_idB\f\n" +
@@ -1442,12 +1873,13 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"@\n" +
 	"\rImportDataReq\x12\x1b\n" +
 	"\tdata_type\x18\x01 \x01(\tR\bdataType\x12\x12\n" +
-	"\x04data\x18\x02 \x03(\tR\x04data\"~\n" +
+	"\x04data\x18\x02 \x03(\tR\x04data\"\xa3\x01\n" +
 	"\x0fSearchEntityReq\x12\x18\n" +
 	"\akeyword\x18\x01 \x01(\tR\akeyword\x12\x17\n" +
 	"\x04type\x18\x02 \x01(\tH\x00R\x04type\x88\x01\x01\x12\x12\n" +
 	"\x04page\x18\x03 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x04 \x01(\x05R\bpageSizeB\a\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12#\n" +
+	"\rcollection_id\x18\x05 \x01(\tR\fcollectionIdB\a\n" +
 	"\x05_type\"\x1c\n" +
 	"\n" +
 	"GetByIdReq\x12\x0e\n" +
@@ -1455,11 +1887,37 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\x15GetRelatedEntitiesReq\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12(\n" +
 	"\rrelation_type\x18\x02 \x01(\tH\x00R\frelationType\x88\x01\x01B\x10\n" +
-	"\x0e_relation_type\"\n" +
+	"\x0e_relation_type\"/\n" +
+	"\bEmptyReq\x12#\n" +
+	"\rcollection_id\x18\x01 \x01(\tR\fcollectionId\"h\n" +
+	"\x0eGetSubgraphReq\x12\x1b\n" +
+	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x14\n" +
+	"\x05depth\x18\x02 \x01(\x05R\x05depth\x12#\n" +
+	"\rcollection_id\x18\x03 \x01(\tR\fcollectionId\"\xcf\x01\n" +
+	"\fSubgraphResp\x12-\n" +
+	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12'\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x11.knowledge.EntityR\x05nodes\x12)\n" +
+	"\x05edges\x18\x03 \x03(\v2\x13.knowledge.RelationR\x05edges\x12\x1d\n" +
 	"\n" +
-	"\bEmptyReq2\xc6\a\n" +
+	"node_count\x18\x04 \x01(\x05R\tnodeCount\x12\x1d\n" +
+	"\n" +
+	"edge_count\x18\x05 \x01(\x05R\tedgeCount\"\x8f\x01\n" +
+	"\x11GetEntityPathsReq\x12\x1b\n" +
+	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x1b\n" +
+	"\ttarget_id\x18\x02 \x01(\tR\btargetId\x12\x1b\n" +
+	"\tmax_depth\x18\x03 \x01(\x05R\bmaxDepth\x12#\n" +
+	"\rcollection_id\x18\x04 \x01(\tR\fcollectionId\"\x86\x01\n" +
+	"\n" +
+	"EntityPath\x12-\n" +
+	"\bentities\x18\x01 \x03(\v2\x11.knowledge.EntityR\bentities\x121\n" +
+	"\trelations\x18\x02 \x03(\v2\x13.knowledge.RelationR\trelations\x12\x16\n" +
+	"\x06length\x18\x03 \x01(\x05R\x06length\"m\n" +
+	"\x0fEntityPathsResp\x12-\n" +
+	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12+\n" +
+	"\x05paths\x18\x02 \x03(\v2\x15.knowledge.EntityPathR\x05paths2\x9b\t\n" +
 	"\x10KnowledgeService\x12;\n" +
-	"\tAddEntity\x12\x17.knowledge.AddEntityReq\x1a\x15.knowledge.EntityResp\x12A\n" +
+	"\tAddEntity\x12\x17.knowledge.AddEntityReq\x1a\x15.knowledge.EntityResp\x12D\n" +
+	"\x12FindOrCreateEntity\x12\x17.knowledge.AddEntityReq\x1a\x15.knowledge.EntityResp\x12A\n" +
 	"\fUpdateEntity\x12\x1a.knowledge.UpdateEntityReq\x1a\x15.knowledge.EntityResp\x12<\n" +
 	"\fDeleteEntity\x12\x1a.knowledge.DeleteEntityReq\x1a\x10.common.BaseResp\x129\n" +
 	"\tGetEntity\x12\x15.knowledge.GetByIdReq\x1a\x15.knowledge.EntityResp\x12F\n" +
@@ -1473,7 +1931,9 @@ const file_ai_knowledge_proto_rawDesc = "" +
 	"\rGetGraphStats\x12\x13.knowledge.EmptyReq\x1a\x19.knowledge.GraphStatsResp\x12R\n" +
 	"\x12GetRelatedEntities\x12 .knowledge.GetRelatedEntitiesReq\x1a\x1a.knowledge.BatchEntityResp\x128\n" +
 	"\n" +
-	"ImportData\x12\x18.knowledge.ImportDataReq\x1a\x10.common.BaseRespB\x1bZ\x19Logos/proto_gen/knowledgeb\x06proto3"
+	"ImportData\x12\x18.knowledge.ImportDataReq\x1a\x10.common.BaseResp\x12A\n" +
+	"\vGetSubgraph\x12\x19.knowledge.GetSubgraphReq\x1a\x17.knowledge.SubgraphResp\x12J\n" +
+	"\x0eGetEntityPaths\x12\x1c.knowledge.GetEntityPathsReq\x1a\x1a.knowledge.EntityPathsRespB\x1bZ\x19Logos/proto_gen/knowledgeb\x06proto3"
 
 var (
 	file_ai_knowledge_proto_rawDescOnce sync.Once
@@ -1487,7 +1947,7 @@ func file_ai_knowledge_proto_rawDescGZIP() []byte {
 	return file_ai_knowledge_proto_rawDescData
 }
 
-var file_ai_knowledge_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_ai_knowledge_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_ai_knowledge_proto_goTypes = []any{
 	(*Entity)(nil),                // 0: knowledge.Entity
 	(*Relation)(nil),              // 1: knowledge.Relation
@@ -1509,69 +1969,87 @@ var file_ai_knowledge_proto_goTypes = []any{
 	(*GetByIdReq)(nil),            // 17: knowledge.GetByIdReq
 	(*GetRelatedEntitiesReq)(nil), // 18: knowledge.GetRelatedEntitiesReq
 	(*EmptyReq)(nil),              // 19: knowledge.EmptyReq
-	nil,                           // 20: knowledge.Entity.PropertiesEntry
-	nil,                           // 21: knowledge.Relation.PropertiesEntry
-	nil,                           // 22: knowledge.AddEntityReq.PropertiesEntry
-	nil,                           // 23: knowledge.UpdateEntityReq.PropertiesEntry
-	nil,                           // 24: knowledge.AddRelationReq.PropertiesEntry
-	nil,                           // 25: knowledge.UpdateRelationReq.PropertiesEntry
-	nil,                           // 26: knowledge.QueryEntityReq.PropertiesEntry
-	nil,                           // 27: knowledge.GraphStatsResp.EntityTypeCountEntry
-	nil,                           // 28: knowledge.GraphStatsResp.RelationTypeCountEntry
-	(*common.BaseResp)(nil),       // 29: common.BaseResp
+	(*GetSubgraphReq)(nil),        // 20: knowledge.GetSubgraphReq
+	(*SubgraphResp)(nil),          // 21: knowledge.SubgraphResp
+	(*GetEntityPathsReq)(nil),     // 22: knowledge.GetEntityPathsReq
+	(*EntityPath)(nil),            // 23: knowledge.EntityPath
+	(*EntityPathsResp)(nil),       // 24: knowledge.EntityPathsResp
+	nil,                           // 25: knowledge.Entity.PropertiesEntry
+	nil,                           // 26: knowledge.Relation.PropertiesEntry
+	nil,                           // 27: knowledge.AddEntityReq.PropertiesEntry
+	nil,                           // 28: knowledge.UpdateEntityReq.PropertiesEntry
+	nil,                           // 29: knowledge.AddRelationReq.PropertiesEntry
+	nil,                           // 30: knowledge.UpdateRelationReq.PropertiesEntry
+	nil,                           // 31: knowledge.QueryEntityReq.PropertiesEntry
+	nil,                           // 32: knowledge.GraphStatsResp.EntityTypeCountEntry
+	nil,                           // 33: knowledge.GraphStatsResp.RelationTypeCountEntry
+	(*common.BaseResp)(nil),       // 34: common.BaseResp
 }
 var file_ai_knowledge_proto_depIdxs = []int32{
-	20, // 0: knowledge.Entity.properties:type_name -> knowledge.Entity.PropertiesEntry
-	21, // 1: knowledge.Relation.properties:type_name -> knowledge.Relation.PropertiesEntry
-	22, // 2: knowledge.AddEntityReq.properties:type_name -> knowledge.AddEntityReq.PropertiesEntry
-	23, // 3: knowledge.UpdateEntityReq.properties:type_name -> knowledge.UpdateEntityReq.PropertiesEntry
-	29, // 4: knowledge.EntityResp.base_resp:type_name -> common.BaseResp
+	25, // 0: knowledge.Entity.properties:type_name -> knowledge.Entity.PropertiesEntry
+	26, // 1: knowledge.Relation.properties:type_name -> knowledge.Relation.PropertiesEntry
+	27, // 2: knowledge.AddEntityReq.properties:type_name -> knowledge.AddEntityReq.PropertiesEntry
+	28, // 3: knowledge.UpdateEntityReq.properties:type_name -> knowledge.UpdateEntityReq.PropertiesEntry
+	34, // 4: knowledge.EntityResp.base_resp:type_name -> common.BaseResp
 	0,  // 5: knowledge.EntityResp.entity:type_name -> knowledge.Entity
-	29, // 6: knowledge.BatchEntityResp.base_resp:type_name -> common.BaseResp
+	34, // 6: knowledge.BatchEntityResp.base_resp:type_name -> common.BaseResp
 	0,  // 7: knowledge.BatchEntityResp.entities:type_name -> knowledge.Entity
-	24, // 8: knowledge.AddRelationReq.properties:type_name -> knowledge.AddRelationReq.PropertiesEntry
-	25, // 9: knowledge.UpdateRelationReq.properties:type_name -> knowledge.UpdateRelationReq.PropertiesEntry
-	29, // 10: knowledge.RelationResp.base_resp:type_name -> common.BaseResp
+	29, // 8: knowledge.AddRelationReq.properties:type_name -> knowledge.AddRelationReq.PropertiesEntry
+	30, // 9: knowledge.UpdateRelationReq.properties:type_name -> knowledge.UpdateRelationReq.PropertiesEntry
+	34, // 10: knowledge.RelationResp.base_resp:type_name -> common.BaseResp
 	1,  // 11: knowledge.RelationResp.relation:type_name -> knowledge.Relation
-	29, // 12: knowledge.BatchRelationResp.base_resp:type_name -> common.BaseResp
+	34, // 12: knowledge.BatchRelationResp.base_resp:type_name -> common.BaseResp
 	1,  // 13: knowledge.BatchRelationResp.relations:type_name -> knowledge.Relation
-	26, // 14: knowledge.QueryEntityReq.properties:type_name -> knowledge.QueryEntityReq.PropertiesEntry
-	29, // 15: knowledge.GraphStatsResp.base_resp:type_name -> common.BaseResp
-	27, // 16: knowledge.GraphStatsResp.entity_type_count:type_name -> knowledge.GraphStatsResp.EntityTypeCountEntry
-	28, // 17: knowledge.GraphStatsResp.relation_type_count:type_name -> knowledge.GraphStatsResp.RelationTypeCountEntry
-	2,  // 18: knowledge.KnowledgeService.AddEntity:input_type -> knowledge.AddEntityReq
-	3,  // 19: knowledge.KnowledgeService.UpdateEntity:input_type -> knowledge.UpdateEntityReq
-	4,  // 20: knowledge.KnowledgeService.DeleteEntity:input_type -> knowledge.DeleteEntityReq
-	17, // 21: knowledge.KnowledgeService.GetEntity:input_type -> knowledge.GetByIdReq
-	12, // 22: knowledge.KnowledgeService.QueryEntities:input_type -> knowledge.QueryEntityReq
-	16, // 23: knowledge.KnowledgeService.SearchEntities:input_type -> knowledge.SearchEntityReq
-	7,  // 24: knowledge.KnowledgeService.AddRelation:input_type -> knowledge.AddRelationReq
-	8,  // 25: knowledge.KnowledgeService.UpdateRelation:input_type -> knowledge.UpdateRelationReq
-	9,  // 26: knowledge.KnowledgeService.DeleteRelation:input_type -> knowledge.DeleteRelationReq
-	17, // 27: knowledge.KnowledgeService.GetRelation:input_type -> knowledge.GetByIdReq
-	13, // 28: knowledge.KnowledgeService.QueryRelations:input_type -> knowledge.QueryRelationReq
-	19, // 29: knowledge.KnowledgeService.GetGraphStats:input_type -> knowledge.EmptyReq
-	18, // 30: knowledge.KnowledgeService.GetRelatedEntities:input_type -> knowledge.GetRelatedEntitiesReq
-	15, // 31: knowledge.KnowledgeService.ImportData:input_type -> knowledge.ImportDataReq
-	5,  // 32: knowledge.KnowledgeService.AddEntity:output_type -> knowledge.EntityResp
-	5,  // 33: knowledge.KnowledgeService.UpdateEntity:output_type -> knowledge.EntityResp
-	29, // 34: knowledge.KnowledgeService.DeleteEntity:output_type -> common.BaseResp
-	5,  // 35: knowledge.KnowledgeService.GetEntity:output_type -> knowledge.EntityResp
-	6,  // 36: knowledge.KnowledgeService.QueryEntities:output_type -> knowledge.BatchEntityResp
-	6,  // 37: knowledge.KnowledgeService.SearchEntities:output_type -> knowledge.BatchEntityResp
-	10, // 38: knowledge.KnowledgeService.AddRelation:output_type -> knowledge.RelationResp
-	10, // 39: knowledge.KnowledgeService.UpdateRelation:output_type -> knowledge.RelationResp
-	29, // 40: knowledge.KnowledgeService.DeleteRelation:output_type -> common.BaseResp
-	10, // 41: knowledge.KnowledgeService.GetRelation:output_type -> knowledge.RelationResp
-	11, // 42: knowledge.KnowledgeService.QueryRelations:output_type -> knowledge.BatchRelationResp
-	14, // 43: knowledge.KnowledgeService.GetGraphStats:output_type -> knowledge.GraphStatsResp
-	6,  // 44: knowledge.KnowledgeService.GetRelatedEntities:output_type -> knowledge.BatchEntityResp
-	29, // 45: knowledge.KnowledgeService.ImportData:output_type -> common.BaseResp
-	32, // [32:46] is the sub-list for method output_type
-	18, // [18:32] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	31, // 14: knowledge.QueryEntityReq.properties:type_name -> knowledge.QueryEntityReq.PropertiesEntry
+	34, // 15: knowledge.GraphStatsResp.base_resp:type_name -> common.BaseResp
+	32, // 16: knowledge.GraphStatsResp.entity_type_count:type_name -> knowledge.GraphStatsResp.EntityTypeCountEntry
+	33, // 17: knowledge.GraphStatsResp.relation_type_count:type_name -> knowledge.GraphStatsResp.RelationTypeCountEntry
+	34, // 18: knowledge.SubgraphResp.base_resp:type_name -> common.BaseResp
+	0,  // 19: knowledge.SubgraphResp.nodes:type_name -> knowledge.Entity
+	1,  // 20: knowledge.SubgraphResp.edges:type_name -> knowledge.Relation
+	0,  // 21: knowledge.EntityPath.entities:type_name -> knowledge.Entity
+	1,  // 22: knowledge.EntityPath.relations:type_name -> knowledge.Relation
+	34, // 23: knowledge.EntityPathsResp.base_resp:type_name -> common.BaseResp
+	23, // 24: knowledge.EntityPathsResp.paths:type_name -> knowledge.EntityPath
+	2,  // 25: knowledge.KnowledgeService.AddEntity:input_type -> knowledge.AddEntityReq
+	2,  // 26: knowledge.KnowledgeService.FindOrCreateEntity:input_type -> knowledge.AddEntityReq
+	3,  // 27: knowledge.KnowledgeService.UpdateEntity:input_type -> knowledge.UpdateEntityReq
+	4,  // 28: knowledge.KnowledgeService.DeleteEntity:input_type -> knowledge.DeleteEntityReq
+	17, // 29: knowledge.KnowledgeService.GetEntity:input_type -> knowledge.GetByIdReq
+	12, // 30: knowledge.KnowledgeService.QueryEntities:input_type -> knowledge.QueryEntityReq
+	16, // 31: knowledge.KnowledgeService.SearchEntities:input_type -> knowledge.SearchEntityReq
+	7,  // 32: knowledge.KnowledgeService.AddRelation:input_type -> knowledge.AddRelationReq
+	8,  // 33: knowledge.KnowledgeService.UpdateRelation:input_type -> knowledge.UpdateRelationReq
+	9,  // 34: knowledge.KnowledgeService.DeleteRelation:input_type -> knowledge.DeleteRelationReq
+	17, // 35: knowledge.KnowledgeService.GetRelation:input_type -> knowledge.GetByIdReq
+	13, // 36: knowledge.KnowledgeService.QueryRelations:input_type -> knowledge.QueryRelationReq
+	19, // 37: knowledge.KnowledgeService.GetGraphStats:input_type -> knowledge.EmptyReq
+	18, // 38: knowledge.KnowledgeService.GetRelatedEntities:input_type -> knowledge.GetRelatedEntitiesReq
+	15, // 39: knowledge.KnowledgeService.ImportData:input_type -> knowledge.ImportDataReq
+	20, // 40: knowledge.KnowledgeService.GetSubgraph:input_type -> knowledge.GetSubgraphReq
+	22, // 41: knowledge.KnowledgeService.GetEntityPaths:input_type -> knowledge.GetEntityPathsReq
+	5,  // 42: knowledge.KnowledgeService.AddEntity:output_type -> knowledge.EntityResp
+	5,  // 43: knowledge.KnowledgeService.FindOrCreateEntity:output_type -> knowledge.EntityResp
+	5,  // 44: knowledge.KnowledgeService.UpdateEntity:output_type -> knowledge.EntityResp
+	34, // 45: knowledge.KnowledgeService.DeleteEntity:output_type -> common.BaseResp
+	5,  // 46: knowledge.KnowledgeService.GetEntity:output_type -> knowledge.EntityResp
+	6,  // 47: knowledge.KnowledgeService.QueryEntities:output_type -> knowledge.BatchEntityResp
+	6,  // 48: knowledge.KnowledgeService.SearchEntities:output_type -> knowledge.BatchEntityResp
+	10, // 49: knowledge.KnowledgeService.AddRelation:output_type -> knowledge.RelationResp
+	10, // 50: knowledge.KnowledgeService.UpdateRelation:output_type -> knowledge.RelationResp
+	34, // 51: knowledge.KnowledgeService.DeleteRelation:output_type -> common.BaseResp
+	10, // 52: knowledge.KnowledgeService.GetRelation:output_type -> knowledge.RelationResp
+	11, // 53: knowledge.KnowledgeService.QueryRelations:output_type -> knowledge.BatchRelationResp
+	14, // 54: knowledge.KnowledgeService.GetGraphStats:output_type -> knowledge.GraphStatsResp
+	6,  // 55: knowledge.KnowledgeService.GetRelatedEntities:output_type -> knowledge.BatchEntityResp
+	34, // 56: knowledge.KnowledgeService.ImportData:output_type -> common.BaseResp
+	21, // 57: knowledge.KnowledgeService.GetSubgraph:output_type -> knowledge.SubgraphResp
+	24, // 58: knowledge.KnowledgeService.GetEntityPaths:output_type -> knowledge.EntityPathsResp
+	42, // [42:59] is the sub-list for method output_type
+	25, // [25:42] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_ai_knowledge_proto_init() }
@@ -1595,7 +2073,7 @@ func file_ai_knowledge_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_knowledge_proto_rawDesc), len(file_ai_knowledge_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

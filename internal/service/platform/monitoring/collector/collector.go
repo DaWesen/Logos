@@ -18,6 +18,8 @@ import (
 // Noa service list to monitor
 var noahServices = []string{
 	"logos.user",
+	"logos.billing",
+	"logos.monitoring",
 	"logos.knowledge",
 	"logos.question",
 	"logos.recommend",
@@ -25,8 +27,14 @@ var noahServices = []string{
 	"logos.vector",
 	"logos.search",
 	"logos.extraction",
+	"logos.summary",
+	"logos.moderation",
+	"logos.bot",
+	"logos.mcp",
 	"logos.message",
-	"logos.monitoring",
+	"logos.chat",
+	"logos.contact",
+	"logos.im",
 }
 
 type ServiceCollector struct {

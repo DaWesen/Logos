@@ -4,12 +4,13 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-
 	"Logos/internal/service/platform/gateway/model"
 
 	pb "Logos/proto_gen/bot"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -56,7 +57,8 @@ func (h *Handler) UpdateBot(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
+	req.BotId = c.Param("id")
+
 	if userID, exists := c.Get("user_id"); exists {
 		req.UserId, _ = userID.(string)
 	}
@@ -192,23 +194,38 @@ func (h *Handler) SendBotMessage(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
 	if userID, exists := c.Get("user_id"); exists {
 		req.UserId, _ = userID.(string)
 	}
 
-	resp, err := h.BotClient.SendBotMessage(context.Background(), &req)
+	var header metadata.MD
+	resp, err := h.BotClient.SendBotMessage(context.Background(), &req, grpc.Header(&header))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
+
+	data := gin.H{
+		"content": resp.Content,
+		"done":    resp.Done,
+		"chat_id": resp.ChatId,
+	}
+
+	if costVals := header.Get("x-cost"); len(costVals) > 0 {
+		if cost, parseErr := strconv.ParseFloat(costVals[0], 64); parseErr == nil {
+			data["cost"] = cost
+		}
+	}
+	if tokenVals := header.Get("x-tokens"); len(tokenVals) > 0 {
+		if tokens, parseErr := strconv.ParseInt(tokenVals[0], 10, 64); parseErr == nil {
+			data["tokens"] = tokens
+		}
+	}
+
 	c.JSON(http.StatusOK, model.Response{
 		Code:    200,
 		Message: "success",
-		Data: gin.H{
-			"content": resp.Content,
-			"done":    resp.Done,
-		},
+		Data:    data,
 	})
 }
 
@@ -250,5 +267,93 @@ func (h *Handler) GetBotHistory(c *gin.Context) {
 			"messages": resp.Messages,
 			"hasMore":  resp.HasMore,
 		},
+	})
+}
+
+func (h *Handler) GetUserMemory(c *gin.Context) {
+	if h.BotClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
+		return
+	}
+	botID := c.Query("bot_id")
+	userID, _ := c.Get("user_id")
+
+	req := &pb.GetUserMemoryRequest{
+		UserId: userID.(string),
+		BotId:  botID,
+	}
+
+	resp, err := h.BotClient.GetUserMemory(context.Background(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	statusCode := 200
+	if resp.Code != 0 {
+		statusCode = int(resp.Code)
+	}
+	c.JSON(statusCode, model.Response{
+		Code:    statusCode,
+		Message: resp.Message,
+		Data:    resp.Memories,
+	})
+}
+
+func (h *Handler) SetUserMemory(c *gin.Context) {
+	if h.BotClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
+		return
+	}
+	var req pb.SetUserMemoryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	if userID, exists := c.Get("user_id"); exists {
+		req.UserId, _ = userID.(string)
+	}
+
+	resp, err := h.BotClient.SetUserMemory(context.Background(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	statusCode := 200
+	if resp.Code != 0 {
+		statusCode = int(resp.Code)
+	}
+	c.JSON(statusCode, model.Response{
+		Code:    statusCode,
+		Message: resp.Message,
+	})
+}
+
+func (h *Handler) DeleteUserMemory(c *gin.Context) {
+	if h.BotClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
+		return
+	}
+	botID := c.Query("bot_id")
+	key := c.Query("key")
+	userID, _ := c.Get("user_id")
+
+	req := &pb.DeleteUserMemoryRequest{
+		UserId: userID.(string),
+		BotId:  botID,
+		Key:    key,
+	}
+
+	resp, err := h.BotClient.DeleteUserMemory(context.Background(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	statusCode := 200
+	if resp.Code != 0 {
+		statusCode = int(resp.Code)
+	}
+	c.JSON(statusCode, model.Response{
+		Code:    statusCode,
+		Message: resp.Message,
 	})
 }

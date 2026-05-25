@@ -33,6 +33,7 @@ const (
 	BotService_StreamBotMessage_FullMethodName   = "/ai.bot.BotService/StreamBotMessage"
 	BotService_GetUserMemory_FullMethodName      = "/ai.bot.BotService/GetUserMemory"
 	BotService_SetUserMemory_FullMethodName      = "/ai.bot.BotService/SetUserMemory"
+	BotService_DeleteUserMemory_FullMethodName   = "/ai.bot.BotService/DeleteUserMemory"
 	BotService_CreatePrompt_FullMethodName       = "/ai.bot.BotService/CreatePrompt"
 	BotService_UpdatePrompt_FullMethodName       = "/ai.bot.BotService/UpdatePrompt"
 	BotService_DeletePrompt_FullMethodName       = "/ai.bot.BotService/DeletePrompt"
@@ -73,6 +74,7 @@ type BotServiceClient interface {
 	// 获取/设置用户记忆
 	GetUserMemory(ctx context.Context, in *GetUserMemoryRequest, opts ...grpc.CallOption) (*GetUserMemoryResponse, error)
 	SetUserMemory(ctx context.Context, in *SetUserMemoryRequest, opts ...grpc.CallOption) (*SetUserMemoryResponse, error)
+	DeleteUserMemory(ctx context.Context, in *DeleteUserMemoryRequest, opts ...grpc.CallOption) (*DeleteUserMemoryResponse, error)
 	// 创建 Prompt
 	CreatePrompt(ctx context.Context, in *CreatePromptRequest, opts ...grpc.CallOption) (*CreatePromptResponse, error)
 	// 更新 Prompt
@@ -242,6 +244,16 @@ func (c *botServiceClient) SetUserMemory(ctx context.Context, in *SetUserMemoryR
 	return out, nil
 }
 
+func (c *botServiceClient) DeleteUserMemory(ctx context.Context, in *DeleteUserMemoryRequest, opts ...grpc.CallOption) (*DeleteUserMemoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteUserMemoryResponse)
+	err := c.cc.Invoke(ctx, BotService_DeleteUserMemory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *botServiceClient) CreatePrompt(ctx context.Context, in *CreatePromptRequest, opts ...grpc.CallOption) (*CreatePromptResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreatePromptResponse)
@@ -325,6 +337,7 @@ type BotServiceServer interface {
 	// 获取/设置用户记忆
 	GetUserMemory(context.Context, *GetUserMemoryRequest) (*GetUserMemoryResponse, error)
 	SetUserMemory(context.Context, *SetUserMemoryRequest) (*SetUserMemoryResponse, error)
+	DeleteUserMemory(context.Context, *DeleteUserMemoryRequest) (*DeleteUserMemoryResponse, error)
 	// 创建 Prompt
 	CreatePrompt(context.Context, *CreatePromptRequest) (*CreatePromptResponse, error)
 	// 更新 Prompt
@@ -386,6 +399,9 @@ func (UnimplementedBotServiceServer) GetUserMemory(context.Context, *GetUserMemo
 }
 func (UnimplementedBotServiceServer) SetUserMemory(context.Context, *SetUserMemoryRequest) (*SetUserMemoryResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetUserMemory not implemented")
+}
+func (UnimplementedBotServiceServer) DeleteUserMemory(context.Context, *DeleteUserMemoryRequest) (*DeleteUserMemoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteUserMemory not implemented")
 }
 func (UnimplementedBotServiceServer) CreatePrompt(context.Context, *CreatePromptRequest) (*CreatePromptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePrompt not implemented")
@@ -668,6 +684,24 @@ func _BotService_SetUserMemory_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BotService_DeleteUserMemory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteUserMemoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BotServiceServer).DeleteUserMemory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BotService_DeleteUserMemory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BotServiceServer).DeleteUserMemory(ctx, req.(*DeleteUserMemoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _BotService_CreatePrompt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreatePromptRequest)
 	if err := dec(in); err != nil {
@@ -816,6 +850,10 @@ var BotService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetUserMemory",
 			Handler:    _BotService_SetUserMemory_Handler,
+		},
+		{
+			MethodName: "DeleteUserMemory",
+			Handler:    _BotService_DeleteUserMemory_Handler,
 		},
 		{
 			MethodName: "CreatePrompt",

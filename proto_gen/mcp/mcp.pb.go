@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.1
-// source: ai/mcp.proto
+// source: mcp.proto
 
 package mcp
 
@@ -65,11 +65,11 @@ func (x ToolType) String() string {
 }
 
 func (ToolType) Descriptor() protoreflect.EnumDescriptor {
-	return file_ai_mcp_proto_enumTypes[0].Descriptor()
+	return file_mcp_proto_enumTypes[0].Descriptor()
 }
 
 func (ToolType) Type() protoreflect.EnumType {
-	return &file_ai_mcp_proto_enumTypes[0]
+	return &file_mcp_proto_enumTypes[0]
 }
 
 func (x ToolType) Number() protoreflect.EnumNumber {
@@ -78,7 +78,7 @@ func (x ToolType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ToolType.Descriptor instead.
 func (ToolType) EnumDescriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{0}
+	return file_mcp_proto_rawDescGZIP(), []int{0}
 }
 
 // 工具
@@ -98,7 +98,7 @@ type Tool struct {
 
 func (x *Tool) Reset() {
 	*x = Tool{}
-	mi := &file_ai_mcp_proto_msgTypes[0]
+	mi := &file_mcp_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -110,7 +110,7 @@ func (x *Tool) String() string {
 func (*Tool) ProtoMessage() {}
 
 func (x *Tool) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[0]
+	mi := &file_mcp_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -123,7 +123,7 @@ func (x *Tool) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tool.ProtoReflect.Descriptor instead.
 func (*Tool) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{0}
+	return file_mcp_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Tool) GetId() string {
@@ -196,7 +196,7 @@ type ToolParameter struct {
 
 func (x *ToolParameter) Reset() {
 	*x = ToolParameter{}
-	mi := &file_ai_mcp_proto_msgTypes[1]
+	mi := &file_mcp_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -208,7 +208,7 @@ func (x *ToolParameter) String() string {
 func (*ToolParameter) ProtoMessage() {}
 
 func (x *ToolParameter) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[1]
+	mi := &file_mcp_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -221,7 +221,7 @@ func (x *ToolParameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolParameter.ProtoReflect.Descriptor instead.
 func (*ToolParameter) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{1}
+	return file_mcp_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ToolParameter) GetName() string {
@@ -271,7 +271,7 @@ type CallToolRequest struct {
 
 func (x *CallToolRequest) Reset() {
 	*x = CallToolRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[2]
+	mi := &file_mcp_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -283,7 +283,7 @@ func (x *CallToolRequest) String() string {
 func (*CallToolRequest) ProtoMessage() {}
 
 func (x *CallToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[2]
+	mi := &file_mcp_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -296,7 +296,7 @@ func (x *CallToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallToolRequest.ProtoReflect.Descriptor instead.
 func (*CallToolRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{2}
+	return file_mcp_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CallToolRequest) GetToolId() string {
@@ -333,7 +333,7 @@ type CallToolResponse struct {
 
 func (x *CallToolResponse) Reset() {
 	*x = CallToolResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[3]
+	mi := &file_mcp_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -345,7 +345,7 @@ func (x *CallToolResponse) String() string {
 func (*CallToolResponse) ProtoMessage() {}
 
 func (x *CallToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[3]
+	mi := &file_mcp_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -358,7 +358,7 @@ func (x *CallToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallToolResponse.ProtoReflect.Descriptor instead.
 func (*CallToolResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{3}
+	return file_mcp_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CallToolResponse) GetCode() int32 {
@@ -403,7 +403,7 @@ type RegisterToolRequest struct {
 
 func (x *RegisterToolRequest) Reset() {
 	*x = RegisterToolRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[4]
+	mi := &file_mcp_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -415,7 +415,7 @@ func (x *RegisterToolRequest) String() string {
 func (*RegisterToolRequest) ProtoMessage() {}
 
 func (x *RegisterToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[4]
+	mi := &file_mcp_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -428,7 +428,7 @@ func (x *RegisterToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterToolRequest.ProtoReflect.Descriptor instead.
 func (*RegisterToolRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{4}
+	return file_mcp_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RegisterToolRequest) GetName() string {
@@ -478,7 +478,7 @@ type RegisterToolResponse struct {
 
 func (x *RegisterToolResponse) Reset() {
 	*x = RegisterToolResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[5]
+	mi := &file_mcp_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +490,7 @@ func (x *RegisterToolResponse) String() string {
 func (*RegisterToolResponse) ProtoMessage() {}
 
 func (x *RegisterToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[5]
+	mi := &file_mcp_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +503,7 @@ func (x *RegisterToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegisterToolResponse.ProtoReflect.Descriptor instead.
 func (*RegisterToolResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{5}
+	return file_mcp_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RegisterToolResponse) GetCode() int32 {
@@ -540,7 +540,7 @@ type ListToolsRequest struct {
 
 func (x *ListToolsRequest) Reset() {
 	*x = ListToolsRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[6]
+	mi := &file_mcp_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -552,7 +552,7 @@ func (x *ListToolsRequest) String() string {
 func (*ListToolsRequest) ProtoMessage() {}
 
 func (x *ListToolsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[6]
+	mi := &file_mcp_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -565,7 +565,7 @@ func (x *ListToolsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListToolsRequest.ProtoReflect.Descriptor instead.
 func (*ListToolsRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{6}
+	return file_mcp_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListToolsRequest) GetType() ToolType {
@@ -609,7 +609,7 @@ type ListToolsResponse struct {
 
 func (x *ListToolsResponse) Reset() {
 	*x = ListToolsResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[7]
+	mi := &file_mcp_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +621,7 @@ func (x *ListToolsResponse) String() string {
 func (*ListToolsResponse) ProtoMessage() {}
 
 func (x *ListToolsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[7]
+	mi := &file_mcp_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +634,7 @@ func (x *ListToolsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListToolsResponse.ProtoReflect.Descriptor instead.
 func (*ListToolsResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{7}
+	return file_mcp_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListToolsResponse) GetCode() int32 {
@@ -675,7 +675,7 @@ type GetToolRequest struct {
 
 func (x *GetToolRequest) Reset() {
 	*x = GetToolRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[8]
+	mi := &file_mcp_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -687,7 +687,7 @@ func (x *GetToolRequest) String() string {
 func (*GetToolRequest) ProtoMessage() {}
 
 func (x *GetToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[8]
+	mi := &file_mcp_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -700,7 +700,7 @@ func (x *GetToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetToolRequest.ProtoReflect.Descriptor instead.
 func (*GetToolRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{8}
+	return file_mcp_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetToolRequest) GetToolId() string {
@@ -722,7 +722,7 @@ type GetToolResponse struct {
 
 func (x *GetToolResponse) Reset() {
 	*x = GetToolResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[9]
+	mi := &file_mcp_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -734,7 +734,7 @@ func (x *GetToolResponse) String() string {
 func (*GetToolResponse) ProtoMessage() {}
 
 func (x *GetToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[9]
+	mi := &file_mcp_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -747,7 +747,7 @@ func (x *GetToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetToolResponse.ProtoReflect.Descriptor instead.
 func (*GetToolResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{9}
+	return file_mcp_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetToolResponse) GetCode() int32 {
@@ -786,7 +786,7 @@ type UpdateToolRequest struct {
 
 func (x *UpdateToolRequest) Reset() {
 	*x = UpdateToolRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[10]
+	mi := &file_mcp_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +798,7 @@ func (x *UpdateToolRequest) String() string {
 func (*UpdateToolRequest) ProtoMessage() {}
 
 func (x *UpdateToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[10]
+	mi := &file_mcp_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +811,7 @@ func (x *UpdateToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateToolRequest.ProtoReflect.Descriptor instead.
 func (*UpdateToolRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{10}
+	return file_mcp_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *UpdateToolRequest) GetToolId() string {
@@ -868,7 +868,7 @@ type UpdateToolResponse struct {
 
 func (x *UpdateToolResponse) Reset() {
 	*x = UpdateToolResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[11]
+	mi := &file_mcp_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -880,7 +880,7 @@ func (x *UpdateToolResponse) String() string {
 func (*UpdateToolResponse) ProtoMessage() {}
 
 func (x *UpdateToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[11]
+	mi := &file_mcp_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -893,7 +893,7 @@ func (x *UpdateToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateToolResponse.ProtoReflect.Descriptor instead.
 func (*UpdateToolResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{11}
+	return file_mcp_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateToolResponse) GetCode() int32 {
@@ -927,7 +927,7 @@ type DeleteToolRequest struct {
 
 func (x *DeleteToolRequest) Reset() {
 	*x = DeleteToolRequest{}
-	mi := &file_ai_mcp_proto_msgTypes[12]
+	mi := &file_mcp_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -939,7 +939,7 @@ func (x *DeleteToolRequest) String() string {
 func (*DeleteToolRequest) ProtoMessage() {}
 
 func (x *DeleteToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[12]
+	mi := &file_mcp_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -952,7 +952,7 @@ func (x *DeleteToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteToolRequest.ProtoReflect.Descriptor instead.
 func (*DeleteToolRequest) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{12}
+	return file_mcp_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DeleteToolRequest) GetToolId() string {
@@ -973,7 +973,7 @@ type DeleteToolResponse struct {
 
 func (x *DeleteToolResponse) Reset() {
 	*x = DeleteToolResponse{}
-	mi := &file_ai_mcp_proto_msgTypes[13]
+	mi := &file_mcp_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -985,7 +985,7 @@ func (x *DeleteToolResponse) String() string {
 func (*DeleteToolResponse) ProtoMessage() {}
 
 func (x *DeleteToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_mcp_proto_msgTypes[13]
+	mi := &file_mcp_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -998,7 +998,7 @@ func (x *DeleteToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteToolResponse.ProtoReflect.Descriptor instead.
 func (*DeleteToolResponse) Descriptor() ([]byte, []int) {
-	return file_ai_mcp_proto_rawDescGZIP(), []int{13}
+	return file_mcp_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DeleteToolResponse) GetCode() int32 {
@@ -1015,11 +1015,924 @@ func (x *DeleteToolResponse) GetMessage() string {
 	return ""
 }
 
-var File_ai_mcp_proto protoreflect.FileDescriptor
+// MCP 外部服务
+type MCPServiceInfo struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Enabled        bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	TransportType  string                 `protobuf:"bytes,5,opt,name=transport_type,json=transportType,proto3" json:"transport_type,omitempty"`
+	Url            string                 `protobuf:"bytes,6,opt,name=url,proto3" json:"url,omitempty"`
+	Headers        map[string]string      `protobuf:"bytes,7,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AuthConfig     map[string]string      `protobuf:"bytes,8,rep,name=auth_config,json=authConfig,proto3" json:"auth_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AdvancedConfig map[string]string      `protobuf:"bytes,9,rep,name=advanced_config,json=advancedConfig,proto3" json:"advanced_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt      *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
 
-const file_ai_mcp_proto_rawDesc = "" +
+func (x *MCPServiceInfo) Reset() {
+	*x = MCPServiceInfo{}
+	mi := &file_mcp_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MCPServiceInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MCPServiceInfo) ProtoMessage() {}
+
+func (x *MCPServiceInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MCPServiceInfo.ProtoReflect.Descriptor instead.
+func (*MCPServiceInfo) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *MCPServiceInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *MCPServiceInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *MCPServiceInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *MCPServiceInfo) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *MCPServiceInfo) GetTransportType() string {
+	if x != nil {
+		return x.TransportType
+	}
+	return ""
+}
+
+func (x *MCPServiceInfo) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *MCPServiceInfo) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *MCPServiceInfo) GetAuthConfig() map[string]string {
+	if x != nil {
+		return x.AuthConfig
+	}
+	return nil
+}
+
+func (x *MCPServiceInfo) GetAdvancedConfig() map[string]string {
+	if x != nil {
+		return x.AdvancedConfig
+	}
+	return nil
+}
+
+func (x *MCPServiceInfo) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *MCPServiceInfo) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+// 创建MCP服务请求
+type CreateMCPServiceRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	TransportType  string                 `protobuf:"bytes,3,opt,name=transport_type,json=transportType,proto3" json:"transport_type,omitempty"`
+	Url            string                 `protobuf:"bytes,4,opt,name=url,proto3" json:"url,omitempty"`
+	Headers        map[string]string      `protobuf:"bytes,5,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AuthConfig     map[string]string      `protobuf:"bytes,6,rep,name=auth_config,json=authConfig,proto3" json:"auth_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AdvancedConfig map[string]string      `protobuf:"bytes,7,rep,name=advanced_config,json=advancedConfig,proto3" json:"advanced_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Enabled        bool                   `protobuf:"varint,8,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CreateMCPServiceRequest) Reset() {
+	*x = CreateMCPServiceRequest{}
+	mi := &file_mcp_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateMCPServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateMCPServiceRequest) ProtoMessage() {}
+
+func (x *CreateMCPServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateMCPServiceRequest.ProtoReflect.Descriptor instead.
+func (*CreateMCPServiceRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CreateMCPServiceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateMCPServiceRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *CreateMCPServiceRequest) GetTransportType() string {
+	if x != nil {
+		return x.TransportType
+	}
+	return ""
+}
+
+func (x *CreateMCPServiceRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *CreateMCPServiceRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *CreateMCPServiceRequest) GetAuthConfig() map[string]string {
+	if x != nil {
+		return x.AuthConfig
+	}
+	return nil
+}
+
+func (x *CreateMCPServiceRequest) GetAdvancedConfig() map[string]string {
+	if x != nil {
+		return x.AdvancedConfig
+	}
+	return nil
+}
+
+func (x *CreateMCPServiceRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+// 创建MCP服务响应
+type CreateMCPServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *MCPServiceInfo        `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateMCPServiceResponse) Reset() {
+	*x = CreateMCPServiceResponse{}
+	mi := &file_mcp_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateMCPServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateMCPServiceResponse) ProtoMessage() {}
+
+func (x *CreateMCPServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateMCPServiceResponse.ProtoReflect.Descriptor instead.
+func (*CreateMCPServiceResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CreateMCPServiceResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreateMCPServiceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CreateMCPServiceResponse) GetData() *MCPServiceInfo {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 获取MCP服务请求
+type GetMCPServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId     string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMCPServiceRequest) Reset() {
+	*x = GetMCPServiceRequest{}
+	mi := &file_mcp_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMCPServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMCPServiceRequest) ProtoMessage() {}
+
+func (x *GetMCPServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMCPServiceRequest.ProtoReflect.Descriptor instead.
+func (*GetMCPServiceRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *GetMCPServiceRequest) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+// 获取MCP服务响应
+type GetMCPServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *MCPServiceInfo        `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMCPServiceResponse) Reset() {
+	*x = GetMCPServiceResponse{}
+	mi := &file_mcp_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMCPServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMCPServiceResponse) ProtoMessage() {}
+
+func (x *GetMCPServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMCPServiceResponse.ProtoReflect.Descriptor instead.
+func (*GetMCPServiceResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetMCPServiceResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetMCPServiceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetMCPServiceResponse) GetData() *MCPServiceInfo {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 获取MCP服务列表请求
+type ListMCPServicesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EnabledOnly   bool                   `protobuf:"varint,1,opt,name=enabled_only,json=enabledOnly,proto3" json:"enabled_only,omitempty"`
+	Page          int32                  `protobuf:"varint,2,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMCPServicesRequest) Reset() {
+	*x = ListMCPServicesRequest{}
+	mi := &file_mcp_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMCPServicesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMCPServicesRequest) ProtoMessage() {}
+
+func (x *ListMCPServicesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMCPServicesRequest.ProtoReflect.Descriptor instead.
+func (*ListMCPServicesRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ListMCPServicesRequest) GetEnabledOnly() bool {
+	if x != nil {
+		return x.EnabledOnly
+	}
+	return false
+}
+
+func (x *ListMCPServicesRequest) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListMCPServicesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+// 获取MCP服务列表响应
+type ListMCPServicesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Services      []*MCPServiceInfo      `protobuf:"bytes,3,rep,name=services,proto3" json:"services,omitempty"`
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMCPServicesResponse) Reset() {
+	*x = ListMCPServicesResponse{}
+	mi := &file_mcp_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMCPServicesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMCPServicesResponse) ProtoMessage() {}
+
+func (x *ListMCPServicesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMCPServicesResponse.ProtoReflect.Descriptor instead.
+func (*ListMCPServicesResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ListMCPServicesResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *ListMCPServicesResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ListMCPServicesResponse) GetServices() []*MCPServiceInfo {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+func (x *ListMCPServicesResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// 更新MCP服务请求
+type UpdateMCPServiceRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId      string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description    string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	TransportType  string                 `protobuf:"bytes,4,opt,name=transport_type,json=transportType,proto3" json:"transport_type,omitempty"`
+	Url            string                 `protobuf:"bytes,5,opt,name=url,proto3" json:"url,omitempty"`
+	Headers        map[string]string      `protobuf:"bytes,6,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AuthConfig     map[string]string      `protobuf:"bytes,7,rep,name=auth_config,json=authConfig,proto3" json:"auth_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AdvancedConfig map[string]string      `protobuf:"bytes,8,rep,name=advanced_config,json=advancedConfig,proto3" json:"advanced_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Enabled        bool                   `protobuf:"varint,9,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UpdateMCPServiceRequest) Reset() {
+	*x = UpdateMCPServiceRequest{}
+	mi := &file_mcp_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateMCPServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateMCPServiceRequest) ProtoMessage() {}
+
+func (x *UpdateMCPServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateMCPServiceRequest.ProtoReflect.Descriptor instead.
+func (*UpdateMCPServiceRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *UpdateMCPServiceRequest) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceRequest) GetTransportType() string {
+	if x != nil {
+		return x.TransportType
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *UpdateMCPServiceRequest) GetAuthConfig() map[string]string {
+	if x != nil {
+		return x.AuthConfig
+	}
+	return nil
+}
+
+func (x *UpdateMCPServiceRequest) GetAdvancedConfig() map[string]string {
+	if x != nil {
+		return x.AdvancedConfig
+	}
+	return nil
+}
+
+func (x *UpdateMCPServiceRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+// 更新MCP服务响应
+type UpdateMCPServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *MCPServiceInfo        `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateMCPServiceResponse) Reset() {
+	*x = UpdateMCPServiceResponse{}
+	mi := &file_mcp_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateMCPServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateMCPServiceResponse) ProtoMessage() {}
+
+func (x *UpdateMCPServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateMCPServiceResponse.ProtoReflect.Descriptor instead.
+func (*UpdateMCPServiceResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *UpdateMCPServiceResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *UpdateMCPServiceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *UpdateMCPServiceResponse) GetData() *MCPServiceInfo {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 删除MCP服务请求
+type DeleteMCPServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId     string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteMCPServiceRequest) Reset() {
+	*x = DeleteMCPServiceRequest{}
+	mi := &file_mcp_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteMCPServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteMCPServiceRequest) ProtoMessage() {}
+
+func (x *DeleteMCPServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteMCPServiceRequest.ProtoReflect.Descriptor instead.
+func (*DeleteMCPServiceRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *DeleteMCPServiceRequest) GetServiceId() string {
+	if x != nil {
+		return x.ServiceId
+	}
+	return ""
+}
+
+// 删除MCP服务响应
+type DeleteMCPServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteMCPServiceResponse) Reset() {
+	*x = DeleteMCPServiceResponse{}
+	mi := &file_mcp_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteMCPServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteMCPServiceResponse) ProtoMessage() {}
+
+func (x *DeleteMCPServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteMCPServiceResponse.ProtoReflect.Descriptor instead.
+func (*DeleteMCPServiceResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *DeleteMCPServiceResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeleteMCPServiceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// 测试MCP服务连接请求
+type TestMCPServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	TransportType string                 `protobuf:"bytes,2,opt,name=transport_type,json=transportType,proto3" json:"transport_type,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AuthConfig    map[string]string      `protobuf:"bytes,4,rep,name=auth_config,json=authConfig,proto3" json:"auth_config,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestMCPServiceRequest) Reset() {
+	*x = TestMCPServiceRequest{}
+	mi := &file_mcp_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestMCPServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestMCPServiceRequest) ProtoMessage() {}
+
+func (x *TestMCPServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestMCPServiceRequest.ProtoReflect.Descriptor instead.
+func (*TestMCPServiceRequest) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *TestMCPServiceRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *TestMCPServiceRequest) GetTransportType() string {
+	if x != nil {
+		return x.TransportType
+	}
+	return ""
+}
+
+func (x *TestMCPServiceRequest) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *TestMCPServiceRequest) GetAuthConfig() map[string]string {
+	if x != nil {
+		return x.AuthConfig
+	}
+	return nil
+}
+
+// 测试MCP服务连接响应
+type TestMCPServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TestMCPServiceResponse) Reset() {
+	*x = TestMCPServiceResponse{}
+	mi := &file_mcp_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TestMCPServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TestMCPServiceResponse) ProtoMessage() {}
+
+func (x *TestMCPServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_mcp_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TestMCPServiceResponse.ProtoReflect.Descriptor instead.
+func (*TestMCPServiceResponse) Descriptor() ([]byte, []int) {
+	return file_mcp_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *TestMCPServiceResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *TestMCPServiceResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+var File_mcp_proto protoreflect.FileDescriptor
+
+const file_mcp_proto_rawDesc = "" +
 	"\n" +
-	"\fai/mcp.proto\x12\x06ai.mcp\x1a\x1fgoogle/protobuf/timestamp.proto\"\xef\x02\n" +
+	"\tmcp.proto\x12\x06ai.mcp\x1a\x1fgoogle/protobuf/timestamp.proto\"\xef\x02\n" +
 	"\x04Tool\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -1108,6 +2021,116 @@ const file_ai_mcp_proto_rawDesc = "" +
 	"\atool_id\x18\x01 \x01(\tR\x06toolId\"B\n" +
 	"\x12DeleteToolResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xba\x05\n" +
+	"\x0eMCPServiceInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x18\n" +
+	"\aenabled\x18\x04 \x01(\bR\aenabled\x12%\n" +
+	"\x0etransport_type\x18\x05 \x01(\tR\rtransportType\x12\x10\n" +
+	"\x03url\x18\x06 \x01(\tR\x03url\x12=\n" +
+	"\aheaders\x18\a \x03(\v2#.ai.mcp.MCPServiceInfo.HeadersEntryR\aheaders\x12G\n" +
+	"\vauth_config\x18\b \x03(\v2&.ai.mcp.MCPServiceInfo.AuthConfigEntryR\n" +
+	"authConfig\x12S\n" +
+	"\x0fadvanced_config\x18\t \x03(\v2*.ai.mcp.MCPServiceInfo.AdvancedConfigEntryR\x0eadvancedConfig\x129\n" +
+	"\n" +
+	"created_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fAuthConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
+	"\x13AdvancedConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd8\x04\n" +
+	"\x17CreateMCPServiceRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12%\n" +
+	"\x0etransport_type\x18\x03 \x01(\tR\rtransportType\x12\x10\n" +
+	"\x03url\x18\x04 \x01(\tR\x03url\x12F\n" +
+	"\aheaders\x18\x05 \x03(\v2,.ai.mcp.CreateMCPServiceRequest.HeadersEntryR\aheaders\x12P\n" +
+	"\vauth_config\x18\x06 \x03(\v2/.ai.mcp.CreateMCPServiceRequest.AuthConfigEntryR\n" +
+	"authConfig\x12\\\n" +
+	"\x0fadvanced_config\x18\a \x03(\v23.ai.mcp.CreateMCPServiceRequest.AdvancedConfigEntryR\x0eadvancedConfig\x12\x18\n" +
+	"\aenabled\x18\b \x01(\bR\aenabled\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fAuthConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
+	"\x13AdvancedConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"t\n" +
+	"\x18CreateMCPServiceResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12*\n" +
+	"\x04data\x18\x03 \x01(\v2\x16.ai.mcp.MCPServiceInfoR\x04data\"5\n" +
+	"\x14GetMCPServiceRequest\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\"q\n" +
+	"\x15GetMCPServiceResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12*\n" +
+	"\x04data\x18\x03 \x01(\v2\x16.ai.mcp.MCPServiceInfoR\x04data\"l\n" +
+	"\x16ListMCPServicesRequest\x12!\n" +
+	"\fenabled_only\x18\x01 \x01(\bR\venabledOnly\x12\x12\n" +
+	"\x04page\x18\x02 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\"\x91\x01\n" +
+	"\x17ListMCPServicesResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x122\n" +
+	"\bservices\x18\x03 \x03(\v2\x16.ai.mcp.MCPServiceInfoR\bservices\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xf7\x04\n" +
+	"\x17UpdateMCPServiceRequest\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12%\n" +
+	"\x0etransport_type\x18\x04 \x01(\tR\rtransportType\x12\x10\n" +
+	"\x03url\x18\x05 \x01(\tR\x03url\x12F\n" +
+	"\aheaders\x18\x06 \x03(\v2,.ai.mcp.UpdateMCPServiceRequest.HeadersEntryR\aheaders\x12P\n" +
+	"\vauth_config\x18\a \x03(\v2/.ai.mcp.UpdateMCPServiceRequest.AuthConfigEntryR\n" +
+	"authConfig\x12\\\n" +
+	"\x0fadvanced_config\x18\b \x03(\v23.ai.mcp.UpdateMCPServiceRequest.AdvancedConfigEntryR\x0eadvancedConfig\x12\x18\n" +
+	"\aenabled\x18\t \x01(\bR\aenabled\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fAuthConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aA\n" +
+	"\x13AdvancedConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"t\n" +
+	"\x18UpdateMCPServiceResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12*\n" +
+	"\x04data\x18\x03 \x01(\v2\x16.ai.mcp.MCPServiceInfoR\x04data\"8\n" +
+	"\x17DeleteMCPServiceRequest\x12\x1d\n" +
+	"\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\"H\n" +
+	"\x18DeleteMCPServiceResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xe1\x02\n" +
+	"\x15TestMCPServiceRequest\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\x12%\n" +
+	"\x0etransport_type\x18\x02 \x01(\tR\rtransportType\x12D\n" +
+	"\aheaders\x18\x03 \x03(\v2*.ai.mcp.TestMCPServiceRequest.HeadersEntryR\aheaders\x12N\n" +
+	"\vauth_config\x18\x04 \x03(\v2-.ai.mcp.TestMCPServiceRequest.AuthConfigEntryR\n" +
+	"authConfig\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fAuthConfigEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"F\n" +
+	"\x16TestMCPServiceResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage*\xa5\x01\n" +
 	"\bToolType\x12\x19\n" +
 	"\x15TOOL_TYPE_UNSPECIFIED\x10\x00\x12\x18\n" +
@@ -1115,7 +2138,7 @@ const file_ai_mcp_proto_rawDesc = "" +
 	"\x18TOOL_TYPE_CODE_EXECUTION\x10\x02\x12\x15\n" +
 	"\x11TOOL_TYPE_WEATHER\x10\x03\x12\x19\n" +
 	"\x15TOOL_TYPE_FILE_SYSTEM\x10\x04\x12\x14\n" +
-	"\x10TOOL_TYPE_CUSTOM\x10\x052\x9e\x03\n" +
+	"\x10TOOL_TYPE_CUSTOM\x10\x052\x96\a\n" +
 	"\n" +
 	"MCPService\x12=\n" +
 	"\bCallTool\x12\x17.ai.mcp.CallToolRequest\x1a\x18.ai.mcp.CallToolResponse\x12I\n" +
@@ -1125,102 +2148,161 @@ const file_ai_mcp_proto_rawDesc = "" +
 	"\n" +
 	"UpdateTool\x12\x19.ai.mcp.UpdateToolRequest\x1a\x1a.ai.mcp.UpdateToolResponse\x12C\n" +
 	"\n" +
-	"DeleteTool\x12\x19.ai.mcp.DeleteToolRequest\x1a\x1a.ai.mcp.DeleteToolResponseB\x15Z\x13Logos/proto_gen/mcpb\x06proto3"
+	"DeleteTool\x12\x19.ai.mcp.DeleteToolRequest\x1a\x1a.ai.mcp.DeleteToolResponse\x12U\n" +
+	"\x10CreateMCPService\x12\x1f.ai.mcp.CreateMCPServiceRequest\x1a .ai.mcp.CreateMCPServiceResponse\x12L\n" +
+	"\rGetMCPService\x12\x1c.ai.mcp.GetMCPServiceRequest\x1a\x1d.ai.mcp.GetMCPServiceResponse\x12R\n" +
+	"\x0fListMCPServices\x12\x1e.ai.mcp.ListMCPServicesRequest\x1a\x1f.ai.mcp.ListMCPServicesResponse\x12U\n" +
+	"\x10UpdateMCPService\x12\x1f.ai.mcp.UpdateMCPServiceRequest\x1a .ai.mcp.UpdateMCPServiceResponse\x12U\n" +
+	"\x10DeleteMCPService\x12\x1f.ai.mcp.DeleteMCPServiceRequest\x1a .ai.mcp.DeleteMCPServiceResponse\x12O\n" +
+	"\x0eTestMCPService\x12\x1d.ai.mcp.TestMCPServiceRequest\x1a\x1e.ai.mcp.TestMCPServiceResponseB\x15Z\x13Logos/proto_gen/mcpb\x06proto3"
 
 var (
-	file_ai_mcp_proto_rawDescOnce sync.Once
-	file_ai_mcp_proto_rawDescData []byte
+	file_mcp_proto_rawDescOnce sync.Once
+	file_mcp_proto_rawDescData []byte
 )
 
-func file_ai_mcp_proto_rawDescGZIP() []byte {
-	file_ai_mcp_proto_rawDescOnce.Do(func() {
-		file_ai_mcp_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_ai_mcp_proto_rawDesc), len(file_ai_mcp_proto_rawDesc)))
+func file_mcp_proto_rawDescGZIP() []byte {
+	file_mcp_proto_rawDescOnce.Do(func() {
+		file_mcp_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_mcp_proto_rawDesc), len(file_mcp_proto_rawDesc)))
 	})
-	return file_ai_mcp_proto_rawDescData
+	return file_mcp_proto_rawDescData
 }
 
-var file_ai_mcp_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_ai_mcp_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
-var file_ai_mcp_proto_goTypes = []any{
-	(ToolType)(0),                 // 0: ai.mcp.ToolType
-	(*Tool)(nil),                  // 1: ai.mcp.Tool
-	(*ToolParameter)(nil),         // 2: ai.mcp.ToolParameter
-	(*CallToolRequest)(nil),       // 3: ai.mcp.CallToolRequest
-	(*CallToolResponse)(nil),      // 4: ai.mcp.CallToolResponse
-	(*RegisterToolRequest)(nil),   // 5: ai.mcp.RegisterToolRequest
-	(*RegisterToolResponse)(nil),  // 6: ai.mcp.RegisterToolResponse
-	(*ListToolsRequest)(nil),      // 7: ai.mcp.ListToolsRequest
-	(*ListToolsResponse)(nil),     // 8: ai.mcp.ListToolsResponse
-	(*GetToolRequest)(nil),        // 9: ai.mcp.GetToolRequest
-	(*GetToolResponse)(nil),       // 10: ai.mcp.GetToolResponse
-	(*UpdateToolRequest)(nil),     // 11: ai.mcp.UpdateToolRequest
-	(*UpdateToolResponse)(nil),    // 12: ai.mcp.UpdateToolResponse
-	(*DeleteToolRequest)(nil),     // 13: ai.mcp.DeleteToolRequest
-	(*DeleteToolResponse)(nil),    // 14: ai.mcp.DeleteToolResponse
-	nil,                           // 15: ai.mcp.Tool.ConfigEntry
-	nil,                           // 16: ai.mcp.CallToolRequest.ParametersEntry
-	nil,                           // 17: ai.mcp.CallToolResponse.MetadataEntry
-	nil,                           // 18: ai.mcp.RegisterToolRequest.ConfigEntry
-	nil,                           // 19: ai.mcp.UpdateToolRequest.ConfigEntry
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+var file_mcp_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_mcp_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_mcp_proto_goTypes = []any{
+	(ToolType)(0),                    // 0: ai.mcp.ToolType
+	(*Tool)(nil),                     // 1: ai.mcp.Tool
+	(*ToolParameter)(nil),            // 2: ai.mcp.ToolParameter
+	(*CallToolRequest)(nil),          // 3: ai.mcp.CallToolRequest
+	(*CallToolResponse)(nil),         // 4: ai.mcp.CallToolResponse
+	(*RegisterToolRequest)(nil),      // 5: ai.mcp.RegisterToolRequest
+	(*RegisterToolResponse)(nil),     // 6: ai.mcp.RegisterToolResponse
+	(*ListToolsRequest)(nil),         // 7: ai.mcp.ListToolsRequest
+	(*ListToolsResponse)(nil),        // 8: ai.mcp.ListToolsResponse
+	(*GetToolRequest)(nil),           // 9: ai.mcp.GetToolRequest
+	(*GetToolResponse)(nil),          // 10: ai.mcp.GetToolResponse
+	(*UpdateToolRequest)(nil),        // 11: ai.mcp.UpdateToolRequest
+	(*UpdateToolResponse)(nil),       // 12: ai.mcp.UpdateToolResponse
+	(*DeleteToolRequest)(nil),        // 13: ai.mcp.DeleteToolRequest
+	(*DeleteToolResponse)(nil),       // 14: ai.mcp.DeleteToolResponse
+	(*MCPServiceInfo)(nil),           // 15: ai.mcp.MCPServiceInfo
+	(*CreateMCPServiceRequest)(nil),  // 16: ai.mcp.CreateMCPServiceRequest
+	(*CreateMCPServiceResponse)(nil), // 17: ai.mcp.CreateMCPServiceResponse
+	(*GetMCPServiceRequest)(nil),     // 18: ai.mcp.GetMCPServiceRequest
+	(*GetMCPServiceResponse)(nil),    // 19: ai.mcp.GetMCPServiceResponse
+	(*ListMCPServicesRequest)(nil),   // 20: ai.mcp.ListMCPServicesRequest
+	(*ListMCPServicesResponse)(nil),  // 21: ai.mcp.ListMCPServicesResponse
+	(*UpdateMCPServiceRequest)(nil),  // 22: ai.mcp.UpdateMCPServiceRequest
+	(*UpdateMCPServiceResponse)(nil), // 23: ai.mcp.UpdateMCPServiceResponse
+	(*DeleteMCPServiceRequest)(nil),  // 24: ai.mcp.DeleteMCPServiceRequest
+	(*DeleteMCPServiceResponse)(nil), // 25: ai.mcp.DeleteMCPServiceResponse
+	(*TestMCPServiceRequest)(nil),    // 26: ai.mcp.TestMCPServiceRequest
+	(*TestMCPServiceResponse)(nil),   // 27: ai.mcp.TestMCPServiceResponse
+	nil,                              // 28: ai.mcp.Tool.ConfigEntry
+	nil,                              // 29: ai.mcp.CallToolRequest.ParametersEntry
+	nil,                              // 30: ai.mcp.CallToolResponse.MetadataEntry
+	nil,                              // 31: ai.mcp.RegisterToolRequest.ConfigEntry
+	nil,                              // 32: ai.mcp.UpdateToolRequest.ConfigEntry
+	nil,                              // 33: ai.mcp.MCPServiceInfo.HeadersEntry
+	nil,                              // 34: ai.mcp.MCPServiceInfo.AuthConfigEntry
+	nil,                              // 35: ai.mcp.MCPServiceInfo.AdvancedConfigEntry
+	nil,                              // 36: ai.mcp.CreateMCPServiceRequest.HeadersEntry
+	nil,                              // 37: ai.mcp.CreateMCPServiceRequest.AuthConfigEntry
+	nil,                              // 38: ai.mcp.CreateMCPServiceRequest.AdvancedConfigEntry
+	nil,                              // 39: ai.mcp.UpdateMCPServiceRequest.HeadersEntry
+	nil,                              // 40: ai.mcp.UpdateMCPServiceRequest.AuthConfigEntry
+	nil,                              // 41: ai.mcp.UpdateMCPServiceRequest.AdvancedConfigEntry
+	nil,                              // 42: ai.mcp.TestMCPServiceRequest.HeadersEntry
+	nil,                              // 43: ai.mcp.TestMCPServiceRequest.AuthConfigEntry
+	(*timestamppb.Timestamp)(nil),    // 44: google.protobuf.Timestamp
 }
-var file_ai_mcp_proto_depIdxs = []int32{
+var file_mcp_proto_depIdxs = []int32{
 	0,  // 0: ai.mcp.Tool.type:type_name -> ai.mcp.ToolType
-	15, // 1: ai.mcp.Tool.config:type_name -> ai.mcp.Tool.ConfigEntry
-	20, // 2: ai.mcp.Tool.created_at:type_name -> google.protobuf.Timestamp
-	20, // 3: ai.mcp.Tool.updated_at:type_name -> google.protobuf.Timestamp
-	16, // 4: ai.mcp.CallToolRequest.parameters:type_name -> ai.mcp.CallToolRequest.ParametersEntry
-	17, // 5: ai.mcp.CallToolResponse.metadata:type_name -> ai.mcp.CallToolResponse.MetadataEntry
+	28, // 1: ai.mcp.Tool.config:type_name -> ai.mcp.Tool.ConfigEntry
+	44, // 2: ai.mcp.Tool.created_at:type_name -> google.protobuf.Timestamp
+	44, // 3: ai.mcp.Tool.updated_at:type_name -> google.protobuf.Timestamp
+	29, // 4: ai.mcp.CallToolRequest.parameters:type_name -> ai.mcp.CallToolRequest.ParametersEntry
+	30, // 5: ai.mcp.CallToolResponse.metadata:type_name -> ai.mcp.CallToolResponse.MetadataEntry
 	0,  // 6: ai.mcp.RegisterToolRequest.type:type_name -> ai.mcp.ToolType
 	2,  // 7: ai.mcp.RegisterToolRequest.parameters:type_name -> ai.mcp.ToolParameter
-	18, // 8: ai.mcp.RegisterToolRequest.config:type_name -> ai.mcp.RegisterToolRequest.ConfigEntry
+	31, // 8: ai.mcp.RegisterToolRequest.config:type_name -> ai.mcp.RegisterToolRequest.ConfigEntry
 	1,  // 9: ai.mcp.RegisterToolResponse.data:type_name -> ai.mcp.Tool
 	0,  // 10: ai.mcp.ListToolsRequest.type:type_name -> ai.mcp.ToolType
 	1,  // 11: ai.mcp.ListToolsResponse.tools:type_name -> ai.mcp.Tool
 	1,  // 12: ai.mcp.GetToolResponse.data:type_name -> ai.mcp.Tool
 	2,  // 13: ai.mcp.UpdateToolRequest.parameters:type_name -> ai.mcp.ToolParameter
-	19, // 14: ai.mcp.UpdateToolRequest.config:type_name -> ai.mcp.UpdateToolRequest.ConfigEntry
+	32, // 14: ai.mcp.UpdateToolRequest.config:type_name -> ai.mcp.UpdateToolRequest.ConfigEntry
 	1,  // 15: ai.mcp.UpdateToolResponse.data:type_name -> ai.mcp.Tool
-	3,  // 16: ai.mcp.MCPService.CallTool:input_type -> ai.mcp.CallToolRequest
-	5,  // 17: ai.mcp.MCPService.RegisterTool:input_type -> ai.mcp.RegisterToolRequest
-	7,  // 18: ai.mcp.MCPService.ListTools:input_type -> ai.mcp.ListToolsRequest
-	9,  // 19: ai.mcp.MCPService.GetTool:input_type -> ai.mcp.GetToolRequest
-	11, // 20: ai.mcp.MCPService.UpdateTool:input_type -> ai.mcp.UpdateToolRequest
-	13, // 21: ai.mcp.MCPService.DeleteTool:input_type -> ai.mcp.DeleteToolRequest
-	4,  // 22: ai.mcp.MCPService.CallTool:output_type -> ai.mcp.CallToolResponse
-	6,  // 23: ai.mcp.MCPService.RegisterTool:output_type -> ai.mcp.RegisterToolResponse
-	8,  // 24: ai.mcp.MCPService.ListTools:output_type -> ai.mcp.ListToolsResponse
-	10, // 25: ai.mcp.MCPService.GetTool:output_type -> ai.mcp.GetToolResponse
-	12, // 26: ai.mcp.MCPService.UpdateTool:output_type -> ai.mcp.UpdateToolResponse
-	14, // 27: ai.mcp.MCPService.DeleteTool:output_type -> ai.mcp.DeleteToolResponse
-	22, // [22:28] is the sub-list for method output_type
-	16, // [16:22] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	33, // 16: ai.mcp.MCPServiceInfo.headers:type_name -> ai.mcp.MCPServiceInfo.HeadersEntry
+	34, // 17: ai.mcp.MCPServiceInfo.auth_config:type_name -> ai.mcp.MCPServiceInfo.AuthConfigEntry
+	35, // 18: ai.mcp.MCPServiceInfo.advanced_config:type_name -> ai.mcp.MCPServiceInfo.AdvancedConfigEntry
+	44, // 19: ai.mcp.MCPServiceInfo.created_at:type_name -> google.protobuf.Timestamp
+	44, // 20: ai.mcp.MCPServiceInfo.updated_at:type_name -> google.protobuf.Timestamp
+	36, // 21: ai.mcp.CreateMCPServiceRequest.headers:type_name -> ai.mcp.CreateMCPServiceRequest.HeadersEntry
+	37, // 22: ai.mcp.CreateMCPServiceRequest.auth_config:type_name -> ai.mcp.CreateMCPServiceRequest.AuthConfigEntry
+	38, // 23: ai.mcp.CreateMCPServiceRequest.advanced_config:type_name -> ai.mcp.CreateMCPServiceRequest.AdvancedConfigEntry
+	15, // 24: ai.mcp.CreateMCPServiceResponse.data:type_name -> ai.mcp.MCPServiceInfo
+	15, // 25: ai.mcp.GetMCPServiceResponse.data:type_name -> ai.mcp.MCPServiceInfo
+	15, // 26: ai.mcp.ListMCPServicesResponse.services:type_name -> ai.mcp.MCPServiceInfo
+	39, // 27: ai.mcp.UpdateMCPServiceRequest.headers:type_name -> ai.mcp.UpdateMCPServiceRequest.HeadersEntry
+	40, // 28: ai.mcp.UpdateMCPServiceRequest.auth_config:type_name -> ai.mcp.UpdateMCPServiceRequest.AuthConfigEntry
+	41, // 29: ai.mcp.UpdateMCPServiceRequest.advanced_config:type_name -> ai.mcp.UpdateMCPServiceRequest.AdvancedConfigEntry
+	15, // 30: ai.mcp.UpdateMCPServiceResponse.data:type_name -> ai.mcp.MCPServiceInfo
+	42, // 31: ai.mcp.TestMCPServiceRequest.headers:type_name -> ai.mcp.TestMCPServiceRequest.HeadersEntry
+	43, // 32: ai.mcp.TestMCPServiceRequest.auth_config:type_name -> ai.mcp.TestMCPServiceRequest.AuthConfigEntry
+	3,  // 33: ai.mcp.MCPService.CallTool:input_type -> ai.mcp.CallToolRequest
+	5,  // 34: ai.mcp.MCPService.RegisterTool:input_type -> ai.mcp.RegisterToolRequest
+	7,  // 35: ai.mcp.MCPService.ListTools:input_type -> ai.mcp.ListToolsRequest
+	9,  // 36: ai.mcp.MCPService.GetTool:input_type -> ai.mcp.GetToolRequest
+	11, // 37: ai.mcp.MCPService.UpdateTool:input_type -> ai.mcp.UpdateToolRequest
+	13, // 38: ai.mcp.MCPService.DeleteTool:input_type -> ai.mcp.DeleteToolRequest
+	16, // 39: ai.mcp.MCPService.CreateMCPService:input_type -> ai.mcp.CreateMCPServiceRequest
+	18, // 40: ai.mcp.MCPService.GetMCPService:input_type -> ai.mcp.GetMCPServiceRequest
+	20, // 41: ai.mcp.MCPService.ListMCPServices:input_type -> ai.mcp.ListMCPServicesRequest
+	22, // 42: ai.mcp.MCPService.UpdateMCPService:input_type -> ai.mcp.UpdateMCPServiceRequest
+	24, // 43: ai.mcp.MCPService.DeleteMCPService:input_type -> ai.mcp.DeleteMCPServiceRequest
+	26, // 44: ai.mcp.MCPService.TestMCPService:input_type -> ai.mcp.TestMCPServiceRequest
+	4,  // 45: ai.mcp.MCPService.CallTool:output_type -> ai.mcp.CallToolResponse
+	6,  // 46: ai.mcp.MCPService.RegisterTool:output_type -> ai.mcp.RegisterToolResponse
+	8,  // 47: ai.mcp.MCPService.ListTools:output_type -> ai.mcp.ListToolsResponse
+	10, // 48: ai.mcp.MCPService.GetTool:output_type -> ai.mcp.GetToolResponse
+	12, // 49: ai.mcp.MCPService.UpdateTool:output_type -> ai.mcp.UpdateToolResponse
+	14, // 50: ai.mcp.MCPService.DeleteTool:output_type -> ai.mcp.DeleteToolResponse
+	17, // 51: ai.mcp.MCPService.CreateMCPService:output_type -> ai.mcp.CreateMCPServiceResponse
+	19, // 52: ai.mcp.MCPService.GetMCPService:output_type -> ai.mcp.GetMCPServiceResponse
+	21, // 53: ai.mcp.MCPService.ListMCPServices:output_type -> ai.mcp.ListMCPServicesResponse
+	23, // 54: ai.mcp.MCPService.UpdateMCPService:output_type -> ai.mcp.UpdateMCPServiceResponse
+	25, // 55: ai.mcp.MCPService.DeleteMCPService:output_type -> ai.mcp.DeleteMCPServiceResponse
+	27, // 56: ai.mcp.MCPService.TestMCPService:output_type -> ai.mcp.TestMCPServiceResponse
+	45, // [45:57] is the sub-list for method output_type
+	33, // [33:45] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
-func init() { file_ai_mcp_proto_init() }
-func file_ai_mcp_proto_init() {
-	if File_ai_mcp_proto != nil {
+func init() { file_mcp_proto_init() }
+func file_mcp_proto_init() {
+	if File_mcp_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_mcp_proto_rawDesc), len(file_ai_mcp_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_mcp_proto_rawDesc), len(file_mcp_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   19,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_ai_mcp_proto_goTypes,
-		DependencyIndexes: file_ai_mcp_proto_depIdxs,
-		EnumInfos:         file_ai_mcp_proto_enumTypes,
-		MessageInfos:      file_ai_mcp_proto_msgTypes,
+		GoTypes:           file_mcp_proto_goTypes,
+		DependencyIndexes: file_mcp_proto_depIdxs,
+		EnumInfos:         file_mcp_proto_enumTypes,
+		MessageInfos:      file_mcp_proto_msgTypes,
 	}.Build()
-	File_ai_mcp_proto = out.File
-	file_ai_mcp_proto_goTypes = nil
-	file_ai_mcp_proto_depIdxs = nil
+	File_mcp_proto = out.File
+	file_mcp_proto_goTypes = nil
+	file_mcp_proto_depIdxs = nil
 }

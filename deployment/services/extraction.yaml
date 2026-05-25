@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: extraction
+  namespace: logos
+  labels:
+    app: extraction
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: extraction
+  template:
+    metadata:
+      labels:
+        app: extraction
+        domain: ai
+    spec:
+      containers:
+        - name: extraction
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./extraction"]
+          ports:
+            - containerPort: 9007
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9007
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: extraction-svc
+  namespace: logos
+spec:
+  selector:
+    app: extraction
+  ports:
+    - port: 9007
+      targetPort: 9007

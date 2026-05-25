@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vector
+  namespace: logos
+  labels:
+    app: vector
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vector
+  template:
+    metadata:
+      labels:
+        app: vector
+        domain: ai
+    spec:
+      containers:
+        - name: vector
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./vector"]
+          ports:
+            - containerPort: 9004
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vector-svc
+  namespace: logos
+spec:
+  selector:
+    app: vector
+  ports:
+    - port: 9004
+      targetPort: 9004

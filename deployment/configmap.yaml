@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: logos-secrets
+  namespace: logos
+type: Opaque
+stringData:
+  DB_PASSWORD: logos123456
+  REDIS_PASSWORD: redis123456
+  NEO4J_PASSWORD: neo4j123456
+  MINIO_SECRET_KEY: minioadmin123
+  JWT_SECRET: your-secret-key-change-in-production-please-use-strong-random-string
+  EINO_API_KEY: your-ark-api-key-here
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logos-config
+  namespace: logos
+data:
+  config.yaml: |
+    ports:
+      gateway: 8888
+      user: 9001
+      knowledge: 9002
+      search: 9003
+      vector: 9004
+      question: 9005
+      recommend: 9006
+      extraction: 9007
+      collection: 9008
+      message: 9009
+      monitoring: 9010
+      im: 9011
+      chat: 9012
+      contact: 9013
+      bot: 9020
+      billing: 9021
+      process: 9016
+      summary: 9017
+      mcp: 9018
+      moderation: 9019
+
+    services:
+      user: { timeout: 30s }
+      knowledge: { timeout: 30s }
+      question: { timeout: 30s }
+      recommend: { timeout: 30s }
+      collection: { timeout: 30s }
+      vector: { timeout: 30s }
+      search: { timeout: 30s }
+      extraction: { timeout: 30s }
+      message: { timeout: 30s }
+      monitoring: { timeout: 30s }
+      im: { timeout: 30s }
+      chat: { timeout: 30s }
+      contact: { timeout: 30s }
+      bot: { timeout: 30s }
+      billing: { timeout: 30s }
+      summary: { timeout: 30s }
+      mcp: { timeout: 30s }
+      moderation: { timeout: 30s }
+
+    database:
+      postgres:
+        host: postgres-svc
+        port: 5432
+        user: logos
+        password: logos123456
+        dbname: logos
+        sslmode: disable
+        max_open_conns: 50
+        max_idle_conns: 20
+        conn_max_lifetime: 3600
+
+    redis:
+      host: redis-svc
+      port: 6379
+      password: redis123456
+      db: 0
+      pool_size: 10
+
+    kafka:
+      brokers:
+        - kafka-svc:9092
+      version: 2.8.0
+      topics:
+        user_events: user_events
+        knowledge_events: knowledge_events
+        question_events: question_events
+        im_messages: im_messages
+        chat_messages: chat_messages
+        notifications: notifications
+        data_collection: data_collection
+        knowledge_extraction: knowledge_extraction
+        vector_processing: vector_processing
+
+    elasticsearch:
+      url: http://elasticsearch-svc:9200
+      username: ""
+      password: ""
+
+    neo4j:
+      uri: bolt://neo4j-svc:7687
+      username: neo4j
+      password: neo4j123456
+
+    milvus:
+      host: milvus-svc
+      port: 19530
+
+    minio:
+      endpoint: minio-svc:9000
+      access_key: minioadmin
+      secret_key: minioadmin123
+      bucket: logos-documents
+      secure: false
+
+    log:
+      level: info
+      format: json
+      output: stdout
+      file_path: ./logs/app.log
+
+    jwt:
+      secret: your-secret-key-change-in-production-please-use-strong-random-string
+      expire_hours: 24
+
+    tracing:
+      enable: false
+      otel_endpoint: otel-collector-svc:4317
+      sample_rate: 0.1
+
+    etcd:
+      endpoints:
+        - etcd-svc:2379
+      dial_timeout: 5s
+      username: ""
+      password: ""
+      ttl: 60
+      enable_secure: false
+
+    grpc:
+      client:
+        timeout: 30s
+        conn_timeout: 5s
+        max_recv_msg_size: 4194304
+        max_send_msg_size: 4194304
+      server:
+        timeout: 30s
+        max_conns: 100
+        max_recv_msg_size: 4194304
+        max_send_msg_size: 4194304
+        keepalive_time: 30s
+        keepalive_timeout: 5s
+
+    eino:
+      api_key: your-ark-api-key-here
+      model: ep-20240806150409-xxxxx
+      base_url: ""
+      embedding_model: embedding-3

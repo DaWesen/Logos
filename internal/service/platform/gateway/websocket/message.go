@@ -16,6 +16,8 @@ const (
 	MessageTypeTyping MessageType = "typing"
 	// MessageTypeReadReceipt 已读回执
 	MessageTypeReadReceipt MessageType = "read_receipt"
+	// MessageTypeWithdraw 消息撤回
+	MessageTypeWithdraw MessageType = "withdraw"
 	// MessageTypeOnlineStatus 在线状态变更
 	MessageTypeOnlineStatus MessageType = "online_status"
 	// MessageTypeError 错误消息
@@ -28,14 +30,14 @@ const (
 type IncomingMessage struct {
 	Type      MessageType `json:"type"`
 	RequestID string      `json:"request_id,omitempty"`
-	Payload   interface{} `json:"payload"`
+	Payload   interface{} `json:"data"`
 }
 
 // OutgoingMessage 表示发送到客户端的消息
 type OutgoingMessage struct {
 	Type      MessageType `json:"type"`
 	RequestID string      `json:"request_id,omitempty"`
-	Payload   interface{} `json:"payload"`
+	Payload   interface{} `json:"data"`
 	Timestamp int64       `json:"timestamp"`
 }
 
@@ -45,12 +47,6 @@ type ConnectPayload struct {
 	DeviceID string `json:"device_id"`
 }
 
-// HeartbeatPayload 心跳载荷
-type HeartbeatPayload struct {
-	SessionID string `json:"session_id"`
-}
-
-// TypingPayload 输入状态载荷
 type TypingPayload struct {
 	ChatID string `json:"chat_id"`
 	Typing bool   `json:"typing"`
@@ -64,11 +60,12 @@ type ReadReceiptPayload struct {
 
 // MessagePayload 聊天消息载荷
 type MessagePayload struct {
-	ChatID      string                 `json:"chat_id"`
-	Content     string                 `json:"content"`
-	ChatType    int32                  `json:"chat_type"`    // 会话类型：1=私聊，2=群聊，3=频道
-	MessageType int32                  `json:"message_type"` // 消息类型：1=文本，2=图片，3=文件...
-	Extra       map[string]interface{} `json:"extra,omitempty"`
+	ChatID         string                 `json:"chat_id"`
+	Content        string                 `json:"content"`
+	ChatType       int32                  `json:"chat_type"`
+	MessageType    int32                  `json:"message_type"`
+	MentionUserIDs []string               `json:"mention_user_ids,omitempty"`
+	Extra          map[string]interface{} `json:"extra,omitempty"`
 }
 
 // ErrorPayload 错误载荷
@@ -85,10 +82,4 @@ type AckPayload struct {
 // ConnectResponsePayload 连接响应载荷
 type ConnectResponsePayload struct {
 	SessionID string `json:"session_id"`
-}
-
-// OnlineStatusPayload 在线状态载荷
-type OnlineStatusPayload struct {
-	UserID string `json:"user_id"`
-	Status int32  `json:"status"`
 }

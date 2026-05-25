@@ -83,3 +83,71 @@ func (r *mcpRepository) DeleteTool(ctx context.Context, id string) error {
 func (r *mcpRepository) CreateCallLog(ctx context.Context, log *model.ToolCallLog) error {
 	return r.db.WithContext(ctx).Create(log).Error
 }
+
+type MCPServiceRepository interface {
+	CreateService(ctx context.Context, svc *model.MCPService) error
+	GetService(ctx context.Context, id string) (*model.MCPService, error)
+	GetServiceByName(ctx context.Context, name string) (*model.MCPService, error)
+	ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error)
+	UpdateService(ctx context.Context, svc *model.MCPService) error
+	DeleteService(ctx context.Context, id string) error
+}
+
+type mcpServiceRepository struct {
+	db *gorm.DB
+}
+
+func NewMCPServiceRepository(db *gorm.DB) MCPServiceRepository {
+	return &mcpServiceRepository{db: db}
+}
+
+func (r *mcpServiceRepository) CreateService(ctx context.Context, svc *model.MCPService) error {
+	return r.db.WithContext(ctx).Create(svc).Error
+}
+
+func (r *mcpServiceRepository) GetService(ctx context.Context, id string) (*model.MCPService, error) {
+	var svc model.MCPService
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&svc).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &svc, nil
+}
+
+func (r *mcpServiceRepository) GetServiceByName(ctx context.Context, name string) (*model.MCPService, error) {
+	var svc model.MCPService
+	err := r.db.WithContext(ctx).Where("name = ?", name).First(&svc).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &svc, nil
+}
+
+func (r *mcpServiceRepository) ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error) {
+	var services []*model.MCPService
+	var total int64
+	query := r.db.WithContext(ctx).Model(&model.MCPService{})
+	if enabledOnly {
+		query = query.Where("enabled = ?", true)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	err := query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&services).Error
+	return services, total, err
+}
+
+func (r *mcpServiceRepository) UpdateService(ctx context.Context, svc *model.MCPService) error {
+	return r.db.WithContext(ctx).Save(svc).Error
+}
+
+func (r *mcpServiceRepository) DeleteService(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.MCPService{}).Error
+}

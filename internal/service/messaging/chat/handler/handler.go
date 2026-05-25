@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"Logos/internal/service/messaging/chat/model"
@@ -15,6 +16,32 @@ import (
 
 func getUserID(ctx context.Context) (string, error) {
 	return auth.GetUserID(ctx)
+}
+
+func chatTypeToProto(chatType int) pb.ChatType {
+	return pb.ChatType(chatType)
+}
+
+func messageTypeToProto(msgType int) pb.MessageType {
+	return pb.MessageType(msgType)
+}
+
+func msgToProto(msg *model.Message) *pb.Message {
+	return &pb.Message{
+		Id:               msg.ID,
+		ChatId:           msg.ChatID,
+		ChatType:         chatTypeToProto(msg.ChatType),
+		SenderId:         msg.SenderID,
+		MessageType:      messageTypeToProto(msg.MessageType),
+		Content:          msg.Content,
+		MediaUrl:         msg.MediaURL,
+		MediaMeta:        string(msg.MediaMeta),
+		Metadata:         msg.Metadata,
+		Status:           messageStatusToProto(msg.Status),
+		CreatedAt:        timestamppb.New(msg.CreatedAt),
+		UpdatedAt:        timestamppb.New(msg.UpdatedAt),
+		ReplyToMessageId: msg.ReplyToMessage,
+	}
 }
 
 type ChatServiceImpl struct {
@@ -45,13 +72,7 @@ func (s *ChatServiceImpl) SendMessage(ctx context.Context, req *pb.SendMessageRe
 
 	return &pb.SendMessageResponse{
 		Code: 200, Message: "发送成功",
-		Data: &pb.Message{
-			Id: msg.ID, ChatId: msg.ChatID, ChatType: pb.ChatType(msg.ChatType),
-			SenderId: msg.SenderID, MessageType: pb.MessageType(msg.MessageType),
-			Content: msg.Content, Metadata: msg.Metadata, Status: pb.MessageStatus(msg.Status),
-			CreatedAt: timestamppb.New(msg.CreatedAt), UpdatedAt: timestamppb.New(msg.UpdatedAt),
-			ReplyToMessageId: msg.ReplyToMessage,
-		},
+		Data: msgToProto(msg),
 	}, nil
 }
 
@@ -59,6 +80,22 @@ func (s *ChatServiceImpl) GetMessageHistory(ctx context.Context, req *pb.GetMess
 	var beforeTime time.Time
 	if req.BeforeTime != nil {
 		beforeTime = req.BeforeTime.AsTime()
+	}
+
+	// 群聊鉴权检查
+	if model.ChatType(req.ChatType) == model.ChatTypeGroup {
+		userID, err := getUserID(ctx)
+		if err != nil {
+			return &pb.GetMessageHistoryResponse{Code: 401, Message: "未提供认证信息"}, nil
+		}
+		member, err := s.service.GetGroupMember(req.ChatId, userID)
+		if err != nil {
+			logger.Error("检查群成员身份失败", logger.ErrorField(err))
+			return &pb.GetMessageHistoryResponse{Code: 500, Message: "检查群成员身份失败"}, nil
+		}
+		if member == nil {
+			return &pb.GetMessageHistoryResponse{Code: 403, Message: "您不是该群组成员"}, nil
+		}
 	}
 
 	messages, hasMore, err := s.service.GetMessageHistory(req.ChatId, model.ChatType(req.ChatType), beforeTime, int(req.Limit))
@@ -69,13 +106,7 @@ func (s *ChatServiceImpl) GetMessageHistory(ctx context.Context, req *pb.GetMess
 
 	pbMessages := make([]*pb.Message, 0, len(messages))
 	for _, msg := range messages {
-		pbMessages = append(pbMessages, &pb.Message{
-			Id: msg.ID, ChatId: msg.ChatID, ChatType: pb.ChatType(msg.ChatType),
-			SenderId: msg.SenderID, MessageType: pb.MessageType(msg.MessageType),
-			Content: msg.Content, Metadata: msg.Metadata, Status: pb.MessageStatus(msg.Status),
-			CreatedAt: timestamppb.New(msg.CreatedAt), UpdatedAt: timestamppb.New(msg.UpdatedAt),
-			ReplyToMessageId: msg.ReplyToMessage,
-		})
+		pbMessages = append(pbMessages, msgToProto(msg))
 	}
 
 	return &pb.GetMessageHistoryResponse{Code: 200, Message: "获取成功", Messages: pbMessages, HasMore: hasMore}, nil
@@ -98,20 +129,15 @@ func (s *ChatServiceImpl) SearchMessages(ctx context.Context, req *pb.SearchMess
 
 	pbMessages := make([]*pb.Message, 0, len(messages))
 	for _, msg := range messages {
-		pbMessages = append(pbMessages, &pb.Message{
-			Id: msg.ID, ChatId: msg.ChatID, ChatType: pb.ChatType(msg.ChatType),
-			SenderId: msg.SenderID, MessageType: pb.MessageType(msg.MessageType),
-			Content: msg.Content, Metadata: msg.Metadata, Status: pb.MessageStatus(msg.Status),
-			CreatedAt: timestamppb.New(msg.CreatedAt), UpdatedAt: timestamppb.New(msg.UpdatedAt),
-			ReplyToMessageId: msg.ReplyToMessage,
-		})
+		pbMessages = append(pbMessages, msgToProto(msg))
 	}
 
 	return &pb.SearchMessagesResponse{Code: 200, Message: "搜索成功", Messages: pbMessages, Total: int32(total)}, nil
 }
 
 func (s *ChatServiceImpl) MarkMessagesRead(ctx context.Context, req *pb.MarkMessagesReadRequest) (*pb.MarkMessagesReadResponse, error) {
-	if err := s.service.MarkMessagesRead(req.MessageIds); err != nil {
+	userID, _ := getUserID(ctx)
+	if err := s.service.MarkMessagesRead(req.MessageIds, userID, req.ChatId); err != nil {
 		logger.Error("标记消息已读失败", logger.ErrorField(err))
 		return &pb.MarkMessagesReadResponse{Code: 500, Message: err.Error()}, nil
 	}
@@ -125,7 +151,14 @@ func (s *ChatServiceImpl) WithdrawMessage(ctx context.Context, req *pb.WithdrawM
 	}
 	if err := s.service.WithdrawMessage(req.MessageId, userID); err != nil {
 		logger.Error("撤回消息失败", logger.ErrorField(err))
-		return &pb.WithdrawMessageResponse{Code: 500, Message: err.Error()}, nil
+		// 业务逻辑错误返回400，系统错误返回500
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "超过撤回时限") ||
+			strings.Contains(errMsg, "只能撤回自己的消息") ||
+			strings.Contains(errMsg, "消息不存在") {
+			return &pb.WithdrawMessageResponse{Code: 400, Message: errMsg}, nil
+		}
+		return &pb.WithdrawMessageResponse{Code: 500, Message: "撤回失败"}, nil
 	}
 	return &pb.WithdrawMessageResponse{Code: 200, Message: "撤回成功"}, nil
 }
@@ -142,13 +175,7 @@ func (s *ChatServiceImpl) EditMessage(ctx context.Context, req *pb.EditMessageRe
 	}
 	return &pb.EditMessageResponse{
 		Code: 200, Message: "编辑成功",
-		Data: &pb.Message{
-			Id: msg.ID, ChatId: msg.ChatID, ChatType: pb.ChatType(msg.ChatType),
-			SenderId: msg.SenderID, MessageType: pb.MessageType(msg.MessageType),
-			Content: msg.Content, Metadata: msg.Metadata, Status: pb.MessageStatus(msg.Status),
-			CreatedAt: timestamppb.New(msg.CreatedAt), UpdatedAt: timestamppb.New(msg.UpdatedAt),
-			ReplyToMessageId: msg.ReplyToMessage,
-		},
+		Data: msgToProto(msg),
 	}, nil
 }
 
@@ -162,11 +189,15 @@ func (s *ChatServiceImpl) CreateGroup(ctx context.Context, req *pb.CreateGroupRe
 		logger.Error("创建群组失败", logger.ErrorField(err))
 		return &pb.CreateGroupResponse{Code: 500, Message: err.Error()}, nil
 	}
+
+	memberIDs, _ := s.service.GetGroupMemberIDs(group.ID)
+
 	return &pb.CreateGroupResponse{
 		Code: 200, Message: "创建成功",
 		Data: &pb.Group{
 			Id: group.ID, Name: group.Name, OwnerId: group.OwnerID,
-			Metadata: group.Metadata, CreatedAt: timestamppb.New(group.CreatedAt),
+			MemberIds: memberIDs,
+			CreatedAt: timestamppb.New(group.CreatedAt),
 			UpdatedAt: timestamppb.New(group.UpdatedAt), Announcement: group.Announcement,
 		},
 	}, nil
@@ -236,6 +267,18 @@ func (s *ChatServiceImpl) UpdateGroupAnnouncement(ctx context.Context, req *pb.U
 	return &pb.UpdateGroupAnnouncementResponse{Code: 200, Message: "更新成功"}, nil
 }
 
+func (s *ChatServiceImpl) UpdateGroupAvatar(ctx context.Context, req *pb.UpdateGroupAvatarRequest) (*pb.UpdateGroupAvatarResponse, error) {
+	operatorID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.UpdateGroupAvatarResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+	if err := s.service.UpdateGroupAvatar(req.GroupId, operatorID, req.Avatar); err != nil {
+		logger.Error("更新群头像失败", logger.ErrorField(err))
+		return &pb.UpdateGroupAvatarResponse{Code: 500, Message: err.Error()}, nil
+	}
+	return &pb.UpdateGroupAvatarResponse{Code: 200, Message: "更新成功"}, nil
+}
+
 func (s *ChatServiceImpl) SetGroupAdmin(ctx context.Context, req *pb.SetGroupAdminRequest) (*pb.SetGroupAdminResponse, error) {
 	operatorID, err := getUserID(ctx)
 	if err != nil {
@@ -249,6 +292,20 @@ func (s *ChatServiceImpl) SetGroupAdmin(ctx context.Context, req *pb.SetGroupAdm
 }
 
 func (s *ChatServiceImpl) GetGroupMembers(ctx context.Context, req *pb.GetGroupMembersRequest) (*pb.GetGroupMembersResponse, error) {
+	// 群聊鉴权检查
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetGroupMembersResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+	member, err := s.service.GetGroupMember(req.GroupId, userID)
+	if err != nil {
+		logger.Error("检查群成员身份失败", logger.ErrorField(err))
+		return &pb.GetGroupMembersResponse{Code: 500, Message: "检查群成员身份失败"}, nil
+	}
+	if member == nil {
+		return &pb.GetGroupMembersResponse{Code: 403, Message: "您不是该群组成员"}, nil
+	}
+
 	members, total, err := s.service.GetGroupMembers(req.GroupId, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("获取群成员失败", logger.ErrorField(err))
@@ -257,27 +314,50 @@ func (s *ChatServiceImpl) GetGroupMembers(ctx context.Context, req *pb.GetGroupM
 
 	pbMembers := make([]*pb.GroupMember, 0, len(members))
 	for _, member := range members {
-		pbMembers = append(pbMembers, &pb.GroupMember{
+		pbMember := &pb.GroupMember{
 			UserId: member.UserID, Role: pb.GroupMemberRole(member.Role),
-			MuteType: pb.MuteType(member.MuteType), MuteUntil: timestamppb.New(member.MuteUntil),
+			MuteType: pb.MuteType(member.MuteType),
 			JoinedAt: timestamppb.New(member.JoinedAt),
-		})
+		}
+		if member.MuteUntil != nil {
+			pbMember.MuteUntil = timestamppb.New(*member.MuteUntil)
+		}
+		pbMembers = append(pbMembers, pbMember)
 	}
 	return &pb.GetGroupMembersResponse{Code: 200, Message: "获取成功", Members: pbMembers, Total: int32(total)}, nil
 }
 
 func (s *ChatServiceImpl) GetGroup(ctx context.Context, req *pb.GetGroupRequest) (*pb.GetGroupResponse, error) {
+	// 群聊鉴权检查
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetGroupResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+	member, err := s.service.GetGroupMember(req.GroupId, userID)
+	if err != nil {
+		logger.Error("检查群成员身份失败", logger.ErrorField(err))
+		return &pb.GetGroupResponse{Code: 500, Message: "检查群成员身份失败"}, nil
+	}
+	if member == nil {
+		return &pb.GetGroupResponse{Code: 403, Message: "您不是该群组成员"}, nil
+	}
+
 	group, err := s.service.GetGroup(req.GroupId)
 	if err != nil {
 		logger.Error("获取群组信息失败", logger.ErrorField(err))
 		return &pb.GetGroupResponse{Code: 500, Message: err.Error()}, nil
 	}
+
+	memberIDs, _ := s.service.GetGroupMemberIDs(group.ID)
+
 	return &pb.GetGroupResponse{
 		Code: 200, Message: "获取成功",
 		Data: &pb.Group{
 			Id: group.ID, Name: group.Name, OwnerId: group.OwnerID,
-			Metadata: group.Metadata, CreatedAt: timestamppb.New(group.CreatedAt),
+			MemberIds: memberIDs,
+			CreatedAt: timestamppb.New(group.CreatedAt),
 			UpdatedAt: timestamppb.New(group.UpdatedAt), Announcement: group.Announcement,
+			MemberCount: int32(group.MemberCount),
 		},
 	}, nil
 }
@@ -304,4 +384,191 @@ func (s *ChatServiceImpl) LeaveGroup(ctx context.Context, req *pb.LeaveGroupRequ
 		return &pb.LeaveGroupResponse{Code: 500, Message: err.Error()}, nil
 	}
 	return &pb.LeaveGroupResponse{Code: 200, Message: "退出成功"}, nil
+}
+
+func (s *ChatServiceImpl) GetConversationList(ctx context.Context, req *pb.GetConversationListRequest) (*pb.GetConversationListResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetConversationListResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	logger.Info("[DEBUG] Handler GetConversationList called", logger.StringField("user_id", userID))
+
+	page := int(req.Page)
+	pageSize := int(req.PageSize)
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+
+	items, total, err := s.service.GetConversationList(userID, page, pageSize)
+	if err != nil {
+		logger.Error("获取会话列表失败", logger.ErrorField(err))
+		return &pb.GetConversationListResponse{Code: 500, Message: err.Error()}, nil
+	}
+	logger.Info("[DEBUG] Service returned items", logger.IntField("count", len(items)), logger.AnyField("items", items))
+
+	conversations := make([]*pb.ConversationItem, 0, len(items))
+	for _, item := range items {
+		ci := &pb.ConversationItem{
+			ChatId:      item.ChatID,
+			ChatType:    pb.ChatType(item.ChatType),
+			Name:        item.Name,
+			Avatar:      item.Avatar,
+			UnreadCount: int32(item.UnreadCount),
+			IsPinned:    item.IsPinned,
+			IsMuted:     item.IsMuted,
+			IsFriend:    item.IsFriend,
+			IsBlocked:   item.IsBlocked,
+		}
+		if item.LastMessage != nil {
+			ci.LastMessage = &pb.Message{
+				Id:        item.LastMessage.ID,
+				ChatId:    item.LastMessage.ChatID,
+				ChatType:  pb.ChatType(item.LastMessage.ChatType),
+				SenderId:  item.LastMessage.SenderID,
+				Content:   item.LastMessage.Content,
+				MediaUrl:  item.LastMessage.MediaURL,
+				MediaMeta: string(item.LastMessage.MediaMeta),
+				Status:    messageStatusToProto(item.LastMessage.Status),
+				CreatedAt: timestamppb.New(item.LastMessage.CreatedAt),
+				UpdatedAt: timestamppb.New(item.LastMessage.UpdatedAt),
+			}
+		}
+		if !item.UpdatedAt.IsZero() {
+			ci.UpdatedAt = timestamppb.New(item.UpdatedAt)
+		}
+		conversations = append(conversations, ci)
+	}
+
+	resp := &pb.GetConversationListResponse{
+		Code:          200,
+		Message:       "获取成功",
+		Conversations: conversations,
+		Total:         int32(total),
+	}
+	logger.Info("[DEBUG] Handler returning resp", logger.StringField("user_id", userID), logger.AnyField("resp", resp))
+	return resp, nil
+}
+
+func (s *ChatServiceImpl) GetUnreadCount(ctx context.Context, req *pb.GetUnreadCountRequest) (*pb.GetUnreadCountResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetUnreadCountResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	if len(req.ChatIds) == 0 {
+		total, err := s.service.GetTotalUnreadCount(userID)
+		if err != nil {
+			return &pb.GetUnreadCountResponse{Code: 500, Message: err.Error()}, nil
+		}
+		return &pb.GetUnreadCountResponse{
+			Code:  200,
+			Total: int32(total),
+		}, nil
+	}
+
+	counts, err := s.service.GetUnreadCounts(userID, req.ChatIds)
+	if err != nil {
+		logger.Error("获取未读数失败", logger.ErrorField(err))
+		return &pb.GetUnreadCountResponse{Code: 500, Message: err.Error()}, nil
+	}
+
+	pbCounts := make([]*pb.ChatUnreadCount, 0, len(counts))
+	var total int64
+	for chatID, count := range counts {
+		pbCounts = append(pbCounts, &pb.ChatUnreadCount{
+			ChatId: chatID,
+			Count:  int32(count),
+		})
+		total += count
+	}
+
+	return &pb.GetUnreadCountResponse{
+		Code:   200,
+		Counts: pbCounts,
+		Total:  int32(total),
+	}, nil
+}
+
+func (s *ChatServiceImpl) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.ForwardMessageResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	messages, err := s.service.ForwardMessage(req.MessageId, req.TargetChatIds, userID)
+	if err != nil {
+		logger.Error("转发消息失败", logger.ErrorField(err))
+		return &pb.ForwardMessageResponse{Code: 500, Message: err.Error()}, nil
+	}
+
+	pbMessages := make([]*pb.Message, 0, len(messages))
+	for _, msg := range messages {
+		pbMessages = append(pbMessages, msgToProto(msg))
+	}
+
+	return &pb.ForwardMessageResponse{
+		Code:              200,
+		Message:           "转发成功",
+		ForwardedMessages: pbMessages,
+	}, nil
+}
+
+func (s *ChatServiceImpl) DeleteChat(ctx context.Context, req *pb.DeleteChatRequest) (*pb.DeleteChatResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.DeleteChatResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	chatType := model.ChatType(req.ChatType)
+	if req.ChatType == pb.ChatType_CHAT_TYPE_UNSPECIFIED {
+		chatType = model.ChatTypePrivate
+	}
+
+	if err := s.service.DeleteChat(req.ChatId, userID, chatType); err != nil {
+		logger.Error("删除聊天失败", logger.ErrorField(err))
+		return &pb.DeleteChatResponse{Code: 500, Message: err.Error()}, nil
+	}
+
+	return &pb.DeleteChatResponse{
+		Code:    200,
+		Message: "删除成功",
+	}, nil
+}
+
+func (s *ChatServiceImpl) DeleteChatHistory(ctx context.Context, req *pb.DeleteChatHistoryRequest) (*pb.DeleteChatHistoryResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.DeleteChatHistoryResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	if err := s.service.DeleteChatHistory(req.ChatId); err != nil {
+		logger.Error("删除聊天记录失败", logger.ErrorField(err), logger.StringField("chat_id", req.ChatId), logger.StringField("user_id", userID))
+		return &pb.DeleteChatHistoryResponse{Code: 500, Message: err.Error()}, nil
+	}
+
+	return &pb.DeleteChatHistoryResponse{
+		Code:    200,
+		Message: "删除成功",
+	}, nil
+}
+
+func messageStatusToProto(status string) pb.MessageStatus {
+	switch status {
+	case "sent":
+		return pb.MessageStatus_MESSAGE_STATUS_SENT
+	case "delivered":
+		return pb.MessageStatus_MESSAGE_STATUS_DELIVERED
+	case "read":
+		return pb.MessageStatus_MESSAGE_STATUS_READ
+	case "withdrawn":
+		return pb.MessageStatus_MESSAGE_STATUS_WITHDRAWN
+	case "edited":
+		return pb.MessageStatus_MESSAGE_STATUS_EDITED
+	default:
+		return pb.MessageStatus_MESSAGE_STATUS_UNSPECIFIED
+	}
 }

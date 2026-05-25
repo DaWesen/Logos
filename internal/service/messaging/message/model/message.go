@@ -19,7 +19,7 @@ type Message struct {
 }
 
 func (Message) TableName() string {
-	return "messages"
+	return "queue_messages"
 }
 
 func (m *Message) GetID() string             { return m.ID }

@@ -85,19 +85,3 @@ func (m *CircuitBreakerManager) State(name string) gobreaker.State {
 	cb := m.Get(name)
 	return cb.State()
 }
-
-var defaultManager *CircuitBreakerManager
-var managerOnce sync.Once
-
-func GetCircuitBreakerManager() *CircuitBreakerManager {
-	managerOnce.Do(func() {
-		cfg := DefaultConfig()
-		defaultManager = NewCircuitBreakerManager(cfg.CircuitBreaker)
-	})
-	return defaultManager
-}
-
-func InitCircuitBreakerManager(cfg CircuitBreakerConfig) *CircuitBreakerManager {
-	defaultManager = NewCircuitBreakerManager(cfg)
-	return defaultManager
-}

@@ -5,21 +5,41 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"Logos/internal/service/ai/extraction/dao"
 	"Logos/internal/service/ai/extraction/model"
+	knowledgeModel "Logos/internal/service/ai/knowledge/model"
 	"Logos/pkg/cache"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 type KnowledgeService interface {
-	AddEntity(ctx context.Context, entityType, name string, properties map[string]string, description *string) (interface{ GetID() string }, error)
-	AddRelation(ctx context.Context, relationType, sourceId, targetId string, properties map[string]string, description *string) (interface{ GetID() string }, error)
+	AddEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*knowledgeModel.Entity, error)
+	FindOrCreateEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*knowledgeModel.Entity, error)
+	UpdateEntity(ctx context.Context, id, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*knowledgeModel.Entity, error)
+	DeleteEntity(ctx context.Context, id string) error
+	GetEntity(ctx context.Context, id string) (*knowledgeModel.Entity, error)
+	QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, page, pageSize int) ([]*knowledgeModel.Entity, int64, error)
+	SearchEntities(ctx context.Context, keyword string, entityType *string, collectionID string, page, pageSize int) ([]*knowledgeModel.Entity, int64, error)
+	AddRelation(ctx context.Context, relationType, sourceId, targetId, collectionID string, properties map[string]string, description *string) (*knowledgeModel.Relation, error)
+	UpdateRelation(ctx context.Context, id, relationType, sourceId, targetId string, properties map[string]string, description *string) (*knowledgeModel.Relation, error)
+	DeleteRelation(ctx context.Context, id string) error
+	GetRelation(ctx context.Context, id string) (*knowledgeModel.Relation, error)
+	QueryRelations(ctx context.Context, relationType, sourceId, targetId, collectionID string, page, pageSize int) ([]*knowledgeModel.Relation, int64, error)
+	GetGraphStats(ctx context.Context, collectionID string) (*knowledgeModel.GraphStats, error)
+	GetRelatedEntities(ctx context.Context, entityId, relationType string) ([]*knowledgeModel.Entity, error)
+	GetSubgraph(ctx context.Context, entityID string, depth int, collectionID string) (*knowledgeModel.Subgraph, error)
+	GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*knowledgeModel.EntityPath, error)
+	ImportData(ctx context.Context, dataType string, data []string) error
+	WithTransaction(ctx context.Context, fn func(txService KnowledgeService) error) error
 }
 
 type VectorService interface {
@@ -395,6 +415,7 @@ func (s *extractionServiceImpl) executeEntityRecognition(ctx context.Context, ta
 	result.Entities = strEntities
 
 	if s.knowledgeService != nil {
+		collectionID := parameters["collection_id"]
 		for _, entity := range entities {
 			entityType, _ := entity["type"].(string)
 			name, _ := entity["text"].(string)
@@ -405,7 +426,7 @@ func (s *extractionServiceImpl) executeEntityRecognition(ctx context.Context, ta
 				}
 			}
 			desc := fmt.Sprintf("置信度: %.2f", entity["confidence"])
-			s.knowledgeService.AddEntity(ctx, entityType, name, props, &desc)
+			s.knowledgeService.AddEntity(ctx, entityType, name, collectionID, props, &desc, "")
 		}
 	}
 
@@ -442,7 +463,7 @@ func (s *extractionServiceImpl) recognizeEntities(ctx context.Context, text stri
 		prompt,
 	}
 
-	response, err := s.einoClient.Chat(ctx, messages)
+	response, err := s.chatWithParams(ctx, messages, params)
 	if err != nil {
 		return nil, fmt.Errorf("LLM实体识别失败: %w", err)
 	}
@@ -473,6 +494,7 @@ func (s *extractionServiceImpl) executeRelationExtraction(ctx context.Context, t
 	result.Relations = strRelations
 
 	if s.knowledgeService != nil {
+		collectionID := parameters["collection_id"]
 		for _, rel := range relations {
 			relType, _ := rel["type"].(string)
 			sourceID, _ := rel["sourceId"].(string)
@@ -484,7 +506,7 @@ func (s *extractionServiceImpl) executeRelationExtraction(ctx context.Context, t
 				}
 			}
 			textVal, _ := rel["text"].(string)
-			s.knowledgeService.AddRelation(ctx, relType, sourceID, targetID, props, &textVal)
+			s.knowledgeService.AddRelation(ctx, relType, sourceID, targetID, collectionID, props, &textVal)
 		}
 	}
 
@@ -520,7 +542,7 @@ func (s *extractionServiceImpl) extractRelations(ctx context.Context, text strin
 		prompt,
 	}
 
-	response, err := s.einoClient.Chat(ctx, messages)
+	response, err := s.chatWithParams(ctx, messages, params)
 	if err != nil {
 		return nil, fmt.Errorf("LLM关系抽取失败: %w", err)
 	}
@@ -551,13 +573,14 @@ func (s *extractionServiceImpl) executeTripleExtraction(ctx context.Context, tas
 	result.Triples = strTriples
 
 	if s.knowledgeService != nil {
+		collectionID := parameters["collection_id"]
 		for _, triple := range triples {
 			subject, _ := triple["subject"].(string)
 			predicate, _ := triple["predicate"].(string)
 			obj, _ := triple["object"].(string)
 
-			sourceEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", subject, nil, nil)
-			targetEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", obj, nil, nil)
+			sourceEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", subject, collectionID, nil, nil, "")
+			targetEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", obj, collectionID, nil, nil, "")
 
 			srcID := ""
 			tgtID := ""
@@ -569,7 +592,7 @@ func (s *extractionServiceImpl) executeTripleExtraction(ctx context.Context, tas
 			}
 
 			if srcID != "" && tgtID != "" {
-				s.knowledgeService.AddRelation(ctx, predicate, srcID, tgtID, nil, nil)
+				s.knowledgeService.AddRelation(ctx, predicate, srcID, tgtID, collectionID, nil, nil)
 			}
 		}
 	}
@@ -605,7 +628,7 @@ func (s *extractionServiceImpl) extractTriples(ctx context.Context, text string,
 		prompt,
 	}
 
-	response, err := s.einoClient.Chat(ctx, messages)
+	response, err := s.chatWithParams(ctx, messages, params)
 	if err != nil {
 		return nil, fmt.Errorf("LLM三元组抽取失败: %w", err)
 	}
@@ -665,7 +688,7 @@ func (s *extractionServiceImpl) extractKeyphrases(ctx context.Context, text stri
 		prompt,
 	}
 
-	response, err := s.einoClient.Chat(ctx, messages)
+	response, err := s.chatWithParams(ctx, messages, params)
 	if err != nil {
 		return nil, fmt.Errorf("LLM关键短语抽取失败: %w", err)
 	}
@@ -679,6 +702,40 @@ func (s *extractionServiceImpl) extractKeyphrases(ctx context.Context, text stri
 		logger.IntField("count", len(keyphrases)))
 
 	return keyphrases, nil
+}
+
+func (s *extractionServiceImpl) chatWithParams(ctx context.Context, messages []string, params map[string]string) (string, error) {
+	if params != nil {
+		baseURL := params["llm_base_url"]
+		apiKey := params["llm_api_key"]
+		modelName := params["llm_model"]
+		if baseURL != "" && modelName != "" {
+			logger.Info("使用动态LLM配置",
+				logger.StringField("model", modelName),
+				logger.StringField("base_url", baseURL))
+			chatModel, err := eino.NewDynamicChatModel(apiKey, modelName, baseURL)
+			if err != nil {
+				logger.Warn("创建动态ChatModel失败，回退到全局配置", logger.ErrorField(err))
+			} else {
+				var schemaMessages []*schema.Message
+				for i, msg := range messages {
+					if i == 0 {
+						schemaMessages = append(schemaMessages, schema.SystemMessage(msg))
+					} else if i%2 == 1 {
+						schemaMessages = append(schemaMessages, schema.UserMessage(msg))
+					} else {
+						schemaMessages = append(schemaMessages, schema.AssistantMessage(msg, nil))
+					}
+				}
+				response, genErr := chatModel.Generate(ctx, schemaMessages)
+				if genErr != nil {
+					return "", fmt.Errorf("动态LLM生成失败: %w", genErr)
+				}
+				return response.Content, nil
+			}
+		}
+	}
+	return s.einoClient.Chat(ctx, messages)
 }
 
 func domainHint(domain string) string {
@@ -704,7 +761,23 @@ func parseJSONArray(jsonStr string) []map[string]interface{} {
 }
 
 func trimJSONResponse(s string) string {
-	s = trimWhitespace(s)
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		if idx := strings.Index(s, "\n"); idx >= 0 {
+			s = s[idx+1:]
+		}
+		if idx := strings.Index(s, "\r"); idx >= 0 {
+			s = s[idx+1:]
+		}
+	}
+	if strings.HasSuffix(s, "```") {
+		if idx := strings.LastIndex(s, "\n"); idx >= 0 {
+			s = s[:idx]
+		} else {
+			s = s[:len(s)-3]
+		}
+	}
+	s = strings.TrimSpace(s)
 	start := indexOfJSONArray(s)
 	if start >= 0 {
 		s = s[start:]
@@ -755,9 +828,18 @@ func fixJSONResponse(s string) string {
 }
 
 func indexOfJSONArray(s string) int {
-	for i := 0; i < len(s)-1; i++ {
-		if s[i] == '[' && (i+1 < len(s) && (s[i+1] == '{' || s[i+1] == '"' || s[i+1] == ']')) {
-			return i
+	for i := 0; i < len(s); i++ {
+		if s[i] == '[' {
+			for j := i + 1; j < len(s); j++ {
+				c := s[j]
+				if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+					continue
+				}
+				if c == '{' || c == '"' || c == ']' {
+					return i
+				}
+				break
+			}
 		}
 	}
 	return -1
@@ -770,18 +852,6 @@ func lastIndexOfJSONArray(s string) int {
 		}
 	}
 	return -1
-}
-
-func trimWhitespace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\n' || s[start] == '\r' || s[start] == '\t') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\n' || s[end-1] == '\r' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }
 
 func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) error {

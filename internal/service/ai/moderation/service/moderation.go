@@ -11,12 +11,22 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 
+	einomodel "github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 )
 
+type ModelConfig struct {
+	Provider    string
+	Model       string
+	ApiKey      string
+	BaseUrl     string
+	Temperature float64
+}
+
 type ModerationService interface {
-	Translate(ctx context.Context, content string, sourceLang string, targetLang string, contentID string) (*model.TranslationRecord, error)
-	ModerateContent(ctx context.Context, content string, contentID string, contentType string) (*model.ModerationRecord, error)
+	Translate(ctx context.Context, content string, sourceLang string, targetLang string, contentID string, cfg *ModelConfig) (*model.TranslationRecord, error)
+	ModerateContent(ctx context.Context, content string, contentID string, contentType string, cfg *ModelConfig) (*model.ModerationRecord, error)
 	GetModerationRecords(ctx context.Context, result string, startTime, endTime *time.Time, page, pageSize int) ([]*model.ModerationRecord, int64, error)
 }
 
@@ -29,14 +39,60 @@ func NewModerationService(repo dao.ModerationRepository, einoClient *eino.EinoMa
 	return &moderationServiceImpl{repo: repo, einoClient: einoClient}
 }
 
-func (s *moderationServiceImpl) Translate(ctx context.Context, content string, sourceLang string, targetLang string, contentID string) (*model.TranslationRecord, error) {
+func (s *moderationServiceImpl) getChatModel(cfg *ModelConfig) (einomodel.BaseChatModel, error) {
+	if cfg != nil && cfg.ApiKey != "" && cfg.Model != "" {
+		baseURL := cfg.BaseUrl
+		if baseURL == "" {
+			baseURL = defaultBaseURL(cfg.Provider)
+		}
+		logger.Info("翻译服务使用动态ChatModel",
+			logger.StringField("provider", cfg.Provider),
+			logger.StringField("model", cfg.Model),
+			logger.StringField("base_url", baseURL))
+		return eino.NewDynamicChatModel(cfg.ApiKey, cfg.Model, baseURL)
+	}
+	if s.einoClient != nil && s.einoClient.HasChatModel() {
+		return s.einoClient.GetChatModel(), nil
+	}
+	return nil, fmt.Errorf("无可用的 ChatModel，请在设置中配置 AI 模型")
+}
+
+func defaultBaseURL(provider string) string {
+	switch provider {
+	case "deepseek":
+		return "https://api.deepseek.com/v1"
+	case "qianfan":
+		return "https://aip.baidubce.com/rpc/2.0/ai_custom/v1"
+	case "claude", "anthropic":
+		return "https://api.anthropic.com/v1"
+	default:
+		return "https://api.openai.com/v1"
+	}
+}
+
+func (s *moderationServiceImpl) chatWithModel(ctx context.Context, chatModel einomodel.BaseChatModel, systemPrompt string, userPrompt string) (string, error) {
+	messages := []*schema.Message{
+		schema.SystemMessage(systemPrompt),
+		schema.UserMessage(userPrompt),
+	}
+	aiCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := chatModel.Generate(aiCtx, messages)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
+func (s *moderationServiceImpl) Translate(ctx context.Context, content string, sourceLang string, targetLang string, contentID string, cfg *ModelConfig) (*model.TranslationRecord, error) {
 	logger.Info("翻译内容", logger.StringField("source", sourceLang), logger.StringField("target", targetLang))
 
 	if content == "" {
 		return nil, fmt.Errorf("内容不能为空")
 	}
 
-	translated, err := s.doTranslate(ctx, content, sourceLang, targetLang)
+	translated, err := s.doTranslate(ctx, content, sourceLang, targetLang, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("翻译失败: %w", err)
 	}
@@ -57,14 +113,14 @@ func (s *moderationServiceImpl) Translate(ctx context.Context, content string, s
 	return record, nil
 }
 
-func (s *moderationServiceImpl) ModerateContent(ctx context.Context, content string, contentID string, contentType string) (*model.ModerationRecord, error) {
+func (s *moderationServiceImpl) ModerateContent(ctx context.Context, content string, contentID string, contentType string, cfg *ModelConfig) (*model.ModerationRecord, error) {
 	logger.Info("审核内容", logger.StringField("content_id", contentID))
 
 	if content == "" {
 		return nil, fmt.Errorf("内容不能为空")
 	}
 
-	result, categories, scores, action, err := s.doModerate(ctx, content)
+	result, categories, scores, action, err := s.doModerate(ctx, content, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("审核失败: %w", err)
 	}
@@ -94,8 +150,9 @@ func (s *moderationServiceImpl) GetModerationRecords(ctx context.Context, result
 	return s.repo.ListModerationRecords(ctx, result, startTime, endTime, page, pageSize)
 }
 
-func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string, sourceLang string, targetLang string) (string, error) {
-	if s.einoClient == nil || !s.einoClient.HasChatModel() {
+func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string, sourceLang string, targetLang string, cfg *ModelConfig) (string, error) {
+	chatModel, err := s.getChatModel(cfg)
+	if err != nil {
 		return "[翻译服务暂不可用]", nil
 	}
 
@@ -104,10 +161,7 @@ func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string,
 文本：
 %s`, sourceLang, targetLang, content)
 
-	response, err := s.einoClient.Chat(ctx, []string{
-		"你是一个专业的翻译系统。",
-		prompt,
-	})
+	response, err := s.chatWithModel(ctx, chatModel, "你是一个专业的翻译系统。", prompt)
 	if err != nil {
 		return "", fmt.Errorf("LLM翻译失败: %w", err)
 	}
@@ -115,8 +169,9 @@ func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string,
 	return response, nil
 }
 
-func (s *moderationServiceImpl) doModerate(ctx context.Context, content string) (string, []string, map[string]float64, string, error) {
-	if s.einoClient == nil || !s.einoClient.HasChatModel() {
+func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, cfg *ModelConfig) (string, []string, map[string]float64, string, error) {
+	chatModel, err := s.getChatModel(cfg)
+	if err != nil {
 		return "passed", []string{}, map[string]float64{}, "none", nil
 	}
 
@@ -131,19 +186,16 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string) 
 内容：
 %s`, content)
 
-	response, err := s.einoClient.Chat(ctx, []string{
-		"你是一个专业的内容审核系统。",
-		prompt,
-	})
+	response, err := s.chatWithModel(ctx, chatModel, "你是一个专业的内容审核系统。", prompt)
 	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("LLM审核失败: %w", err)
 	}
 
 	type moderationOutput struct {
-		Result     string            `json:"result"`
-		Categories []string          `json:"categories"`
+		Result     string             `json:"result"`
+		Categories []string           `json:"categories"`
 		Scores     map[string]float64 `json:"scores"`
-		Action     string            `json:"action"`
+		Action     string             `json:"action"`
 	}
 
 	var output moderationOutput

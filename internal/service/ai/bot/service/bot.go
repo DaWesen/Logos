@@ -6,25 +6,62 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
+	"Logos/config"
 	"Logos/internal/bot/agent"
 	"Logos/internal/bot/coordinator"
+	botmemory "Logos/internal/bot/memory"
 	"Logos/internal/bot/provider"
+	botTools "Logos/internal/bot/tools"
+	"Logos/internal/mcp"
 	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
+	"Logos/pkg/client"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 )
 
 type VectorService interface {
 	TextSearch(ctx context.Context, collectionID string, text string, topK int) ([]string, error)
+	SearchWithScores(ctx context.Context, collectionID string, text string, topK int) ([]*VectorSearchResult, error)
+	ListCollections(ctx context.Context) ([]*VectorCollectionInfo, error)
+	UpdateCollectionEmbedding(ctx context.Context, collectionID, model, baseURL, apiKey string) error
+	Vectorize(ctx context.Context, text string, collectionID string, metadata map[string]string) (string, error)
+}
+
+type VectorSearchResult struct {
+	ID       string
+	Content  string
+	Score    float64
+	Metadata map[string]string
+}
+
+type VectorCollectionInfo struct {
+	ID   string
+	Name string
+	Size int64
+}
+
+type SearchService interface {
+	Search(ctx context.Context, query string, topK int) ([]*SearchResultItem, error)
+}
+
+type SearchResultItem struct {
+	ID      string
+	Title   string
+	Content string
+	Score   float64
 }
 
 type BillingService interface {
@@ -55,8 +92,8 @@ type BotService interface {
 	GetConversation(ctx context.Context, id string) (*botmodel.Conversation, error)
 	ListConversations(ctx context.Context, botID, userID string, page, pageSize int) ([]*botmodel.Conversation, int64, error)
 
-	SendMessage(ctx context.Context, userID, botID, conversationID, content string, stream bool, metadata map[string]string) (string, error)
-	SendMessageStream(ctx context.Context, userID, botID, conversationID, content string, metadata map[string]string, onChunk func(string) error) error
+	SendMessage(ctx context.Context, userID, botID, conversationID, content string, stream bool, metadata map[string]string) (string, string, float64, int, error) // 返回 content, conversationID, cost, tokens, error
+	SendMessageStream(ctx context.Context, userID, botID, conversationID, content string, metadata map[string]string, onChunk func(string) error) (string, error)  // 返回 conversationID
 	GetHistory(ctx context.Context, botID, conversationID string, limit int, beforeTime *time.Time) ([]*botmodel.Message, bool, error)
 
 	CreatePrompt(ctx context.Context, userID, name, description, content, promptType string, isPreset, isPublic bool, config map[string]string) (*botmodel.Prompt, error)
@@ -67,6 +104,9 @@ type BotService interface {
 
 	GetUserMemory(ctx context.Context, userID, botID string) ([]*botmodel.UserMemory, error)
 	SetUserMemory(ctx context.Context, userID, botID, key, value string) error
+	SetUserMemoryWithCategory(ctx context.Context, userID, botID, key, value, category string) error
+	DeleteUserMemory(ctx context.Context, userID, botID, key string) error
+	DeleteAllUserMemories(ctx context.Context, userID, botID string) error
 
 	ChatWithCoordinator(ctx context.Context, userID, content string) (string, error)
 	ChatWithCoordinatorStream(ctx context.Context, userID, content string, onChunk func(string) error) error
@@ -75,13 +115,20 @@ type BotService interface {
 }
 
 type botServiceImpl struct {
-	repo           dao.BotRepository
-	agentManager   *agent.AgentManager
-	einoManager    *eino.EinoManager
-	billingService BillingService
-	vectorService  VectorService
-	producer       *mq.Producer
-	mcpRegistry    *mcp_server.ToolRegistry
+	repo             dao.BotRepository
+	agentManager     *agent.AgentManager
+	einoManager      *eino.EinoManager
+	billingService   BillingService
+	vectorService    VectorService
+	searchService    SearchService
+	producer         *mq.Producer
+	mcpRegistry      *mcp_server.ToolRegistry
+	mcpClientMgr     *mcp.MCPClientManager
+	mcpClient        *client.MCPClient
+	cfg              *config.Config
+	knowledgeService botTools.GraphWriteService
+	graphSearchSvc   botTools.GraphService
+	kbCache          sync.Map
 }
 
 func NewBotService(
@@ -90,28 +137,45 @@ func NewBotService(
 	einoManager *eino.EinoManager,
 	billingService BillingService,
 	vectorService VectorService,
+	searchService SearchService,
 	producer *mq.Producer,
+	mcpClient *client.MCPClient,
+	cfg *config.Config,
+	knowledgeService botTools.GraphWriteService,
+	graphSearchSvc botTools.GraphService,
 ) BotService {
 	mcpReg := mcp_server.DefaultRegistry()
+	mcpClientMgr := mcp.NewMCPClientManager()
 
-	coord := coordinator.InitCoordinator(einoManager, agentManager, mcpReg)
+	var coord *coordinator.Coordinator
+	if knowledgeService != nil && graphSearchSvc != nil {
+		coord = coordinator.InitCoordinatorWithGraph(einoManager, agentManager, mcpReg, nil, knowledgeService, graphSearchSvc)
+	} else {
+		coord = coordinator.InitCoordinator(einoManager, agentManager, mcpReg)
+	}
 	if coord != nil {
 		logger.Info("Coordinator 已初始化")
 	}
 
 	return &botServiceImpl{
-		repo:           repo,
-		agentManager:   agentManager,
-		einoManager:    einoManager,
-		billingService: billingService,
-		vectorService:  vectorService,
-		producer:       producer,
-		mcpRegistry:    mcpReg,
+		repo:             repo,
+		agentManager:     agentManager,
+		einoManager:      einoManager,
+		billingService:   billingService,
+		vectorService:    vectorService,
+		searchService:    searchService,
+		producer:         producer,
+		mcpRegistry:      mcpReg,
+		mcpClientMgr:     mcpClientMgr,
+		mcpClient:        mcpClient,
+		cfg:              cfg,
+		knowledgeService: knowledgeService,
+		graphSearchSvc:   graphSearchSvc,
 	}
 }
 
 func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, description, avatar, botType, modelProvider, modelName, apiKey, baseURL, embeddingModel, systemPrompt string, config map[string]string) (*botmodel.Bot, error) {
-	logger.Info("创建 Bot 请求", logger.StringField("name", name), logger.StringField("userID", userID))
+	logger.Info("创建 Bot 请求", logger.StringField("name", name), logger.StringField("userID", userID), logger.StringField("avatar", avatar))
 
 	bot := &botmodel.Bot{
 		UserID:         userID,
@@ -136,6 +200,8 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 		return nil, ErrInternalServer
 	}
 
+	s.syncEmbeddingToCollections(ctx, bot)
+
 	s.publishBotEvent(ctx, "create", bot.ID, userID, map[string]string{
 		"name":     name,
 		"provider": modelProvider,
@@ -147,7 +213,12 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 }
 
 func (s *botServiceImpl) UpdateBot(ctx context.Context, userID, id, name, description, avatar, modelName, apiKey, baseURL, embeddingModel, systemPrompt string, config map[string]string, status string) (*botmodel.Bot, error) {
-	logger.Info("更新 Bot 请求", logger.StringField("id", id))
+	logger.Info("更新 Bot 请求",
+		logger.StringField("id", id),
+		logger.StringField("userID", userID),
+		logger.StringField("name", name),
+		logger.StringField("systemPrompt", systemPrompt),
+		logger.StringField("avatar", avatar))
 
 	bot, err := s.repo.GetBot(ctx, id)
 	if err != nil {
@@ -201,12 +272,104 @@ func (s *botServiceImpl) UpdateBot(ctx context.Context, userID, id, name, descri
 		return nil, ErrInternalServer
 	}
 
+	s.syncEmbeddingToCollections(ctx, bot)
+
 	if configChanged && s.agentManager != nil {
 		s.agentManager.InvalidateAgent(bot.ID)
 	}
 
 	logger.Info("更新 Bot 成功", logger.StringField("id", id))
 	return bot, nil
+}
+
+func (s *botServiceImpl) syncEmbeddingToCollections(ctx context.Context, bot *botmodel.Bot) {
+	if s.vectorService == nil {
+		return
+	}
+
+	enableRag := false
+	if configVal, ok := bot.Config["enable_rag"]; ok {
+		enableRag = configVal == "true"
+	}
+	if !enableRag {
+		return
+	}
+
+	if bot.EmbeddingModel == "" {
+		return
+	}
+
+	collectionIDsStr, ok := bot.Config["collection_ids"]
+	if !ok || collectionIDsStr == "" {
+		return
+	}
+
+	collectionIDs := strings.Split(collectionIDsStr, ",")
+	embeddingBaseURL, _ := bot.Config["embedding_base_url"]
+	embeddingAPIKey, _ := bot.Config["embedding_api_key"]
+
+	for _, cid := range collectionIDs {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		if err := s.vectorService.UpdateCollectionEmbedding(ctx, cid, bot.EmbeddingModel, embeddingBaseURL, embeddingAPIKey); err != nil {
+			logger.Error("同步Embedding配置到集合失败",
+				logger.StringField("collectionID", cid),
+				logger.ErrorField(err))
+		} else {
+			logger.Info("同步Embedding配置到集合成功",
+				logger.StringField("collectionID", cid),
+				logger.StringField("embeddingModel", bot.EmbeddingModel))
+		}
+	}
+}
+
+func (s *botServiceImpl) autoSaveToKnowledgeBase(bot *botmodel.Bot, userContent, assistantResponse string, forceAutoSave bool) {
+	if s.vectorService == nil {
+		return
+	}
+
+	autoSave := forceAutoSave
+	if !autoSave {
+		if configVal, ok := bot.Config["auto_save_to_kb"]; ok {
+			autoSave = configVal == "true"
+		}
+	}
+	if !autoSave {
+		return
+	}
+
+	collectionIDsStr, ok := bot.Config["collection_ids"]
+	if !ok || collectionIDsStr == "" {
+		return
+	}
+
+	collectionIDs := strings.Split(collectionIDsStr, ",")
+	text := fmt.Sprintf("用户: %s\n助手: %s", userContent, assistantResponse)
+
+	for _, cid := range collectionIDs {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		vectorCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		vectorID, err := s.vectorService.Vectorize(vectorCtx, text, cid, map[string]string{
+			"source":   "bot_auto_save",
+			"bot_id":   bot.ID,
+			"bot_name": bot.Name,
+		})
+		cancel()
+		if err != nil {
+			logger.Error("自动存入知识库失败",
+				logger.StringField("collectionID", cid),
+				logger.ErrorField(err))
+		} else {
+			logger.Info("自动存入知识库成功",
+				logger.StringField("collectionID", cid),
+				logger.StringField("vectorID", vectorID))
+		}
+	}
 }
 
 func (s *botServiceImpl) DeleteBot(ctx context.Context, id string) error {
@@ -254,7 +417,39 @@ func (s *botServiceImpl) ListBots(ctx context.Context, userID, botType, status s
 func (s *botServiceImpl) CreateConversation(ctx context.Context, botID, userID, title string) (*botmodel.Conversation, error) {
 	logger.Info("创建对话请求", logger.StringField("botID", botID), logger.StringField("userID", userID))
 
+	id := uuid.NewString()
 	conversation := &botmodel.Conversation{
+		ID:        id,
+		ChatID:    id,
+		ChatType:  1,
+		Name:      "",
+		Avatar:    "",
+		BotID:     botID,
+		UserID:    userID,
+		Title:     title,
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := s.repo.CreateConversation(ctx, conversation); err != nil {
+		logger.Error("创建对话失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	logger.Info("创建对话成功", logger.StringField("id", conversation.ID))
+	return conversation, nil
+}
+
+func (s *botServiceImpl) createConversationWithID(ctx context.Context, id, botID, userID, title string) (*botmodel.Conversation, error) {
+	logger.Info("创建对话请求(指定ID)", logger.StringField("id", id), logger.StringField("botID", botID), logger.StringField("userID", userID))
+
+	conversation := &botmodel.Conversation{
+		ID:        id,
+		ChatID:    id,
+		ChatType:  1,
+		Name:      "",
+		Avatar:    "",
 		BotID:     botID,
 		UserID:    userID,
 		Title:     title,
@@ -336,8 +531,204 @@ func (s *botServiceImpl) ListConversations(ctx context.Context, botID, userID st
 	return conversations, total, nil
 }
 
-func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, conversationID, content string, stream bool, metadata map[string]string) (string, error) {
-	logger.Info("发送消息请求", logger.StringField("userID", userID), logger.StringField("botID", botID))
+func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, conversationID, content string, stream bool, metadata map[string]string) (string, string, float64, int, error) {
+	startTime := time.Now()
+	defaultConversationID := fmt.Sprintf("%s_%s", userID, botID)
+
+	if conversationID == "" || len(conversationID) > 64 {
+		conversationID = defaultConversationID
+	}
+
+	logger.Info("发送消息请求", logger.StringField("userID", userID), logger.StringField("botID", botID), logger.StringField("conversationID", conversationID))
+
+	if s.agentManager == nil {
+		logger.Error("AgentManager 未初始化")
+		return "", "", 0, 0, ErrAgentNotInitialized
+	}
+
+	bot, err := s.repo.GetBot(ctx, botID)
+	if err != nil {
+		logger.Error("获取 Bot 失败", logger.ErrorField(err))
+		return "", "", 0, 0, ErrInternalServer
+	}
+	if bot == nil {
+		logger.Error("Bot 不存在", logger.StringField("botID", botID))
+		return "", "", 0, 0, ErrBotNotFound
+	}
+
+	logger.Info("Bot 配置",
+		logger.StringField("botID", botID),
+		logger.StringField("provider", bot.Provider),
+		logger.StringField("model", bot.Model),
+		logger.BoolField("hasAPIKey", bot.APIKey != ""),
+		logger.StringField("baseURL", bot.BaseURL),
+		logger.StringField("elapsed_get_bot", time.Since(startTime).String()))
+
+	usePlatformModel := bot.Provider == "platform" || bot.Provider == "" || bot.APIKey == ""
+
+	if metadata != nil {
+		if apiKey, ok := metadata["api_key"]; ok && apiKey != "" {
+			overrideBot := *bot
+			overrideBot.APIKey = apiKey
+			if provider, ok := metadata["provider"]; ok && provider != "" {
+				overrideBot.Provider = provider
+			}
+			if model, ok := metadata["model"]; ok && model != "" {
+				overrideBot.Model = model
+			}
+			if baseURL, ok := metadata["base_url"]; ok && baseURL != "" {
+				overrideBot.BaseURL = baseURL
+			}
+			bot = &overrideBot
+			usePlatformModel = false
+			logger.Info("使用metadata中的AI配置",
+				logger.StringField("provider", bot.Provider),
+				logger.StringField("model", bot.Model),
+				logger.StringField("baseURL", bot.BaseURL))
+		}
+	}
+
+	var conversation *botmodel.Conversation
+	conversation, err = s.repo.GetConversation(ctx, conversationID)
+	if err != nil || conversation == nil {
+		logger.Warn("对话不存在，创建新对话", logger.StringField("conversation_id", conversationID), logger.ErrorField(err))
+		conversation, err = s.createConversationWithID(ctx, conversationID, botID, userID, "")
+		if err != nil {
+			return "", "", 0, 0, err
+		}
+	}
+
+	userMsg := &botmodel.Message{
+		ID:             uuid.NewString(),
+		SenderID:       userID,
+		BotID:          botID,
+		ConversationID: conversationID,
+		ChatID:         conversationID,
+		Role:           "user",
+		Content:        strutil.CleanInvalidUTF8(content),
+		Metadata:       botmodel.JSONMap(metadata),
+		MentionUserIDs: []string{},
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+	if err = s.repo.AddMessage(ctx, userMsg); err != nil {
+		logger.Error("保存用户消息失败", logger.ErrorField(err))
+		return "", "", 0, 0, ErrInternalServer
+	}
+
+	estimatedTokens := estimateTokenCount(content)
+	var cost float64
+	if s.billingService != nil {
+		billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		provider := bot.Provider
+		if provider == "" {
+			provider = "custom"
+		}
+		if provider == "openai" && bot.Model != "" {
+			if strings.HasPrefix(bot.Model, "deepseek") {
+				provider = "deepseek"
+			} else if strings.HasPrefix(bot.Model, "claude") {
+				provider = "claude"
+			} else if strings.HasPrefix(bot.Model, "ernie") || strings.HasPrefix(bot.Model, "wenxin") {
+				provider = "qianfan"
+			}
+		}
+		cost, err = s.billingService.ConsumeModelCall(billingCtx, userID, provider, bot.Model, estimatedTokens, map[string]string{
+			"bot_id":             bot.ID,
+			"use_platform_model": fmt.Sprintf("%v", usePlatformModel),
+		})
+		if err != nil {
+			if usePlatformModel && strings.Contains(err.Error(), "insufficient") {
+				cancel()
+				return "", "", 0, 0, ErrInsufficientBalance
+			}
+			logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
+		}
+	}
+
+	agentStartTime := time.Now()
+	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID)
+	if err != nil {
+		logger.Error("获取 Agent 失败", logger.ErrorField(err))
+		return "", "", 0, 0, fmt.Errorf("Agent 创建失败，请检查 Bot 的 API 配置: %w", err)
+	}
+	logger.Info("Agent 准备完成", logger.StringField("botID", botID), logger.StringField("elapsed_agent", time.Since(agentStartTime).String()))
+
+	historyMessages, err := s.buildHistoryMessages(ctx, conversationID, 20)
+	if err != nil {
+		logger.Warn("构建历史消息失败，使用简单对话", logger.ErrorField(err))
+		aiTimeout := 90 * time.Second
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			if remaining < 15*time.Second {
+				return "", "", 0, 0, fmt.Errorf("剩余时间不足，无法调用 AI: %v", remaining)
+			}
+			aiTimeout = remaining - 10*time.Second
+		}
+		aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
+		defer aiCancel()
+
+		chatResp, chatErr := botAgent.Chat(aiCtx, content)
+		if chatErr != nil {
+			logger.Error("Agent 调用失败", logger.ErrorField(chatErr), logger.StringField("elapsed_ai", time.Since(agentStartTime).String()))
+			return "", "", 0, 0, fmt.Errorf("AI 调用失败: %w", chatErr)
+		}
+		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
+		logger.Info("发送消息成功(简单对话)", logger.StringField("elapsed_total", time.Since(startTime).String()))
+		return chatResp, conversationID, cost, estimatedTokens, nil
+	}
+
+	currentMsg := schema.UserMessage(content)
+	allMessages := append(historyMessages, currentMsg)
+
+	aiTimeout := 90 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < 15*time.Second {
+			return "", "", 0, 0, fmt.Errorf("剩余时间不足，无法调用 AI: %v", remaining)
+		}
+		aiTimeout = remaining - 10*time.Second
+	}
+	aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
+	defer aiCancel()
+
+	logger.Info("开始 AI 调用", logger.StringField("botID", botID), logger.StringField("timeout", aiTimeout.String()))
+	aiCallStart := time.Now()
+
+	response, err := botAgent.ChatWithHistory(aiCtx, allMessages)
+	if err != nil {
+		logger.Error("Agent 调用失败", logger.ErrorField(err), logger.StringField("elapsed_ai", time.Since(aiCallStart).String()))
+		return "", "", 0, 0, fmt.Errorf("AI 调用失败: %w", err)
+	}
+
+	logger.Info("AI 调用完成", logger.StringField("botID", botID), logger.StringField("elapsed_ai", time.Since(aiCallStart).String()))
+
+	s.saveAssistantMessage(ctx, botID, conversationID, response)
+
+	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
+	go s.autoSaveToKnowledgeBase(bot, content, response, autoSave)
+
+	s.publishBotEvent(ctx, "message", botID, userID, map[string]string{
+		"conversation_id": conversationID,
+		"tokens":          fmt.Sprintf("%d", estimatedTokens),
+	})
+
+	logger.Info("发送消息成功", logger.StringField("elapsed_total", time.Since(startTime).String()))
+	return response, conversationID, cost, estimatedTokens, nil
+}
+
+func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, conversationID, content string, metadata map[string]string, onChunk func(string) error) (string, error) {
+	// 使用固定的 conversation ID: {userID}_{botID}
+	defaultConversationID := fmt.Sprintf("%s_%s", userID, botID)
+
+	// 如果前端没有传有效的 conversationID，使用默认的
+	if conversationID == "" || len(conversationID) > 64 {
+		conversationID = defaultConversationID
+	}
+
+	logger.Info("发送流式消息请求", logger.StringField("userID", userID), logger.StringField("botID", botID), logger.StringField("conversationID", conversationID))
 
 	if s.agentManager == nil {
 		return "", ErrAgentNotInitialized
@@ -354,200 +745,93 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	usePlatformModel := bot.Provider == "platform" || bot.APIKey == ""
 
-	var conversation *botmodel.Conversation
-	if conversationID == "" {
-		conversation, err = s.CreateConversation(ctx, botID, userID, "")
-		if err != nil {
-			return "", err
-		}
-		conversationID = conversation.ID
-	} else {
-		conversation, err = s.repo.GetConversation(ctx, conversationID)
-		if err != nil {
-			return "", ErrInternalServer
-		}
-		if conversation == nil {
-			return "", ErrConversationNotFound
-		}
-	}
-
-	userMsg := &botmodel.Message{
-		BotID:          botID,
-		ConversationID: conversationID,
-		Role:           "user",
-		Content:        content,
-		Metadata:       botmodel.JSONMap(metadata),
-		CreatedAt:      time.Now(),
-	}
-	if err = s.repo.AddMessage(ctx, userMsg); err != nil {
-		logger.Error("保存用户消息失败", logger.ErrorField(err))
-		return "", ErrInternalServer
-	}
-
-	fullPrompt := content
-	if s.vectorService != nil {
-		fullPrompt = s.buildRAGPrompt(ctx, bot, content)
-	}
-
-	estimatedTokens := estimateTokenCount(fullPrompt)
 	if usePlatformModel && s.billingService != nil {
-		_, err = s.billingService.ConsumeModelCall(ctx, userID, bot.Provider, bot.Model, estimatedTokens, map[string]string{
+		estimatedTokens := estimateTokenCount(content)
+		billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		_, err = s.billingService.ConsumeModelCall(billingCtx, userID, bot.Provider, bot.Model, estimatedTokens, map[string]string{
 			"bot_id": bot.ID,
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "insufficient") {
 				return "", ErrInsufficientBalance
 			}
-			logger.Error("计费调用失败", logger.ErrorField(err))
-			return "", ErrInternalServer
-		}
-	}
-
-	botAgent, err := s.getOrCreateAgent(bot)
-	if err != nil {
-		logger.Error("获取 Agent 失败", logger.ErrorField(err))
-		return "", ErrInternalServer
-	}
-
-	historyMessages, err := s.buildHistoryMessages(ctx, conversationID, 20)
-	if err != nil {
-		logger.Warn("构建历史消息失败，使用简单对话", logger.ErrorField(err))
-		chatResp, chatErr := botAgent.Chat(ctx, fullPrompt)
-		if chatErr != nil {
-			logger.Error("Agent 调用失败", logger.ErrorField(chatErr))
-			return "", ErrInternalServer
-		}
-		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
-		return chatResp, nil
-	}
-
-	currentMsg := schema.UserMessage(fullPrompt)
-	allMessages := append(historyMessages, currentMsg)
-
-	response, err := botAgent.ChatWithHistory(ctx, allMessages)
-	if err != nil {
-		logger.Error("Agent 调用失败", logger.ErrorField(err))
-		return "", ErrInternalServer
-	}
-
-	s.saveAssistantMessage(ctx, botID, conversationID, response)
-
-	s.publishBotEvent(ctx, "message", botID, userID, map[string]string{
-		"conversation_id": conversationID,
-		"tokens":          fmt.Sprintf("%d", estimatedTokens),
-	})
-
-	logger.Info("发送消息成功")
-	return response, nil
-}
-
-func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, conversationID, content string, metadata map[string]string, onChunk func(string) error) error {
-	logger.Info("发送流式消息请求", logger.StringField("userID", userID), logger.StringField("botID", botID))
-
-	if s.agentManager == nil {
-		return ErrAgentNotInitialized
-	}
-
-	bot, err := s.repo.GetBot(ctx, botID)
-	if err != nil {
-		logger.Error("获取 Bot 失败", logger.ErrorField(err))
-		return ErrInternalServer
-	}
-	if bot == nil {
-		return ErrBotNotFound
-	}
-
-	usePlatformModel := bot.Provider == "platform" || bot.APIKey == ""
-
-	if usePlatformModel && s.billingService != nil {
-		estimatedTokens := estimateTokenCount(content)
-		_, err = s.billingService.ConsumeModelCall(ctx, userID, bot.Provider, bot.Model, estimatedTokens, map[string]string{
-			"bot_id": bot.ID,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "insufficient") {
-				return ErrInsufficientBalance
-			}
-			logger.Error("计费调用失败", logger.ErrorField(err))
-			return ErrInternalServer
+			logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
 		}
 	}
 
 	var conversation *botmodel.Conversation
-	if conversationID == "" {
-		conversation, err = s.CreateConversation(ctx, botID, userID, "")
+	conversation, err = s.repo.GetConversation(ctx, conversationID)
+	if err != nil || conversation == nil {
+		logger.Warn("对话不存在，创建新对话", logger.StringField("conversation_id", conversationID), logger.ErrorField(err))
+		conversation, err = s.createConversationWithID(ctx, conversationID, botID, userID, "")
 		if err != nil {
-			return err
-		}
-		conversationID = conversation.ID
-	} else {
-		conversation, err = s.repo.GetConversation(ctx, conversationID)
-		if err != nil {
-			return ErrInternalServer
-		}
-		if conversation == nil {
-			return ErrConversationNotFound
+			return "", err
 		}
 	}
 
 	userMsg := &botmodel.Message{
+		ID:             uuid.NewString(),
+		SenderID:       userID,
 		BotID:          botID,
 		ConversationID: conversationID,
+		ChatID:         conversationID,
 		Role:           "user",
 		Content:        content,
 		Metadata:       botmodel.JSONMap(metadata),
+		MentionUserIDs: []string{},
 		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 	if err = s.repo.AddMessage(ctx, userMsg); err != nil {
 		logger.Error("保存用户消息失败", logger.ErrorField(err))
-		return ErrInternalServer
+		return "", ErrInternalServer
 	}
 
-	fullPrompt := content
-	if s.vectorService != nil {
-		fullPrompt = s.buildRAGPrompt(ctx, bot, content)
-	}
-
-	botAgent, err := s.getOrCreateAgent(bot)
+	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID)
 	if err != nil {
 		logger.Error("获取 Agent 失败", logger.ErrorField(err))
-		return ErrInternalServer
+		return "", ErrInternalServer
 	}
 
 	historyMessages, err := s.buildHistoryMessages(ctx, conversationID, 20)
 	if err != nil {
 		logger.Warn("构建历史消息失败，使用简单对话", logger.ErrorField(err))
-		var fullResponse string
+		var fullResponse strings.Builder
 		streamOnChunk := func(chunk string) error {
-			fullResponse += chunk
+			fullResponse.WriteString(chunk)
 			return onChunk(chunk)
 		}
-		if err := botAgent.ChatStream(ctx, fullPrompt, streamOnChunk); err != nil {
+		if err := botAgent.ChatStream(ctx, content, streamOnChunk); err != nil {
 			logger.Error("Agent 流式调用失败", logger.ErrorField(err))
-			return ErrInternalServer
+			return "", ErrInternalServer
 		}
-		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse)
-		return nil
+		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
+		return conversationID, nil
 	}
 
-	currentMsg := schema.UserMessage(fullPrompt)
+	currentMsg := schema.UserMessage(content)
 	allMessages := append(historyMessages, currentMsg)
 
-	var fullResponse string
+	var fullResponse strings.Builder
 	streamOnChunk := func(chunk string) error {
-		fullResponse += chunk
+		fullResponse.WriteString(chunk)
 		return onChunk(chunk)
 	}
 
 	if err := botAgent.ChatStreamWithHistory(ctx, allMessages, streamOnChunk); err != nil {
 		logger.Error("Agent 流式调用失败", logger.ErrorField(err))
-		return ErrInternalServer
+		return "", ErrInternalServer
 	}
 
-	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse)
+	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
+
+	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
+	go s.autoSaveToKnowledgeBase(bot, content, fullResponse.String(), autoSave)
 
 	logger.Info("发送流式消息成功")
-	return nil
+	return conversationID, nil
 }
 
 func (s *botServiceImpl) GetHistory(ctx context.Context, botID, conversationID string, limit int, beforeTime *time.Time) ([]*botmodel.Message, bool, error) {
@@ -665,13 +949,43 @@ func (s *botServiceImpl) GetUserMemory(ctx context.Context, userID, botID string
 }
 
 func (s *botServiceImpl) SetUserMemory(ctx context.Context, userID, botID, key, value string) error {
+	return s.SetUserMemoryWithCategory(ctx, userID, botID, key, value, "fact")
+}
+
+func (s *botServiceImpl) SetUserMemoryWithCategory(ctx context.Context, userID, botID, key, value, category string) error {
+	existing, err := s.repo.GetUserMemoryByKey(ctx, userID, botID, key)
+	if err == nil && existing != nil {
+		existing.Value = value
+		if category != "" {
+			existing.Category = category
+		}
+		return s.repo.SetUserMemory(ctx, existing)
+	}
 	memory := &botmodel.UserMemory{
-		UserID: userID,
-		BotID:  botID,
-		Key:    key,
-		Value:  value,
+		UserID:     userID,
+		BotID:      botID,
+		Key:        key,
+		Value:      value,
+		Category:   category,
+		Source:     "manual",
+		Confidence: 1.0,
 	}
 	return s.repo.SetUserMemory(ctx, memory)
+}
+
+func (s *botServiceImpl) DeleteUserMemory(ctx context.Context, userID, botID, key string) error {
+	return s.repo.DeleteUserMemory(ctx, userID, botID, key)
+}
+
+func (s *botServiceImpl) DeleteAllUserMemories(ctx context.Context, userID, botID string) error {
+	memories, err := s.repo.GetUserMemoriesByUser(ctx, userID, botID)
+	if err != nil {
+		return err
+	}
+	for _, mem := range memories {
+		_ = s.repo.DeleteUserMemoryByID(ctx, mem.ID)
+	}
+	return nil
 }
 
 func (s *botServiceImpl) ChatWithCoordinator(ctx context.Context, userID, content string) (string, error) {
@@ -737,23 +1051,53 @@ func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, 
 
 func (s *botServiceImpl) WithTransaction(ctx context.Context, fn func(txService BotService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
-		txService := NewBotService(txRepo, s.agentManager, s.einoManager, s.billingService, s.vectorService, s.producer)
+		txService := NewBotService(txRepo, s.agentManager, s.einoManager, s.billingService, s.vectorService, s.searchService, s.producer, s.mcpClient, s.cfg, s.knowledgeService, s.graphSearchSvc)
 		return fn(txService)
 	})
 }
 
-func (s *botServiceImpl) getOrCreateAgent(bot *botmodel.Bot) (agent.BotAgent, error) {
+func (s *botServiceImpl) getOrCreateAgentWithMemory(ctx context.Context, bot *botmodel.Bot, userID string) (agent.BotAgent, error) {
+	enhancedPrompt := s.buildMemoryEnhancedSystemPrompt(ctx, bot, userID)
+
 	cfg := &agent.AgentConfig{
-		ID:           bot.ID,
-		Name:         bot.Name,
-		Description:  bot.Description,
-		SystemPrompt: bot.SystemPrompt,
+		ID:            bot.ID,
+		Name:          bot.Name,
+		Description:   bot.Description,
+		SystemPrompt:  enhancedPrompt,
+		MaxIterations: 10,
 	}
 
-	if bot.Provider != "" && bot.Provider != "platform" && bot.APIKey != "" {
+	enableRag := false
+	if configVal, ok := bot.Config["enable_rag"]; ok {
+		enableRag = fmt.Sprintf("%v", configVal) == "true"
+	}
+
+	if enableRag {
+		kbInfo, kbTools := s.buildKnowledgeConfig(ctx, bot)
+		if kbInfo != "" {
+			cfg.KnowledgeBaseInfo = kbInfo
+		}
+		if len(kbTools) > 0 {
+			cfg.Tools = kbTools
+		}
+	}
+
+	mcpTools := botTools.BuildMCPTools(s.mcpRegistry)
+	if len(mcpTools) > 0 {
+		cfg.Tools = append(cfg.Tools, mcpTools...)
+	}
+
+	extMCPTools := s.buildExternalMCPTools(ctx)
+	if len(extMCPTools) > 0 {
+		cfg.Tools = append(cfg.Tools, extMCPTools...)
+	}
+
+	usePlatformModel := bot.Provider == "platform" || bot.Provider == "" || bot.APIKey == ""
+
+	if !usePlatformModel && bot.APIKey != "" {
 		chatModel, err := s.createChatModelForBot(bot)
 		if err != nil {
-			logger.Warn("为 Bot 创建自定义 ChatModel 失败，使用全局模型",
+			logger.Warn("为 Bot 创建自定义 ChatModel 失败，尝试使用全局模型",
 				logger.StringField("botID", bot.ID),
 				logger.ErrorField(err))
 		} else if chatModel != nil {
@@ -761,43 +1105,213 @@ func (s *botServiceImpl) getOrCreateAgent(bot *botmodel.Bot) (agent.BotAgent, er
 		}
 	}
 
-	return s.agentManager.GetOrCreateAgent(cfg)
+	botAgent, err := s.agentManager.GetOrCreateAgent(cfg)
+	if err != nil {
+		logger.Error("创建 Agent 失败",
+			logger.StringField("botID", bot.ID),
+			logger.StringField("provider", bot.Provider),
+			logger.BoolField("usePlatformModel", usePlatformModel),
+			logger.BoolField("enableRag", enableRag),
+			logger.ErrorField(err))
+		return nil, fmt.Errorf("Agent 创建失败: %w", err)
+	}
+
+	return botAgent, nil
+}
+
+func (s *botServiceImpl) buildKnowledgeConfig(ctx context.Context, bot *botmodel.Bot) (string, []tool.BaseTool) {
+	collectionIDs := s.getCollectionIDs(bot)
+	if len(collectionIDs) == 0 && s.vectorService == nil {
+		return "", nil
+	}
+
+	var kbCollections []*botTools.CollectionInfo
+	if s.vectorService != nil {
+		listCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		collections, err := s.vectorService.ListCollections(listCtx)
+		cancel()
+		if err != nil {
+			logger.Warn("获取知识库列表失败，使用缓存", logger.ErrorField(err))
+			if cached, ok := s.kbCache.Load(bot.ID); ok {
+				kbCollections = cached.([]*botTools.CollectionInfo)
+			}
+		} else {
+			idSet := make(map[string]bool)
+			for _, cid := range collectionIDs {
+				idSet[cid] = true
+			}
+			for _, coll := range collections {
+				if len(idSet) == 0 || idSet[coll.ID] {
+					kbCollections = append(kbCollections, &botTools.CollectionInfo{
+						ID:   coll.ID,
+						Name: coll.Name,
+						Size: coll.Size,
+					})
+				}
+			}
+			s.kbCache.Store(bot.ID, kbCollections)
+		}
+	}
+
+	for _, coll := range kbCollections {
+		logger.Info("知识库集合状态",
+			logger.StringField("botID", bot.ID),
+			logger.StringField("collection_id", coll.ID),
+			logger.StringField("name", coll.Name),
+			logger.IntField("size", int(coll.Size)))
+	}
+
+	kbInfo := botTools.FormatKnowledgeBaseList(kbCollections)
+
+	if kbInfo == "" && len(collectionIDs) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\n以下知识库已绑定到当前对话，你可以通过工具搜索其中的内容：\n\n")
+		for i, cid := range collectionIDs {
+			sb.WriteString(fmt.Sprintf("%d. collection_id: `%s`\n", i+1, cid))
+		}
+		sb.WriteString("\n搜索建议：\n")
+		sb.WriteString("- 使用 `knowledge_search` 进行语义搜索\n")
+		sb.WriteString("- 使用 `grep_chunks` 进行关键词搜索\n")
+		kbInfo = sb.String()
+	}
+
+	knowledgeSvc := &knowledgeSearchAdapter{
+		vectorService:   s.vectorService,
+		searchService:   s.searchService,
+		collectionIDs:   collectionIDs,
+		searchAvailable: s.searchService != nil,
+	}
+	kbTools := botTools.BuildKnowledgeTools(knowledgeSvc)
+
+	enableGraph := false
+	if configVal, ok := bot.Config["enable_graph"]; ok {
+		enableGraph = fmt.Sprintf("%v", configVal) == "true"
+	}
+
+	if enableGraph && s.graphSearchSvc != nil && s.knowledgeService != nil {
+		defaultCollectionID := ""
+		if len(collectionIDs) > 0 {
+			defaultCollectionID = collectionIDs[0]
+		}
+		graphSearchTools := botTools.BuildGraphSearchTools(s.graphSearchSvc, defaultCollectionID)
+		graphWriteTools := botTools.BuildGraphWriteTools(s.knowledgeService, s.graphSearchSvc, defaultCollectionID)
+		kbTools = append(kbTools, graphSearchTools...)
+		kbTools = append(kbTools, graphWriteTools...)
+		if len(graphSearchTools) > 0 || len(graphWriteTools) > 0 {
+			allGraphTools := append(graphSearchTools, graphWriteTools...)
+			kbInfo += botTools.FormatGraphToolsInfo(allGraphTools)
+		}
+	}
+
+	logger.Info("为 Bot 配置知识库工具",
+		logger.StringField("botID", bot.ID),
+		logger.IntField("collections", len(kbCollections)),
+		logger.IntField("tools", len(kbTools)))
+
+	return kbInfo, kbTools
+}
+
+func (s *botServiceImpl) buildExternalMCPTools(ctx context.Context) []tool.BaseTool {
+	buildCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	if s.mcpClient == nil {
+		if s.cfg != nil {
+			mcpCli, err := client.TryDialMCPWithFallback(s.cfg)
+			if err != nil {
+				logger.Warn("MCP客户端重连失败", logger.ErrorField(err))
+				return nil
+			}
+			s.mcpClient = mcpCli
+			logger.Info("MCP客户端重连成功")
+		} else {
+			return nil
+		}
+	}
+
+	services, err := s.mcpClient.ListMCPServices(buildCtx, true)
+	if err != nil {
+		logger.Warn("获取外部MCP服务列表失败", logger.ErrorField(err))
+		return nil
+	}
+
+	if len(services) == 0 {
+		return nil
+	}
+
+	var svcInfos []*botTools.ExternalMCPServiceInfo
+	for _, svc := range services {
+		mergedHeaders := mergeAuthConfigToHeaders(svc.Headers, svc.AuthConfig)
+		s.mcpClientMgr.GetOrCreateConnection(svc.ID, svc.URL, svc.TransportType, mergedHeaders)
+		svcInfos = append(svcInfos, &botTools.ExternalMCPServiceInfo{
+			ID:      svc.ID,
+			Name:    svc.Name,
+			Enabled: svc.Enabled,
+		})
+	}
+
+	extTools := botTools.BuildExternalMCPTools(s.mcpClientMgr, svcInfos)
+	logger.Info("构建外部MCP工具",
+		logger.IntField("services", len(services)),
+		logger.IntField("tools", len(extTools)))
+
+	return extTools
+}
+
+func (s *botServiceImpl) getCollectionIDs(bot *botmodel.Bot) []string {
+	var collectionIDs []string
+	if configVal, ok := bot.Config["collection_ids"]; ok {
+		idsStr := fmt.Sprintf("%v", configVal)
+		if idsStr != "" {
+			for _, cid := range strings.Split(idsStr, ",") {
+				cid = strings.TrimSpace(cid)
+				if cid != "" {
+					collectionIDs = append(collectionIDs, cid)
+				}
+			}
+		}
+	}
+	return collectionIDs
 }
 
 func (s *botServiceImpl) createChatModelForBot(bot *botmodel.Bot) (model.BaseChatModel, error) {
+	providerName := bot.Provider
+	if providerName == "" || providerName == "platform" {
+		providerName = "platform"
+	}
+
 	registry := provider.GetProviderRegistry()
-	p, err := registry.GetProvider(bot.Provider)
+	p, err := registry.GetProvider(providerName)
 	if err != nil {
-		return nil, err
+		logger.Warn("Provider 不存在，尝试使用 openai 兼容模式",
+			logger.StringField("provider", providerName),
+			logger.ErrorField(err))
+		p, err = registry.GetProvider("openai")
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return p.NewChatModel(bot.APIKey, bot.BaseURL, bot.Model)
 }
 
-func (s *botServiceImpl) buildRAGPrompt(ctx context.Context, bot *botmodel.Bot, content string) string {
-	collectionID := "documents"
-	if configVal, ok := bot.Config["collection_id"]; ok {
-		collectionID = fmt.Sprintf("%v", configVal)
+func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bot *botmodel.Bot, userID string) string {
+	basePrompt := bot.SystemPrompt
+	if basePrompt == "" {
+		basePrompt = "你是一个有用的AI助手。"
 	}
 
-	results, err := s.vectorService.TextSearch(ctx, collectionID, content, 5)
-	if err != nil {
-		logger.Warn("RAG 查询失败，继续普通对话", logger.ErrorField(err))
-		return content
-	}
-	if len(results) == 0 {
-		return content
+	if s.einoManager == nil || s.repo == nil {
+		return basePrompt
 	}
 
-	var ragContext strings.Builder
-	ragContext.WriteString("以下是一些参考文档内容，请基于这些信息回答用户问题：\n\n")
-	for i, result := range results {
-		fmt.Fprintf(&ragContext, "[文档 %d]:\n%s\n\n", i+1, result)
+	memMgr := botmemory.GetMemoryManager(s.repo, s.einoManager, s.agentManager)
+	memoryPrompt := memMgr.BuildMemoryPrompt(ctx, userID, bot.ID)
+	if memoryPrompt == "" {
+		return basePrompt
 	}
-	fmt.Fprintf(&ragContext, "用户的问题：\n%s\n\n请基于上述参考内容回答，仅使用参考内容中相关的信息。", content)
 
-	logger.Info("RAG 查询成功，找到相关文档", logger.IntField("count", len(results)))
-	return ragContext.String()
+	return basePrompt + "\n\n" + memoryPrompt
 }
 
 func (s *botServiceImpl) buildHistoryMessages(ctx context.Context, conversationID string, limit int) ([]*schema.Message, error) {
@@ -806,14 +1320,29 @@ func (s *botServiceImpl) buildHistoryMessages(ctx context.Context, conversationI
 		return nil, err
 	}
 
+	logger.Info("构建历史消息",
+		logger.StringField("conversationID", conversationID),
+		logger.IntField("count", len(messages)))
+
 	var schemaMessages []*schema.Message
+	var lastRole string
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
 		switch msg.Role {
 		case "user":
+			if lastRole == "user" {
+				continue
+			}
 			schemaMessages = append(schemaMessages, schema.UserMessage(msg.Content))
+			lastRole = "user"
 		case "assistant":
+			if msg.Content == "" {
+				logger.Warn("跳过空的assistant消息",
+					logger.StringField("msg_id", msg.ID))
+				continue
+			}
 			schemaMessages = append(schemaMessages, schema.AssistantMessage(msg.Content, nil))
+			lastRole = "assistant"
 		}
 	}
 
@@ -821,16 +1350,30 @@ func (s *botServiceImpl) buildHistoryMessages(ctx context.Context, conversationI
 }
 
 func (s *botServiceImpl) saveAssistantMessage(ctx context.Context, botID, conversationID, content string) {
+	cleanContent := strutil.CleanInvalidUTF8(content)
+	if cleanContent == "" {
+		logger.Warn("跳过保存空助理消息",
+			logger.StringField("conversationID", conversationID))
+		return
+	}
+
 	assistantMsg := &botmodel.Message{
+		ID:             uuid.NewString(),
+		SenderID:       botID,
 		BotID:          botID,
 		ConversationID: conversationID,
+		ChatID:         conversationID,
 		Role:           "assistant",
-		Content:        content,
+		Content:        cleanContent,
+		MentionUserIDs: []string{},
 		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
 	}
 	if err := s.repo.AddMessage(ctx, assistantMsg); err != nil {
 		logger.Warn("保存助理消息失败", logger.ErrorField(err))
 	}
+
+	s.triggerMemoryExtraction(ctx, botID, conversationID)
 }
 
 func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, userID string, metadata map[string]string) {
@@ -865,4 +1408,219 @@ func estimateTokenCount(text string) int {
 	asciiCount := max(0, len(text)-charCount*3)
 	nonAsciiCount := charCount - asciiCount
 	return nonAsciiCount*2 + asciiCount/4 + 50
+}
+
+type knowledgeSearchAdapter struct {
+	vectorService   VectorService
+	searchService   SearchService
+	collectionIDs   []string
+	searchAvailable bool
+}
+
+func (a *knowledgeSearchAdapter) SearchVector(ctx context.Context, collectionIDs []string, query string, topK int) ([]*botTools.KnowledgeSearchResult, error) {
+	targets := collectionIDs
+	if len(targets) == 0 {
+		targets = a.collectionIDs
+	}
+
+	logger.Info("知识库语义搜索",
+		logger.AnyField("targets", targets),
+		logger.StringField("query", query),
+		logger.IntField("top_k", topK),
+		logger.BoolField("has_vector_service", a.vectorService != nil))
+
+	if a.vectorService == nil {
+		logger.Warn("向量服务未初始化，无法搜索")
+		return nil, nil
+	}
+
+	if len(targets) == 0 {
+		logger.Warn("未配置知识库集合ID，无法搜索")
+		return nil, nil
+	}
+
+	var allResults []*botTools.KnowledgeSearchResult
+	seen := make(map[string]bool)
+
+	type collResult struct {
+		results []*VectorSearchResult
+		cid     string
+		err     error
+	}
+	collCh := make(chan collResult, len(targets))
+	var wg sync.WaitGroup
+
+	for _, cid := range targets {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(collectionID string) {
+			defer wg.Done()
+			searchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			results, err := a.vectorService.SearchWithScores(searchCtx, collectionID, query, topK)
+			cancel()
+			collCh <- collResult{results: results, cid: collectionID, err: err}
+		}(cid)
+	}
+
+	go func() {
+		wg.Wait()
+		close(collCh)
+	}()
+
+	for cr := range collCh {
+		if cr.err != nil {
+			logger.Warn("向量搜索失败", logger.StringField("collection_id", cr.cid), logger.ErrorField(cr.err))
+			continue
+		}
+		logger.Info("向量搜索结果",
+			logger.StringField("collection_id", cr.cid),
+			logger.IntField("count", len(cr.results)))
+		for _, r := range cr.results {
+			if !seen[r.ID] {
+				seen[r.ID] = true
+				metadata := r.Metadata
+				if metadata == nil {
+					metadata = map[string]string{}
+				}
+				metadata["collection_id"] = cr.cid
+				allResults = append(allResults, &botTools.KnowledgeSearchResult{
+					ID:       r.ID,
+					Content:  r.Content,
+					Score:    r.Score,
+					Source:   "vector",
+					Metadata: metadata,
+				})
+			}
+		}
+	}
+
+	logger.Info("知识库语义搜索完成", logger.IntField("total_results", len(allResults)))
+	return allResults, nil
+}
+
+func (a *knowledgeSearchAdapter) SearchKeyword(ctx context.Context, query string, topK int) ([]*botTools.KnowledgeSearchResult, error) {
+	if a.searchService == nil {
+		return nil, nil
+	}
+
+	if !a.searchAvailable {
+		return nil, nil
+	}
+
+	logger.Info("知识库关键词搜索", logger.StringField("query", query), logger.IntField("top_k", topK))
+
+	searchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	results, err := a.searchService.Search(searchCtx, query, topK)
+	cancel()
+	if err != nil {
+		logger.Warn("关键词搜索失败，后续请求将跳过关键词搜索", logger.ErrorField(err))
+		a.searchAvailable = false
+		return nil, nil
+	}
+
+	logger.Info("关键词搜索结果", logger.IntField("count", len(results)))
+
+	var allResults []*botTools.KnowledgeSearchResult
+	for _, r := range results {
+		allResults = append(allResults, &botTools.KnowledgeSearchResult{
+			ID:      r.ID,
+			Title:   r.Title,
+			Content: r.Content,
+			Score:   r.Score,
+			Source:  "keyword",
+		})
+	}
+
+	return allResults, nil
+}
+
+func (a *knowledgeSearchAdapter) ListCollections(ctx context.Context) ([]*botTools.CollectionInfo, error) {
+	if a.vectorService == nil {
+		return nil, nil
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	collections, err := a.vectorService.ListCollections(listCtx)
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+
+	idSet := make(map[string]bool)
+	for _, cid := range a.collectionIDs {
+		idSet[cid] = true
+	}
+
+	var result []*botTools.CollectionInfo
+	for _, coll := range collections {
+		if len(idSet) == 0 || idSet[coll.ID] {
+			result = append(result, &botTools.CollectionInfo{
+				ID:   coll.ID,
+				Name: coll.Name,
+				Size: coll.Size,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+func (s *botServiceImpl) triggerMemoryExtraction(ctx context.Context, botID, conversationID string) {
+	if s.einoManager == nil {
+		return
+	}
+
+	conversation, err := s.repo.GetConversation(ctx, conversationID)
+	if err != nil || conversation == nil {
+		return
+	}
+
+	messages, err := s.repo.GetMessages(ctx, conversationID, 20, nil)
+	if err != nil || len(messages) < 4 {
+		return
+	}
+
+	var chatModel model.BaseChatModel
+	bot, botErr := s.repo.GetBot(ctx, botID)
+	if botErr == nil && bot != nil {
+		usePlatformModel := bot.Provider == "platform" || bot.Provider == "" || bot.APIKey == ""
+		if !usePlatformModel && bot.APIKey != "" {
+			if cm, cmErr := s.createChatModelForBot(bot); cmErr == nil && cm != nil {
+				chatModel = cm
+			}
+		}
+	}
+
+	memMgr := botmemory.GetMemoryManager(s.repo, s.einoManager, s.agentManager)
+	memMgr.ExtractAndSaveMemories(ctx, conversation.UserID, botID, messages, chatModel)
+}
+
+func mergeAuthConfigToHeaders(headers map[string]string, authConfig map[string]string) map[string]string {
+	result := make(map[string]string, len(headers)+1)
+	for k, v := range headers {
+		result[k] = v
+	}
+	if authConfig == nil {
+		return result
+	}
+	authType := authConfig["type"]
+	switch authType {
+	case "bearer":
+		if token := authConfig["token"]; token != "" {
+			result["Authorization"] = "Bearer " + token
+		}
+	case "api_key":
+		key := authConfig["key"]
+		headerName := authConfig["header_name"]
+		if headerName == "" {
+			headerName = "X-API-Key"
+		}
+		if key != "" {
+			result[headerName] = key
+		}
+	}
+	return result
 }

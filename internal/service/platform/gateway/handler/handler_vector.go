@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
 
@@ -193,6 +195,55 @@ func (h *Handler) DeleteVector(c *gin.Context) {
 		statusCode = mapStatusCode(resp.StatusCode)
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
+}
+
+func (h *Handler) ListVectors(c *gin.Context) {
+	if h.VectorClient == nil {
+		c.JSON(http.StatusOK, model.Response{
+			Code:    http.StatusServiceUnavailable,
+			Message: "vector service unavailable",
+		})
+		return
+	}
+	collectionID := c.Param("id")
+	if collectionID == "" {
+		c.JSON(http.StatusOK, model.Response{
+			Code:    http.StatusBadRequest,
+			Message: "collection_id is required",
+		})
+		return
+	}
+	page := int32(1)
+	pageSize := int32(20)
+	if p, err := strconv.ParseInt(c.Query("page"), 10, 32); err == nil && p > 0 {
+		page = int32(p)
+	}
+	if ps, err := strconv.ParseInt(c.Query("page_size"), 10, 32); err == nil && ps > 0 {
+		pageSize = int32(ps)
+	}
+	resp, err := h.VectorClient.ListVectors(context.Background(), &pb.ListVectorsReq{
+		CollectionId: collectionID,
+		Page:         page,
+		PageSize:     pageSize,
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, model.Response{
+			Code:    http.StatusInternalServerError,
+			Message: fmt.Sprintf("vector service error: %v", err),
+		})
+		return
+	}
+	statusCode := mapStatusCode(resp.BaseResp.GetStatusCode())
+	c.JSON(http.StatusOK, model.Response{
+		Code:    statusCode,
+		Message: getBaseRespMessage(resp.BaseResp),
+		Data: map[string]interface{}{
+			"vectors":   resp.Vectors,
+			"total":     resp.Total,
+			"page":      resp.Page,
+			"page_size": resp.PageSize,
+		},
+	})
 }
 
 func (h *Handler) BatchDeleteVector(c *gin.Context) {

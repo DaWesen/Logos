@@ -11,7 +11,7 @@ services:
     ports:
       - "2182:2181"
     volumes:
-      - zk_data:/data
+      - zk-data:/data
     networks:
       - logos-network
 
@@ -25,7 +25,7 @@ services:
       - "2379:2379"
       - "2380:2380"
     volumes:
-      - etcd_data:/default.etcd
+      - etcd-data:/default.etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 5s
@@ -45,7 +45,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U logos"]
       interval: 5s
@@ -61,7 +61,7 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "redis123456", "ping"]
       interval: 5s
@@ -81,7 +81,7 @@ services:
       - "9000:9000"
       - "9901:9001"
     volumes:
-      - minio_data:/data
+      - minio-data:/data
     networks:
       - logos-network
 
@@ -100,11 +100,18 @@ services:
       MINIO_SECRET_ACCESS_KEY: minioadmin123
       MILVUS_GAUGE_PROMETHEUS_ENABLED: "false"
       COMMON_GRACEFULTIME: "5"
+      QUOTAANDLIMITS_FLUSHRATE_ENABLED: "false"
+      QUOTAANDLIMITS_DDL_ENABLED: "false"
+      QUOTAANDLIMITS_INDEXRATE_ENABLED: "false"
+      QUOTAANDLIMITS_COMPACTIONRATE_ENABLED: "false"
+      QUOTAANDLIMITS_DML_ENABLED: "false"
+      QUOTAANDLIMITS_DQL_ENABLED: "false"
+      QUOTAANDLIMITS_LIMITS_MAXINSERTSIZE: "-1"
     ports:
       - "19530:19530"
       - "9091:9091"
     volumes:
-      - milvus_data:/var/lib/milvus
+      - milvus-data:/var/lib/milvus 
     depends_on:
       - etcd
       - minio
@@ -129,7 +136,7 @@ services:
     ports:
       - "9093:9093"
     volumes:
-      - kafka_data:/kafka
+      - kafka-data:/kafka
     depends_on:
       - zookeeper
     healthcheck:
@@ -152,7 +159,7 @@ services:
       - "9200:9200"
       - "9300:9300"
     volumes:
-      - es_data:/usr/share/elasticsearch/data
+      - es-data:/usr/share/elasticsearch/data
     networks:
       - logos-network
 
@@ -164,11 +171,13 @@ services:
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_memory_heap_initial__size: "512m"
       NEO4J_dbms_memory_heap_max__size: "512m"
+      NEO4J_dbms_security_auth__enabled: "false"
+      NEO4J_dbms_memory_pagecache_size: "256m"
     ports:
       - "7474:7474"
       - "7687:7687"
     volumes:
-      - neo4j_data:/data
+      - neo4j-data:/data
     networks:
       - logos-network
 
@@ -183,7 +192,7 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
-      - "8889:8889"
+      - "8890:8889"
     depends_on:
       - jaeger
     networks:
@@ -196,7 +205,7 @@ services:
       - "9090:9090"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
+      - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -211,7 +220,14 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - grafana_data:/var/lib/grafana
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./config/grafana/dashboards/dashboard_providers.yaml:/etc/grafana/provisioning/dashboards/dashboard_providers.yaml
+      - ./config/grafana/dashboards/aim_overview.json:/var/lib/grafana/dashboards/aim_overview.json
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/aim_overview.json
     depends_on:
       - prometheus
     networks:
@@ -236,7 +252,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      - nginx_logs:/var/log/nginx
+      - nginx-logs:/var/log/nginx
     networks:
       - logos-network
 
@@ -267,6 +283,10 @@ services:
       JWT_SECRET: your-secret-key-change-in-production-please-use-strong-random-string
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: redis123456
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      PROCESS_SERVICE_HOST: process-service
     ports:
       - "8888:8888"
     depends_on:
@@ -745,15 +765,15 @@ networks:
     driver: bridge
 
 volumes:
-  etcd_data:
-  postgres_data:
-  redis_data:
-  milvus_data:
-  kafka_data:
-  es_data:
-  neo4j_data:
-  zk_data:
-  minio_data:
-  prometheus_data:
-  grafana_data:
-  nginx_logs:
+  etcd-data:
+  postgres-data:
+  redis-data:
+  milvus-data:
+  kafka-data:
+  es-data:
+  neo4j-data:
+  zk-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+  nginx-logs:

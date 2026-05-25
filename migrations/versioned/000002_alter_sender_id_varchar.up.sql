@@ -1,0 +1,1 @@
+ALTER TABLE messages ALTER COLUMN sender_id TYPE VARCHAR(64);

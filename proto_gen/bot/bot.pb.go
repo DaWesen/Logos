@@ -7,6 +7,7 @@
 package bot
 
 import (
+	fmt "fmt"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -1393,6 +1394,7 @@ type SendBotMessageResponse struct {
 	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	Data          *BotMessage            `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	ChatId        string                 `protobuf:"bytes,4,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"` // 返回 conversation ID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1448,11 +1450,19 @@ func (x *SendBotMessageResponse) GetData() *BotMessage {
 	return nil
 }
 
+func (x *SendBotMessageResponse) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
 // 流式响应
 type StreamBotResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
 	Done          bool                   `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"`
+	ChatId        string                 `protobuf:"bytes,3,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1499,6 +1509,13 @@ func (x *StreamBotResponse) GetDone() bool {
 		return x.Done
 	}
 	return false
+}
+
+func (x *StreamBotResponse) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
 }
 
 // 获取对话历史请求
@@ -2886,6 +2903,9 @@ type UserMemory struct {
 	BotId         string                 `protobuf:"bytes,3,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
 	Key           string                 `protobuf:"bytes,4,opt,name=key,proto3" json:"key,omitempty"`
 	Value         string                 `protobuf:"bytes,5,opt,name=value,proto3" json:"value,omitempty"`
+	Category      string                 `protobuf:"bytes,8,opt,name=category,proto3" json:"category,omitempty"`
+	Source        string                 `protobuf:"bytes,9,opt,name=source,proto3" json:"source,omitempty"`
+	Confidence    float64                `protobuf:"fixed64,10,opt,name=confidence,proto3" json:"confidence,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2955,6 +2975,27 @@ func (x *UserMemory) GetValue() string {
 		return x.Value
 	}
 	return ""
+}
+
+func (x *UserMemory) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *UserMemory) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *UserMemory) GetConfidence() float64 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
 }
 
 func (x *UserMemory) GetCreatedAt() *timestamppb.Timestamp {
@@ -3092,6 +3133,7 @@ type SetUserMemoryRequest struct {
 	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
 	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
 	Value         string                 `protobuf:"bytes,4,opt,name=value,proto3" json:"value,omitempty"`
+	Category      string                 `protobuf:"bytes,5,opt,name=category,proto3" json:"category,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3150,6 +3192,13 @@ func (x *SetUserMemoryRequest) GetKey() string {
 func (x *SetUserMemoryRequest) GetValue() string {
 	if x != nil {
 		return x.Value
+	}
+	return ""
+}
+
+func (x *SetUserMemoryRequest) GetCategory() string {
+	if x != nil {
+		return x.Category
 	}
 	return ""
 }
@@ -3213,6 +3262,62 @@ func (x *SetUserMemoryResponse) GetData() *UserMemory {
 		return x.Data
 	}
 	return nil
+}
+
+type DeleteUserMemoryRequest struct {
+	UserId        string `json:"user_id,omitempty"`
+	BotId         string `json:"bot_id,omitempty"`
+	Key           string `json:"key,omitempty"`
+}
+
+func (x *DeleteUserMemoryRequest) Reset()         { *x = DeleteUserMemoryRequest{} }
+func (x *DeleteUserMemoryRequest) String() string  { return fmt.Sprintf("%+v", x) }
+func (*DeleteUserMemoryRequest) ProtoMessage()     {}
+func (*DeleteUserMemoryRequest) ProtoReflect()     {}
+
+func (x *DeleteUserMemoryRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *DeleteUserMemoryRequest) GetBotId() string {
+	if x != nil {
+		return x.BotId
+	}
+	return ""
+}
+
+func (x *DeleteUserMemoryRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+type DeleteUserMemoryResponse struct {
+	Code          int32  `json:"code,omitempty"`
+	Message       string `json:"message,omitempty"`
+}
+
+func (x *DeleteUserMemoryResponse) Reset()         { *x = DeleteUserMemoryResponse{} }
+func (x *DeleteUserMemoryResponse) String() string  { return fmt.Sprintf("%+v", x) }
+func (*DeleteUserMemoryResponse) ProtoMessage()     {}
+func (*DeleteUserMemoryResponse) ProtoReflect()     {}
+
+func (x *DeleteUserMemoryResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *DeleteUserMemoryResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
 }
 
 var File_ai_bot_proto protoreflect.FileDescriptor
@@ -3347,14 +3452,16 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x06stream\x18\x06 \x01(\bR\x06stream\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"n\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x87\x01\n" +
 	"\x16SendBotMessageResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12&\n" +
-	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.BotMessageR\x04data\"A\n" +
+	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.BotMessageR\x04data\x12\x17\n" +
+	"\achat_id\x18\x04 \x01(\tR\x06chatId\"Z\n" +
 	"\x11StreamBotResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x12\n" +
-	"\x04done\x18\x02 \x01(\bR\x04done\"\x99\x01\n" +
+	"\x04done\x18\x02 \x01(\bR\x04done\x12\x17\n" +
+	"\achat_id\x18\x03 \x01(\tR\x06chatId\"\x99\x01\n" +
 	"\x14GetBotHistoryRequest\x12\x15\n" +
 	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x14\n" +

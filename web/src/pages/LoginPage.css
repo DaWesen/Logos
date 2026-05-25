@@ -1,0 +1,147 @@
+.login-page {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #0a0e1a 0%, #0f172a 40%, #1a1040 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-bg-decoration {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.login-circle {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.15;
+}
+
+.login-circle-1 {
+  width: 400px;
+  height: 400px;
+  background: var(--ba-blue);
+  top: -100px;
+  right: -100px;
+}
+
+.login-circle-2 {
+  width: 300px;
+  height: 300px;
+  background: var(--ba-cyan);
+  bottom: -80px;
+  left: -80px;
+}
+
+.login-circle-3 {
+  width: 200px;
+  height: 200px;
+  background: var(--ba-accent);
+  top: 50%;
+  left: 10%;
+  opacity: 0.08;
+}
+
+.login-card {
+  width: 400px;
+  padding: 40px;
+  position: relative;
+  z-index: 1;
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.login-logo-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-cyan));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-title {
+  font-size: 32px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.login-subtitle {
+  color: var(--ba-text-light);
+  font-size: 14px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.login-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ba-text);
+}
+
+.login-error {
+  padding: 10px 14px;
+  background: rgba(255, 107, 138, 0.1);
+  border: 1px solid rgba(255, 107, 138, 0.3);
+  border-radius: var(--ba-radius-sm);
+  color: var(--ba-accent);
+  font-size: 13px;
+}
+
+.login-submit {
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  margin-top: 8px;
+  border-radius: var(--ba-radius);
+}
+
+.login-footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--ba-text-light);
+}
+
+.login-switch {
+  background: none;
+  border: none;
+  color: var(--ba-blue);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+
+.login-switch:hover {
+  text-decoration: underline;
+}

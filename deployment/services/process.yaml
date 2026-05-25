@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: process
+  namespace: logos
+  labels:
+    app: process
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: process
+  template:
+    metadata:
+      labels:
+        app: process
+        domain: ai
+    spec:
+      containers:
+        - name: process
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./process"]
+          ports:
+            - containerPort: 9016
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9016
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: process-svc
+  namespace: logos
+spec:
+  selector:
+    app: process
+  ports:
+    - port: 9016
+      targetPort: 9016

@@ -1,6 +1,10 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // FriendshipStatus 好友关系状态
 type FriendshipStatus string
@@ -23,46 +27,46 @@ const (
 // Friendship 好友关系模型
 type Friendship struct {
 	ID        string           `gorm:"primaryKey;size:100" json:"id"`
-	UserID    string           `gorm:"index:idx_user_friend;size:100" json:"user_id"`
-	FriendID  string           `gorm:"index:idx_user_friend;size:100" json:"friend_id"`
+	UserID    int64            `gorm:"index:idx_user_friend;not null" json:"user_id"`
+	FriendID  int64            `gorm:"index:idx_user_friend;not null" json:"friend_id"`
 	Status    FriendshipStatus `gorm:"size:20;index;default:pending" json:"status"`
 	Remark    string           `gorm:"size:100" json:"remark"`
 	GroupID   string           `gorm:"size:100;index" json:"group_id"` // 分组ID
-	CreatedAt int64            `json:"created_at"`
-	UpdatedAt int64            `json:"updated_at"`
+	CreatedAt time.Time        `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time        `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt gorm.DeletedAt   `gorm:"index" json:"-"`
 }
 
 // FriendRequest 好友申请模型
 type FriendRequest struct {
 	ID          string              `gorm:"primaryKey;size:100" json:"id"`
-	FromUserID  string              `gorm:"index;size:100" json:"from_user_id"`
-	ToUserID    string              `gorm:"index;size:100" json:"to_user_id"`
+	FromUserID  int64               `gorm:"index;not null" json:"from_user_id"`
+	ToUserID    int64               `gorm:"index;not null" json:"to_user_id"`
 	Remark      string              `gorm:"size:100" json:"remark"`
 	Message     string              `gorm:"size:200" json:"message"`
 	Status      FriendRequestStatus `gorm:"size:20;index;default:pending" json:"status"`
-	ProcessedAt int64               `json:"processed_at"`
-	CreatedAt   int64               `json:"created_at"`
-	UpdatedAt   int64               `json:"updated_at"`
+	ProcessedAt *time.Time          `json:"processed_at"`
+	CreatedAt   time.Time           `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time           `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // FriendGroup 好友分组模型
 type FriendGroup struct {
-	ID        string `gorm:"primaryKey;size:100" json:"id"`
-	UserID    string `gorm:"index;size:100" json:"user_id"`
-	Name      string `gorm:"size:50" json:"name"`
-	Sort      int    `gorm:"default:0" json:"sort"` // 排序
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID        string    `gorm:"primaryKey;size:100" json:"id"`
+	UserID    int64     `gorm:"index;not null" json:"user_id"`
+	Name      string    `gorm:"size:50" json:"name"`
+	Sort      int       `gorm:"default:0" json:"sort"` // 排序
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // FriendGroupMember 分组成员关系表
 type FriendGroupMember struct {
-	ID        string `gorm:"primaryKey;size:100" json:"id"`
-	UserID    string `gorm:"index;size:100" json:"user_id"`
-	FriendID  string `gorm:"index;size:100" json:"friend_id"`
-	GroupID   string `gorm:"index;size:100" json:"group_id"`
-	CreatedAt int64  `json:"created_at"`
+	ID        string    `gorm:"primaryKey;size:100" json:"id"`
+	UserID    int64     `gorm:"index;not null" json:"user_id"`
+	FriendID  int64     `gorm:"index;not null" json:"friend_id"`
+	GroupID   string    `gorm:"index;size:100" json:"group_id"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
 // AutoMigrate 自动迁移

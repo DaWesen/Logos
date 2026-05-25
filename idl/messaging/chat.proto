@@ -40,6 +40,7 @@ enum GroupMemberRole {
   GROUP_MEMBER_ROLE_OWNER = 1;
   GROUP_MEMBER_ROLE_ADMIN = 2;
   GROUP_MEMBER_ROLE_MEMBER = 3;
+  GROUP_MEMBER_ROLE_BOT = 4;
 }
 
 // 禁言类型
@@ -64,18 +65,22 @@ message Message {
   google.protobuf.Timestamp updated_at = 10;
   string reply_to_message_id = 11;
   repeated string mention_user_ids = 12;
+  string media_url = 13;
+  string media_meta = 14;
 }
 
 // 群组
 message Group {
   string id = 1;
   string name = 2;
+  string avatar = 10;
   string owner_id = 3;
   repeated string member_ids = 4;
   map<string, string> metadata = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
   string announcement = 8;
+  int32 member_count = 9;
 }
 
 // 群组成员
@@ -315,6 +320,103 @@ message GetGroupResponse {
   Group data = 3;
 }
 
+// 会话项
+message ConversationItem {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  string name = 3;
+  string avatar = 4;
+  Message last_message = 5;
+  int32 unread_count = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  bool is_pinned = 8;
+  bool is_muted = 9;
+  bool is_friend = 10;
+  bool is_blocked = 11;
+}
+
+// 获取会话列表请求
+message GetConversationListRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+// 获取会话列表响应
+message GetConversationListResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated ConversationItem conversations = 3;
+  int32 total = 4;
+}
+
+// 获取未读消息数请求
+message GetUnreadCountRequest {
+  repeated string chat_ids = 1;
+}
+
+// 单个会话未读数
+message ChatUnreadCount {
+  string chat_id = 1;
+  int32 count = 2;
+}
+
+// 获取未读消息数响应
+message GetUnreadCountResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated ChatUnreadCount counts = 3;
+  int32 total = 4;
+}
+
+// 转发消息请求
+message ForwardMessageRequest {
+  string message_id = 1;
+  repeated string target_chat_ids = 2;
+  ChatType target_chat_type = 3;
+}
+
+// 转发消息响应
+message ForwardMessageResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Message forwarded_messages = 3;
+}
+
+// 删除聊天请求
+message DeleteChatRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+}
+
+// 删除聊天响应
+message DeleteChatResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 清理聊天记录请求
+message DeleteChatHistoryRequest {
+  string chat_id = 1;
+}
+
+// 清理聊天记录响应
+message DeleteChatHistoryResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 更新群头像请求
+message UpdateGroupAvatarRequest {
+  string group_id = 1;
+  string avatar = 2;
+}
+
+// 更新群头像响应
+message UpdateGroupAvatarResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
 // 聊天服务
 service ChatService {
   // 发送消息
@@ -367,4 +469,22 @@ service ChatService {
   
   // 获取群组信息
   rpc GetGroup(GetGroupRequest) returns (GetGroupResponse);
+  
+  // 获取会话列表
+  rpc GetConversationList(GetConversationListRequest) returns (GetConversationListResponse);
+  
+  // 获取未读消息数
+  rpc GetUnreadCount(GetUnreadCountRequest) returns (GetUnreadCountResponse);
+  
+  // 转发消息
+  rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);
+  
+  // 删除聊天
+  rpc DeleteChat(DeleteChatRequest) returns (DeleteChatResponse);
+  
+  // 清理聊天记录
+  rpc DeleteChatHistory(DeleteChatHistoryRequest) returns (DeleteChatHistoryResponse);
+
+  // 更新群头像
+  rpc UpdateGroupAvatar(UpdateGroupAvatarRequest) returns (UpdateGroupAvatarResponse);
 }

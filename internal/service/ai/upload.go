@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -285,4 +286,37 @@ func getMimeType(fileType string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func (h *FileUploadHandler) ProxyMinioFile(c *gin.Context) {
+	objectKey := c.Param("path")
+	if objectKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "path is required"})
+		return
+	}
+	objectKey = strings.TrimPrefix(objectKey, "/")
+
+	url, err := h.minioManager.GetFileURL(h.bucket, objectKey, oneDayInSeconds)
+	if err != nil {
+		logger.Error("Failed to get file URL for proxy", logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to get file"})
+		return
+	}
+
+	resp, err := http.Get(url)
+	if err != nil {
+		logger.Error("Failed to fetch file from minio", logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to fetch file"})
+		return
+	}
+	defer resp.Body.Close()
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "charset") {
+		contentType += "; charset=utf-8"
+	}
+	c.DataFromReader(resp.StatusCode, resp.ContentLength, contentType, resp.Body, nil)
 }

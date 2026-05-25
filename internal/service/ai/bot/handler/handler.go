@@ -2,13 +2,18 @@ package handler
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"Logos/internal/service/ai/bot/model"
 	"Logos/internal/service/ai/bot/service"
 	"Logos/pkg/logger"
+	"Logos/pkg/strutil"
 	pb "Logos/proto_gen/bot"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -133,6 +138,24 @@ func (s *BotServiceImpl) CreateBot(ctx context.Context, req *pb.CreateBotRequest
 		provider = "qianfan"
 	case pb.ModelProvider_MODEL_PROVIDER_PLATFORM:
 		provider = "platform"
+	default:
+		if req.Provider != pb.ModelProvider_MODEL_PROVIDER_UNSPECIFIED {
+			provider = req.Provider.String()
+		}
+	}
+
+	if provider == "" {
+		provider = "platform"
+	}
+
+	if provider == "openai" && req.Model != "" {
+		if strings.HasPrefix(req.Model, "deepseek") {
+			provider = "deepseek"
+		} else if strings.HasPrefix(req.Model, "claude") {
+			provider = "claude"
+		} else if strings.HasPrefix(req.Model, "ernie") || strings.HasPrefix(req.Model, "wenxin") {
+			provider = "qianfan"
+		}
 	}
 
 	bot, err := s.BotService.CreateBot(ctx, req.UserId, req.Name, req.Description, req.Avatar, botType, provider, req.Model, req.ApiKey, req.BaseUrl, req.EmbeddingModel, req.SystemPrompt, req.Config)
@@ -169,13 +192,16 @@ func convertModelUserMemoryToProtoUserMemory(um *model.UserMemory) *pb.UserMemor
 		return nil
 	}
 	return &pb.UserMemory{
-		Id:        um.ID,
-		UserId:    um.UserID,
-		BotId:     um.BotID,
-		Key:       um.Key,
-		Value:     um.Value,
-		CreatedAt: timestamppb.New(um.CreatedAt),
-		UpdatedAt: timestamppb.New(um.UpdatedAt),
+		Id:         um.ID,
+		UserId:     um.UserID,
+		BotId:      um.BotID,
+		Key:        um.Key,
+		Value:      um.Value,
+		Category:   um.Category,
+		Source:     um.Source,
+		Confidence: um.Confidence,
+		CreatedAt:  timestamppb.New(um.CreatedAt),
+		UpdatedAt:  timestamppb.New(um.UpdatedAt),
 	}
 }
 
@@ -252,9 +278,9 @@ func (s *BotServiceImpl) StreamBotMessage(req *pb.SendBotMessageRequest, stream 
 	ctx := stream.Context()
 	userID := req.UserId
 
-	err := s.BotService.SendMessageStream(ctx, userID, req.BotId, req.ChatId, req.Content, req.Metadata, func(chunk string) error {
+	chatID, err := s.BotService.SendMessageStream(ctx, userID, req.BotId, req.ChatId, req.Content, req.Metadata, func(chunk string) error {
 		return stream.Send(&pb.StreamBotResponse{
-			Content: chunk,
+			Content: strutil.CleanInvalidUTF8(chunk),
 			Done:    false,
 		})
 	})
@@ -269,6 +295,7 @@ func (s *BotServiceImpl) StreamBotMessage(req *pb.SendBotMessageRequest, stream 
 	return stream.Send(&pb.StreamBotResponse{
 		Content: "",
 		Done:    true,
+		ChatId:  chatID,
 	})
 }
 
@@ -294,8 +321,27 @@ func (s *BotServiceImpl) GetUserMemory(ctx context.Context, req *pb.GetUserMemor
 func (s *BotServiceImpl) SetUserMemory(ctx context.Context, req *pb.SetUserMemoryRequest) (*pb.SetUserMemoryResponse, error) {
 	resp := &pb.SetUserMemoryResponse{}
 
-	if err := s.BotService.SetUserMemory(ctx, req.UserId, req.BotId, req.Key, req.Value); err != nil {
+	category := req.Category
+	if category == "" {
+		category = "fact"
+	}
+	if err := s.BotService.SetUserMemoryWithCategory(ctx, req.UserId, req.BotId, req.Key, req.Value, category); err != nil {
 		logger.Error("设置用户记忆失败", logger.ErrorField(err))
+		resp.Code = 1
+		resp.Message = err.Error()
+		return resp, nil
+	}
+
+	resp.Code = 0
+	resp.Message = "success"
+	return resp, nil
+}
+
+func (s *BotServiceImpl) DeleteUserMemory(ctx context.Context, req *pb.DeleteUserMemoryRequest) (*pb.DeleteUserMemoryResponse, error) {
+	resp := &pb.DeleteUserMemoryResponse{}
+
+	if err := s.BotService.DeleteUserMemory(ctx, req.UserId, req.BotId, req.Key); err != nil {
+		logger.Error("删除用户记忆失败", logger.ErrorField(err))
 		resp.Code = 1
 		resp.Message = err.Error()
 		return resp, nil
@@ -412,7 +458,7 @@ func (s *BotServiceImpl) SendBotMessage(ctx context.Context, req *pb.SendBotMess
 	userID := req.UserId
 
 	if req.Stream {
-		content, err := s.BotService.SendMessage(ctx, userID, req.BotId, req.ChatId, req.Content, true, req.Metadata)
+		content, chatID, cost, tokens, err := s.BotService.SendMessage(ctx, userID, req.BotId, req.ChatId, req.Content, true, req.Metadata)
 		if err != nil {
 			logger.Error("发送消息失败", logger.ErrorField(err))
 			return &pb.StreamBotResponse{
@@ -420,13 +466,15 @@ func (s *BotServiceImpl) SendBotMessage(ctx context.Context, req *pb.SendBotMess
 				Done:    true,
 			}, nil
 		}
+		grpc.SetHeader(ctx, metadata.Pairs("x-cost", fmt.Sprintf("%.10f", cost), "x-tokens", fmt.Sprintf("%d", tokens)))
 		return &pb.StreamBotResponse{
 			Content: content,
 			Done:    true,
+			ChatId:  chatID,
 		}, nil
 	}
 
-	content, err := s.BotService.SendMessage(ctx, userID, req.BotId, req.ChatId, req.Content, false, req.Metadata)
+	content, chatID, cost, tokens, err := s.BotService.SendMessage(ctx, userID, req.BotId, req.ChatId, req.Content, false, req.Metadata)
 	if err != nil {
 		logger.Error("发送消息失败", logger.ErrorField(err))
 		return &pb.StreamBotResponse{
@@ -435,9 +483,11 @@ func (s *BotServiceImpl) SendBotMessage(ctx context.Context, req *pb.SendBotMess
 		}, nil
 	}
 
+	grpc.SetHeader(ctx, metadata.Pairs("x-cost", fmt.Sprintf("%.10f", cost), "x-tokens", fmt.Sprintf("%d", tokens)))
 	return &pb.StreamBotResponse{
 		Content: content,
 		Done:    true,
+		ChatId:  chatID,
 	}, nil
 }
 

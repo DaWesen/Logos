@@ -41,7 +41,7 @@ func (h *Handler) Search(c *gin.Context) {
 
 func (h *Handler) AddDocument(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.AddDocumentReq
@@ -63,7 +63,7 @@ func (h *Handler) AddDocument(c *gin.Context) {
 
 func (h *Handler) UpdateDocument(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.UpdateDocumentReq
@@ -85,7 +85,7 @@ func (h *Handler) UpdateDocument(c *gin.Context) {
 
 func (h *Handler) DeleteDocument(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.DeleteDocumentReq
@@ -108,7 +108,7 @@ func (h *Handler) DeleteDocument(c *gin.Context) {
 func (h *Handler) GetDocument(c *gin.Context) {
 	id := c.Param("id")
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.SearchClient.GetDocument(context.Background(), &pb.GetByIdReq{Id: id})
@@ -125,7 +125,7 @@ func (h *Handler) GetDocument(c *gin.Context) {
 
 func (h *Handler) BatchAddDocuments(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchAddDocumentReq
@@ -147,7 +147,7 @@ func (h *Handler) BatchAddDocuments(c *gin.Context) {
 
 func (h *Handler) BatchDeleteDocuments(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchDeleteDocumentReq
@@ -171,7 +171,7 @@ func (h *Handler) CreateIndex(c *gin.Context) {
 	indexTypeStr := c.Param("type")
 	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.SearchClient.CreateIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
@@ -190,7 +190,7 @@ func (h *Handler) DeleteIndex(c *gin.Context) {
 	indexTypeStr := c.Param("type")
 	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.SearchClient.DeleteIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
@@ -209,7 +209,7 @@ func (h *Handler) RefreshIndex(c *gin.Context) {
 	indexTypeStr := c.Param("type")
 	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.SearchClient.RefreshIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
@@ -226,7 +226,7 @@ func (h *Handler) RefreshIndex(c *gin.Context) {
 
 func (h *Handler) GetIndexStats(c *gin.Context) {
 	if h.SearchClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "���������ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.SearchClient.GetIndexStats(context.Background(), &pb.EmptyReq{})

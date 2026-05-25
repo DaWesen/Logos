@@ -26,6 +26,15 @@ enum ModerationCategory {
   MODERATION_CATEGORY_ILLEGAL = 7;
 }
 
+// AI模型配置
+message ModelConfig {
+  string provider = 1;
+  string model = 2;
+  string api_key = 3;
+  string base_url = 4;
+  double temperature = 5;
+}
+
 // 审核记录
 message ModerationRecord {
   string id = 1;
@@ -44,6 +53,7 @@ message TranslateRequest {
   string source_lang = 2;
   string target_lang = 3;
   string content_id = 4;
+  ModelConfig model_config = 5;
 }
 
 // 翻译响应
@@ -60,6 +70,7 @@ message ModerateContentRequest {
   string content = 1;
   string content_id = 2;
   string content_type = 3;
+  ModelConfig model_config = 4;
 }
 
 // 审核响应

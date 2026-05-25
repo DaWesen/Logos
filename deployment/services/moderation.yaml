@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: moderation
+  namespace: logos
+  labels:
+    app: moderation
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: moderation
+  template:
+    metadata:
+      labels:
+        app: moderation
+        domain: ai
+    spec:
+      containers:
+        - name: moderation
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./moderation"]
+          ports:
+            - containerPort: 9019
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9019
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: moderation-svc
+  namespace: logos
+spec:
+  selector:
+    app: moderation
+  ports:
+    - port: 9019
+      targetPort: 9019

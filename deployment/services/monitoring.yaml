@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring
+  namespace: logos
+  labels:
+    app: monitoring
+    domain: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+        domain: platform
+    spec:
+      containers:
+        - name: monitoring
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./monitoring"]
+          ports:
+            - containerPort: 9010
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9010
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-svc
+  namespace: logos
+spec:
+  selector:
+    app: monitoring
+  ports:
+    - port: 9010
+      targetPort: 9010

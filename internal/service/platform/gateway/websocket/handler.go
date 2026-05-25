@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"Logos/internal/service/messaging/types"
+	"Logos/internal/service/platform/gateway"
+	"Logos/pkg/client"
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
@@ -29,17 +32,19 @@ var upgrader = websocket.Upgrader{
 // Handler 处理 WebSocket 连接（更简化，专注于连接管理和转发）
 type Handler struct {
 	manager    *ConnectionManager
+	unified    *gateway.UnifiedConnectionManager
 	jwtManager *jwt.JWTManager
 	eventBus   *types.EventBus
+	userClient *client.UserClient
 	ctx        context.Context
 	cancel     context.CancelFunc
 }
 
-// NewHandler 创建新的 WebSocket 处理器（简化，无额外依赖）
 func NewHandler() *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Handler{
 		manager:    NewConnectionManager(),
+		unified:    gateway.GetUnifiedConnectionManager(),
 		jwtManager: jwt.NewJWTManager(),
 		eventBus:   types.GetEventBus(),
 		ctx:        ctx,
@@ -49,14 +54,18 @@ func NewHandler() *Handler {
 	return h
 }
 
+func (h *Handler) SetUserClient(uc *client.UserClient) {
+	h.userClient = uc
+}
+
 // startConsumers 启动 Kafka 消费者
 func (h *Handler) startConsumers() {
 	go func() {
 		chatHandler := func(msg *mq.Message) error {
 			return h.handleChatEvent(msg)
 		}
-		if err := h.eventBus.SubscribeChatEvents(h.ctx, chatHandler); err != nil {
-			logger.Error("订阅Chat事件失败", logger.ErrorField(err))
+		if err := h.eventBus.SubscribeChatOutgoing(h.ctx, chatHandler); err != nil {
+			logger.Error("订阅ChatOutgoing事件失败", logger.ErrorField(err))
 		}
 	}()
 
@@ -81,41 +90,73 @@ func (h *Handler) startConsumers() {
 
 // handleChatEvent 处理聊天事件（转发给接收者）
 func (h *Handler) handleChatEvent(msg *mq.Message) error {
-	logger.Info("收到聊天事件", logger.StringField("topic", msg.Topic))
+	logger.Info("收到出站聊天事件", logger.StringField("topic", msg.Topic))
 
-	// 先尝试解析为 TypingEvent
-	if typingEvent, err := types.TypingEventFromJSON(msg.Value); err == nil && typingEvent.UserID != "" {
-		// 只有当有 RecipientIDs 时才处理（这是 Chat Service 重新发布的完整事件）
+	eventType := types.DetectEventType(msg.Value)
+
+	switch eventType {
+	case types.EventTypeTyping:
+		typingEvent, err := types.TypingEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析输入状态事件失败", logger.ErrorField(err))
+			return err
+		}
 		if len(typingEvent.RecipientIDs) > 0 {
 			return h.handleTypingEvent(typingEvent)
 		}
-		logger.Debug("输入状态事件没有 RecipientIDs，跳过（等待 Chat Service 处理后重新发布）",
-			logger.StringField("chat_id", typingEvent.ChatID),
-			logger.StringField("user_id", typingEvent.UserID))
-		return nil
-	}
 
-	// 然后尝试解析为 MessageReadEvent
-	if readEvent, err := types.MessageReadEventFromJSON(msg.Value); err == nil && readEvent.ReaderID != "" {
-		// 只有当有 RecipientIDs 时才处理
+	case types.EventTypeMessageRead:
+		readEvent, err := types.MessageReadEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析已读回执事件失败", logger.ErrorField(err))
+			return err
+		}
 		if len(readEvent.RecipientIDs) > 0 {
 			return h.handleMessageReadEvent(readEvent)
 		}
-		logger.Debug("已读回执事件没有 RecipientIDs，跳过",
-			logger.StringField("chat_id", readEvent.ChatID),
-			logger.StringField("reader_id", readEvent.ReaderID))
-		return nil
-	}
 
-	// 否则解析为 MessageEvent
-	event, err := types.MessageEventFromJSON(msg.Value)
-	if err != nil {
-		logger.Error("解析消息事件失败", logger.ErrorField(err))
-		return err
-	}
+	case types.EventTypeMessageWithdraw:
+		withdrawEvent, err := types.MessageWithdrawEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析撤回事件失败", logger.ErrorField(err))
+			return err
+		}
+		return h.handleMessageWithdrawEvent(withdrawEvent)
 
-	// 如果是 MessageEvent 且有 RecipientIDs，则作为聊天消息转发
-	if len(event.RecipientIDs) > 0 {
+	case types.EventTypeMessage, "":
+		event, err := types.MessageEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析消息事件失败", logger.ErrorField(err))
+			return err
+		}
+
+		if len(event.RecipientIDs) == 0 {
+			logger.Warn("出站消息事件缺少RecipientIDs，跳过",
+				logger.StringField("msg_id", event.ID),
+				logger.StringField("chat_id", event.ChatID))
+			return nil
+		}
+
+		if h.userClient != nil && event.SenderID != "" && event.SenderID != "system" && !strings.HasPrefix(event.SenderID, "bot_") {
+			if uid, parseErr := strconv.ParseInt(event.SenderID, 10, 64); parseErr == nil {
+				userInfo, userErr := h.userClient.GetUserInfo(context.Background(), uid)
+				if userErr == nil {
+					if event.SenderName == "" {
+						event.SenderName = userInfo.Username
+					}
+					if event.SenderAvatar == "" && userInfo.Avatar != "" {
+						event.SenderAvatar = userInfo.Avatar
+					}
+				}
+			}
+		}
+
+		if event.ChatType == types.ChatTypePrivate {
+			logger.Info("\x1b[36m🔴 5️⃣ [Kafka-Gateway] 收到 outgoing 私聊消息\x1b[0m",
+				logger.StringField("msg_id", event.ID),
+				logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
+		}
+
 		eventData := OutgoingMessage{
 			Type:      MessageTypeMessage,
 			Payload:   event,
@@ -128,8 +169,55 @@ func (h *Handler) handleChatEvent(msg *mq.Message) error {
 			return err
 		}
 
+		// 🔴 6️⃣ 推送到前端 WebSocket
+		if event.ChatType == types.ChatTypePrivate {
+			logger.Info("\x1b[31m🔴 6️⃣ [Gateway-前端] 推送私聊消息到 WebSocket\x1b[0m",
+				logger.StringField("msg_id", event.ID),
+				logger.StringField("recipient_ids", strings.Join(event.RecipientIDs, ",")),
+				logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
+		}
+
 		h.broadcastToRelevantUsers(event, data)
 	}
+
+	return nil
+}
+
+// handleMessageWithdrawEvent 处理消息撤回事件
+func (h *Handler) handleMessageWithdrawEvent(event *types.MessageWithdrawEvent) error {
+	logger.Info("收到消息撤回事件",
+		logger.StringField("chat_id", event.ChatID),
+		logger.StringField("message_id", event.MessageID),
+		logger.StringField("sender_id", event.SenderID),
+		logger.IntField("recipient_count", len(event.RecipientIDs)))
+
+	eventData := OutgoingMessage{
+		Type: MessageTypeWithdraw,
+		Payload: map[string]interface{}{
+			"message_id": event.MessageID,
+			"chat_id":    event.ChatID,
+			"chat_type":  event.ChatType,
+			"sender_id":  event.SenderID,
+			"timestamp":  event.Timestamp.UnixMilli(),
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	data, err := json.Marshal(eventData)
+	if err != nil {
+		logger.Error("序列化撤回事件失败", logger.ErrorField(err))
+		return err
+	}
+
+	if len(event.RecipientIDs) > 0 {
+		h.unified.SendToUsers(event.RecipientIDs, data)
+	} else {
+		h.unified.BroadcastMessageExcept(data, event.SenderID)
+	}
+
+	logger.Info("撤回通知已转发",
+		logger.StringField("message_id", event.MessageID),
+		logger.IntField("recipient_count", len(event.RecipientIDs)))
 
 	return nil
 }
@@ -159,23 +247,18 @@ func (h *Handler) handleMessageReadEvent(event *types.MessageReadEvent) error {
 		return err
 	}
 
-	// 优先使用 RecipientIDs 进行精确转发
 	if len(event.RecipientIDs) > 0 {
 		logger.Debug("使用 RecipientIDs 进行精确转发",
 			logger.IntField("count", len(event.RecipientIDs)))
-		for _, uid := range event.RecipientIDs {
-			h.manager.SendMessageToUser(uid, data)
-		}
+		h.unified.SendToUsers(event.RecipientIDs, data)
 	} else {
-		// 回退逻辑：根据会话类型确定转发目标
-		if strings.HasPrefix(event.ChatID, "private_") {
-			// 单聊：解析出对方用户 ID 并精确转发
+		parts := strings.Split(event.ChatID, "_")
+		if len(parts) == 2 {
 			h.forwardReadReceiptForPrivateChat(event, data)
 		} else {
-			// 群聊/广播/其他：使用广播给除阅读者外的所有人
 			logger.Debug("群聊/其他类型会话，使用广播转发已读回执",
 				logger.StringField("chat_id", event.ChatID))
-			h.manager.BroadcastMessageExcept(data, event.ReaderID)
+			h.unified.BroadcastMessageExcept(data, event.ReaderID)
 		}
 	}
 
@@ -210,23 +293,18 @@ func (h *Handler) handleTypingEvent(event *types.TypingEvent) error {
 		return err
 	}
 
-	// 优先使用 RecipientIDs 进行精确转发
 	if len(event.RecipientIDs) > 0 {
 		logger.Debug("使用 RecipientIDs 进行精确转发",
 			logger.IntField("count", len(event.RecipientIDs)))
-		for _, uid := range event.RecipientIDs {
-			h.manager.SendMessageToUser(uid, data)
-		}
+		h.unified.SendToUsers(event.RecipientIDs, data)
 	} else {
-		// 回退逻辑
-		if strings.HasPrefix(event.ChatID, "private_") {
-			// 单聊：解析出对方
+		parts := strings.Split(event.ChatID, "_")
+		if len(parts) == 2 {
 			h.forwardTypingForPrivateChat(event, data)
 		} else {
-			// 群聊/其他：广播给除输入者外的所有人
 			logger.Debug("群聊/其他类型会话，使用广播转发输入状态",
 				logger.StringField("chat_id", event.ChatID))
-			h.manager.BroadcastMessageExcept(data, event.UserID)
+			h.unified.BroadcastMessageExcept(data, event.UserID)
 		}
 	}
 
@@ -239,16 +317,15 @@ func (h *Handler) handleTypingEvent(event *types.TypingEvent) error {
 
 // forwardTypingForPrivateChat 处理单聊输入状态的精确转发
 func (h *Handler) forwardTypingForPrivateChat(event *types.TypingEvent, data []byte) {
-	// 单聊 ChatID 格式: private_{userID1}_{userID2}
 	parts := strings.Split(event.ChatID, "_")
-	if len(parts) != 3 {
+	if len(parts) != 2 {
 		logger.Warn("单聊 ChatID 格式错误", logger.StringField("chat_id", event.ChatID))
-		h.manager.BroadcastMessageExcept(data, event.UserID)
+		h.unified.BroadcastMessageExcept(data, event.UserID)
 		return
 	}
 
-	user1 := parts[1]
-	user2 := parts[2]
+	user1 := parts[0]
+	user2 := parts[1]
 
 	var otherUser string
 	switch event.UserID {
@@ -263,7 +340,7 @@ func (h *Handler) forwardTypingForPrivateChat(event *types.TypingEvent, data []b
 		return
 	}
 
-	h.manager.SendMessageToUser(otherUser, data)
+	h.unified.SendToUser(otherUser, data)
 	logger.Debug("输入状态已精确转发给单聊对方",
 		logger.StringField("user_id", event.UserID),
 		logger.StringField("recipient_id", otherUser),
@@ -272,19 +349,16 @@ func (h *Handler) forwardTypingForPrivateChat(event *types.TypingEvent, data []b
 
 // forwardReadReceiptForPrivateChat 处理单聊已读回执的精确转发
 func (h *Handler) forwardReadReceiptForPrivateChat(event *types.MessageReadEvent, data []byte) {
-	// 单聊 ChatID 格式: private_{userID1}_{userID2}
 	parts := strings.Split(event.ChatID, "_")
-	if len(parts) != 3 {
+	if len(parts) != 2 {
 		logger.Warn("单聊 ChatID 格式错误", logger.StringField("chat_id", event.ChatID))
-		// 回退到广播
-		h.manager.BroadcastMessageExcept(data, event.ReaderID)
+		h.unified.BroadcastMessageExcept(data, event.ReaderID)
 		return
 	}
 
-	user1 := parts[1]
-	user2 := parts[2]
+	user1 := parts[0]
+	user2 := parts[1]
 
-	// 确定对方是谁
 	var otherUser string
 	switch event.ReaderID {
 	case user1:
@@ -298,8 +372,7 @@ func (h *Handler) forwardReadReceiptForPrivateChat(event *types.MessageReadEvent
 		return
 	}
 
-	// 精确转发给对方
-	h.manager.SendMessageToUser(otherUser, data)
+	h.unified.SendToUser(otherUser, data)
 	logger.Debug("已读回执已精确转发给单聊对方",
 		logger.StringField("reader_id", event.ReaderID),
 		logger.StringField("recipient_id", otherUser),
@@ -328,7 +401,7 @@ func (h *Handler) handleIMEvent(msg *mq.Message) error {
 	}
 
 	if event.UserID != "" {
-		h.manager.BroadcastMessage(data)
+		h.unified.BroadcastMessage(data)
 	}
 	return nil
 }
@@ -355,32 +428,30 @@ func (h *Handler) handleNotificationEvent(msg *mq.Message) error {
 	}
 
 	if event.UserID != "" {
-		h.manager.SendMessageToUser(event.UserID, data)
+		h.unified.SendToUser(event.UserID, data)
 	}
 	return nil
 }
 
 // broadcastToRelevantUsers 根据事件中的接收者列表转发消息
 func (h *Handler) broadcastToRelevantUsers(event *types.MessageEvent, data []byte) {
-	// 如果事件中包含接收者列表，直接使用
 	if len(event.RecipientIDs) > 0 {
-		for _, userID := range event.RecipientIDs {
-			h.manager.SendMessageToUser(userID, data)
-		}
+		h.unified.SendToUsers(event.RecipientIDs, data)
 		logger.Debug("message broadcast completed",
 			logger.StringField("chat_id", event.ChatID),
 			logger.IntField("recipient_count", len(event.RecipientIDs)))
 		return
 	}
 
-	// 降级处理：广播给除发送者外的所有在线用户
 	logger.Warn("no recipient_ids in event, fallback to broadcast",
 		logger.StringField("chat_id", event.ChatID))
-	h.manager.BroadcastMessageExcept(data, event.SenderID)
+	h.unified.BroadcastMessageExcept(data, event.SenderID)
 }
 
 // HandleWebSocket 处理 WebSocket 升级和连接
 func (h *Handler) HandleWebSocket(c *gin.Context) {
+	queryToken := c.Query("token")
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logger.Error("WebSocket 升级失败", logger.ErrorField(err))
@@ -391,6 +462,62 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		IsClosed: false,
+	}
+
+	if queryToken != "" {
+		claims, err := h.jwtManager.ParseToken(queryToken)
+		if err != nil {
+			logger.Warn("WebSocket query token 认证失败", logger.ErrorField(err))
+			h.sendError(wsConn, "", 401, "令牌无效")
+			wsConn.Conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+			wsConn.Conn.Close()
+			return
+		}
+
+		sessionID := uuid.New().String()
+		wsConn.UserID = claims.UserID
+		wsConn.SessionID = sessionID
+		h.manager.AddConnection(sessionID, wsConn)
+		h.unified.Register(sessionID, claims.UserID, "web", "websocket", func(data []byte) {
+			wsConn.mu.Lock()
+			if wsConn.IsClosed {
+				wsConn.mu.Unlock()
+				return
+			}
+			wsConn.mu.Unlock()
+
+			select {
+			case wsConn.Send <- data:
+			default:
+				logger.Warn("WebSocket发送通道已满", logger.StringField("session_id", sessionID))
+			}
+		})
+
+		if h.eventBus != nil {
+			presenceEvent := &types.UserPresenceEvent{
+				UserID:    claims.UserID,
+				DeviceID:  "web",
+				Online:    true,
+				Timestamp: time.Now(),
+			}
+			if err := h.eventBus.PublishPresenceEvent(h.ctx, presenceEvent); err != nil {
+				logger.Warn("发布用户上线事件失败", logger.ErrorField(err))
+			}
+		}
+
+		response := OutgoingMessage{
+			Type: MessageTypeConnect,
+			Payload: ConnectResponsePayload{
+				SessionID: sessionID,
+			},
+			Timestamp: time.Now().UnixMilli(),
+		}
+		h.sendMessage(wsConn, response)
+
+		logger.Info("WebSocket 已通过 query token 连接",
+			logger.StringField("user_id", wsConn.UserID),
+			logger.StringField("session_id", sessionID))
 	}
 
 	var wg sync.WaitGroup
@@ -409,7 +536,11 @@ func (h *Handler) readPump(conn *Connection, wg *sync.WaitGroup) {
 		h.cleanup(conn)
 	}()
 
-	conn.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	if conn.UserID == "" {
+		conn.Conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	} else {
+		conn.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	}
 	conn.Conn.SetPongHandler(func(string) error {
 		conn.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
@@ -425,6 +556,10 @@ func (h *Handler) readPump(conn *Connection, wg *sync.WaitGroup) {
 		}
 
 		h.handleMessage(conn, msg)
+
+		if conn.UserID != "" {
+			conn.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		}
 	}
 }
 
@@ -435,7 +570,7 @@ func (h *Handler) writePump(conn *Connection, wg *sync.WaitGroup) {
 		h.cleanup(conn)
 	}()
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(60 * time.Second) // 减少 ping 频率，避免 too_many_pings
 	defer ticker.Stop()
 
 	for {
@@ -475,6 +610,11 @@ func (h *Handler) handleMessage(conn *Connection, rawMsg []byte) {
 		return
 	}
 
+	if conn.UserID == "" && msg.Type != MessageTypeConnect {
+		h.sendError(conn, msg.RequestID, 401, "请先认证")
+		return
+	}
+
 	switch msg.Type {
 	case MessageTypeConnect:
 		h.handleConnect(conn, &msg)
@@ -495,6 +635,11 @@ func (h *Handler) handleMessage(conn *Connection, rawMsg []byte) {
 
 // handleConnect 处理连接初始化
 func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
+	if conn.UserID != "" {
+		h.sendError(conn, msg.RequestID, 400, "已经认证")
+		return
+	}
+
 	payloadBytes, err := json.Marshal(msg.Payload)
 	if err != nil {
 		h.sendError(conn, msg.RequestID, 400, "载荷无效")
@@ -507,9 +652,20 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 		return
 	}
 
+	if payload.Token == "" {
+		h.sendError(conn, msg.RequestID, 401, "缺少令牌")
+		conn.Conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication required"))
+		conn.Conn.Close()
+		return
+	}
+
 	claims, err := h.jwtManager.ParseToken(payload.Token)
 	if err != nil {
 		h.sendError(conn, msg.RequestID, 401, "令牌无效")
+		conn.Conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		conn.Conn.Close()
 		return
 	}
 
@@ -519,6 +675,13 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 	conn.SessionID = sessionID
 
 	h.manager.AddConnection(sessionID, conn)
+	h.unified.Register(sessionID, claims.UserID, payload.DeviceID, "websocket", func(data []byte) {
+		select {
+		case conn.Send <- data:
+		default:
+			logger.Warn("WebSocket发送通道已满", logger.StringField("session_id", sessionID))
+		}
+	})
 
 	if h.eventBus != nil {
 		presenceEvent := &types.UserPresenceEvent{
@@ -553,6 +716,7 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 func (h *Handler) handleDisconnect(conn *Connection, msg *IncomingMessage) {
 	if conn.SessionID != "" {
 		h.manager.RemoveConnection(conn.SessionID)
+		h.unified.Unregister(conn.SessionID)
 	}
 
 	response := OutgoingMessage{
@@ -629,6 +793,16 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 	// 生成消息ID
 	messageID := uuid.New().String()
 
+	// 🔴 1️⃣ 前端发送消息链路开始
+	if messagePayload.ChatType == 1 {
+		logger.Info("\x1b[33m🔴 1️⃣ [前端-Gateway] 收到私聊消息\x1b[0m",
+			logger.StringField("msg_id", messageID),
+			logger.StringField("sender_id", conn.UserID),
+			logger.StringField("chat_id", messagePayload.ChatID),
+			logger.StringField("content", messagePayload.Content),
+			logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
+	}
+
 	// 创建消息事件并发布（接收者留空，由 Chat 服务填充）
 	event := types.NewMessageEvent(
 		messageID,
@@ -639,9 +813,19 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 		messagePayload.Content,
 		metadata,
 		"",
-		[]string{},
+		messagePayload.MentionUserIDs,
 		[]string{},
 	)
+	if len(messagePayload.Extra) > 0 {
+		event.Extra = messagePayload.Extra
+	}
+
+	// 🔴 2️⃣ 发布到 Kafka
+	if messagePayload.ChatType == 1 {
+		logger.Info("\x1b[32m🔴 2️⃣ [Gateway-Kafka] 发布私聊消息到 Kafka\x1b[0m",
+			logger.StringField("msg_id", messageID),
+			logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
+	}
 
 	// 发布到事件总线
 	if err := h.eventBus.PublishMessageEvent(h.ctx, event); err != nil {
@@ -695,6 +879,7 @@ func (h *Handler) handleTyping(conn *Connection, msg *IncomingMessage) {
 
 	// 构建输入状态事件并发布到 Kafka
 	typingEvent := &types.TypingEvent{
+		EventType: types.EventTypeTyping,
 		UserID:    conn.UserID,
 		ChatID:    typingPayload.ChatID,
 		IsTyping:  typingPayload.Typing,
@@ -753,6 +938,7 @@ func (h *Handler) handleReadReceipt(conn *Connection, msg *IncomingMessage) {
 
 	// 创建 MessageReadEvent 并发布到 Kafka
 	readEvent := &types.MessageReadEvent{
+		EventType:  types.EventTypeMessageRead,
 		MessageIDs: []string{readPayload.MessageID},
 		ReaderID:   conn.UserID,
 		ChatID:     readPayload.ChatID,
@@ -821,10 +1007,12 @@ func (h *Handler) cleanup(conn *Connection) {
 		return
 	}
 	conn.IsClosed = true
+	close(conn.Send) // 在锁定状态下就关闭 channel
 	conn.mu.Unlock()
 
 	if conn.SessionID != "" {
 		h.manager.RemoveConnection(conn.SessionID)
+		h.unified.Unregister(conn.SessionID) // 从 unified 管理器中也注销
 	}
 
 	if conn.UserID != "" && h.eventBus != nil {
@@ -853,9 +1041,4 @@ func (h *Handler) Close() error {
 		_ = h.eventBus.Close()
 	}
 	return nil
-}
-
-// GetManager 获取连接管理器
-func (h *Handler) GetManager() *ConnectionManager {
-	return h.manager
 }

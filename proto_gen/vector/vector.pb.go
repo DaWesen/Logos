@@ -8,11 +8,12 @@ package vector
 
 import (
 	common "Logos/proto_gen/common"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -201,18 +202,30 @@ func (x *Vector) GetCreatedAt() int64 {
 }
 
 type VectorCollection struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	ModelType     VectorModelType        `protobuf:"varint,3,opt,name=model_type,json=modelType,proto3,enum=vector.VectorModelType" json:"model_type,omitempty"`
-	IndexType     IndexType              `protobuf:"varint,4,opt,name=index_type,json=indexType,proto3,enum=vector.IndexType" json:"index_type,omitempty"`
-	Dimension     int32                  `protobuf:"varint,5,opt,name=dimension,proto3" json:"dimension,omitempty"`
-	Parameters    map[string]string      `protobuf:"bytes,6,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Size          int64                  `protobuf:"varint,7,opt,name=size,proto3" json:"size,omitempty"`
-	CreatedAt     int64                  `protobuf:"varint,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     int64                  `protobuf:"varint,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name             string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	ModelType        VectorModelType        `protobuf:"varint,3,opt,name=model_type,json=modelType,proto3,enum=vector.VectorModelType" json:"model_type,omitempty"`
+	IndexType        IndexType              `protobuf:"varint,4,opt,name=index_type,json=indexType,proto3,enum=vector.IndexType" json:"index_type,omitempty"`
+	Dimension        int32                  `protobuf:"varint,5,opt,name=dimension,proto3" json:"dimension,omitempty"`
+	Parameters       map[string]string      `protobuf:"bytes,6,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Size             int64                  `protobuf:"varint,7,opt,name=size,proto3" json:"size,omitempty"`
+	CreatedAt        int64                  `protobuf:"varint,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt        int64                  `protobuf:"varint,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	VlmModel         string                 `protobuf:"bytes,10,opt,name=vlm_model,json=vlmModel,proto3" json:"vlm_model,omitempty"`
+	VlmBaseUrl       string                 `protobuf:"bytes,11,opt,name=vlm_base_url,json=vlmBaseUrl,proto3" json:"vlm_base_url,omitempty"`
+	VlmApiKey        string                 `protobuf:"bytes,12,opt,name=vlm_api_key,json=vlmApiKey,proto3" json:"vlm_api_key,omitempty"`
+	LlmModel         string                 `protobuf:"bytes,13,opt,name=llm_model,json=llmModel,proto3" json:"llm_model,omitempty"`
+	LlmBaseUrl       string                 `protobuf:"bytes,14,opt,name=llm_base_url,json=llmBaseUrl,proto3" json:"llm_base_url,omitempty"`
+	LlmApiKey        string                 `protobuf:"bytes,15,opt,name=llm_api_key,json=llmApiKey,proto3" json:"llm_api_key,omitempty"`
+	AsrModel         string                 `protobuf:"bytes,16,opt,name=asr_model,json=asrModel,proto3" json:"asr_model,omitempty"`
+	AsrBaseUrl       string                 `protobuf:"bytes,17,opt,name=asr_base_url,json=asrBaseUrl,proto3" json:"asr_base_url,omitempty"`
+	AsrApiKey        string                 `protobuf:"bytes,18,opt,name=asr_api_key,json=asrApiKey,proto3" json:"asr_api_key,omitempty"`
+	EmbeddingModel   string                 `protobuf:"bytes,19,opt,name=embedding_model,json=embeddingModel,proto3" json:"embedding_model,omitempty"`
+	EmbeddingBaseUrl string                 `protobuf:"bytes,20,opt,name=embedding_base_url,json=embeddingBaseUrl,proto3" json:"embedding_base_url,omitempty"`
+	EmbeddingApiKey  string                 `protobuf:"bytes,21,opt,name=embedding_api_key,json=embeddingApiKey,proto3" json:"embedding_api_key,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *VectorCollection) Reset() {
@@ -308,15 +321,111 @@ func (x *VectorCollection) GetUpdatedAt() int64 {
 	return 0
 }
 
+func (x *VectorCollection) GetVlmModel() string {
+	if x != nil {
+		return x.VlmModel
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetVlmBaseUrl() string {
+	if x != nil {
+		return x.VlmBaseUrl
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetVlmApiKey() string {
+	if x != nil {
+		return x.VlmApiKey
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetLlmModel() string {
+	if x != nil {
+		return x.LlmModel
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetLlmBaseUrl() string {
+	if x != nil {
+		return x.LlmBaseUrl
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetLlmApiKey() string {
+	if x != nil {
+		return x.LlmApiKey
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetAsrModel() string {
+	if x != nil {
+		return x.AsrModel
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetAsrBaseUrl() string {
+	if x != nil {
+		return x.AsrBaseUrl
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetAsrApiKey() string {
+	if x != nil {
+		return x.AsrApiKey
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetEmbeddingModel() string {
+	if x != nil {
+		return x.EmbeddingModel
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetEmbeddingBaseUrl() string {
+	if x != nil {
+		return x.EmbeddingBaseUrl
+	}
+	return ""
+}
+
+func (x *VectorCollection) GetEmbeddingApiKey() string {
+	if x != nil {
+		return x.EmbeddingApiKey
+	}
+	return ""
+}
+
 type CreateCollectionReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ModelType     VectorModelType        `protobuf:"varint,2,opt,name=model_type,json=modelType,proto3,enum=vector.VectorModelType" json:"model_type,omitempty"`
-	IndexType     IndexType              `protobuf:"varint,3,opt,name=index_type,json=indexType,proto3,enum=vector.IndexType" json:"index_type,omitempty"`
-	Dimension     int32                  `protobuf:"varint,4,opt,name=dimension,proto3" json:"dimension,omitempty"`
-	Parameters    map[string]string      `protobuf:"bytes,5,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	ModelType        VectorModelType        `protobuf:"varint,2,opt,name=model_type,json=modelType,proto3,enum=vector.VectorModelType" json:"model_type,omitempty"`
+	IndexType        IndexType              `protobuf:"varint,3,opt,name=index_type,json=indexType,proto3,enum=vector.IndexType" json:"index_type,omitempty"`
+	Dimension        int32                  `protobuf:"varint,4,opt,name=dimension,proto3" json:"dimension,omitempty"`
+	Parameters       map[string]string      `protobuf:"bytes,5,rep,name=parameters,proto3" json:"parameters,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	VlmModel         string                 `protobuf:"bytes,6,opt,name=vlm_model,json=vlmModel,proto3" json:"vlm_model,omitempty"`
+	VlmBaseUrl       string                 `protobuf:"bytes,7,opt,name=vlm_base_url,json=vlmBaseUrl,proto3" json:"vlm_base_url,omitempty"`
+	VlmApiKey        string                 `protobuf:"bytes,8,opt,name=vlm_api_key,json=vlmApiKey,proto3" json:"vlm_api_key,omitempty"`
+	LlmModel         string                 `protobuf:"bytes,9,opt,name=llm_model,json=llmModel,proto3" json:"llm_model,omitempty"`
+	LlmBaseUrl       string                 `protobuf:"bytes,10,opt,name=llm_base_url,json=llmBaseUrl,proto3" json:"llm_base_url,omitempty"`
+	LlmApiKey        string                 `protobuf:"bytes,11,opt,name=llm_api_key,json=llmApiKey,proto3" json:"llm_api_key,omitempty"`
+	AsrModel         string                 `protobuf:"bytes,12,opt,name=asr_model,json=asrModel,proto3" json:"asr_model,omitempty"`
+	AsrBaseUrl       string                 `protobuf:"bytes,13,opt,name=asr_base_url,json=asrBaseUrl,proto3" json:"asr_base_url,omitempty"`
+	AsrApiKey        string                 `protobuf:"bytes,14,opt,name=asr_api_key,json=asrApiKey,proto3" json:"asr_api_key,omitempty"`
+	EmbeddingModel   string                 `protobuf:"bytes,15,opt,name=embedding_model,json=embeddingModel,proto3" json:"embedding_model,omitempty"`
+	EmbeddingBaseUrl string                 `protobuf:"bytes,16,opt,name=embedding_base_url,json=embeddingBaseUrl,proto3" json:"embedding_base_url,omitempty"`
+	EmbeddingApiKey  string                 `protobuf:"bytes,17,opt,name=embedding_api_key,json=embeddingApiKey,proto3" json:"embedding_api_key,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreateCollectionReq) Reset() {
@@ -382,6 +491,90 @@ func (x *CreateCollectionReq) GetParameters() map[string]string {
 		return x.Parameters
 	}
 	return nil
+}
+
+func (x *CreateCollectionReq) GetVlmModel() string {
+	if x != nil {
+		return x.VlmModel
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetVlmBaseUrl() string {
+	if x != nil {
+		return x.VlmBaseUrl
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetVlmApiKey() string {
+	if x != nil {
+		return x.VlmApiKey
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetLlmModel() string {
+	if x != nil {
+		return x.LlmModel
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetLlmBaseUrl() string {
+	if x != nil {
+		return x.LlmBaseUrl
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetLlmApiKey() string {
+	if x != nil {
+		return x.LlmApiKey
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetAsrModel() string {
+	if x != nil {
+		return x.AsrModel
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetAsrBaseUrl() string {
+	if x != nil {
+		return x.AsrBaseUrl
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetAsrApiKey() string {
+	if x != nil {
+		return x.AsrApiKey
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetEmbeddingModel() string {
+	if x != nil {
+		return x.EmbeddingModel
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetEmbeddingBaseUrl() string {
+	if x != nil {
+		return x.EmbeddingBaseUrl
+	}
+	return ""
+}
+
+func (x *CreateCollectionReq) GetEmbeddingApiKey() string {
+	if x != nil {
+		return x.EmbeddingApiKey
+	}
+	return ""
 }
 
 type UpdateCollectionReq struct {
@@ -1316,6 +1509,195 @@ func (*EmptyReq) Descriptor() ([]byte, []int) {
 	return file_ai_vector_proto_rawDescGZIP(), []int{19}
 }
 
+type ListVectorsReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CollectionId  string                 `protobuf:"bytes,1,opt,name=collection_id,json=collectionId,proto3" json:"collection_id,omitempty"`
+	Page          int32                  `protobuf:"varint,2,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,3,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListVectorsReq) Reset() {
+	*x = ListVectorsReq{}
+	mi := &file_ai_vector_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListVectorsReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListVectorsReq) ProtoMessage() {}
+
+func (x *ListVectorsReq) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_vector_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ListVectorsReq) GetCollectionId() string {
+	if x != nil {
+		return x.CollectionId
+	}
+	return ""
+}
+
+func (x *ListVectorsReq) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListVectorsReq) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+type VectorPreviewItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAt     int64                  `protobuf:"varint,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VectorPreviewItem) Reset() {
+	*x = VectorPreviewItem{}
+	mi := &file_ai_vector_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VectorPreviewItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VectorPreviewItem) ProtoMessage() {}
+
+func (x *VectorPreviewItem) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_vector_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *VectorPreviewItem) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *VectorPreviewItem) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *VectorPreviewItem) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *VectorPreviewItem) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+type ListVectorsResp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
+	Vectors       []*VectorPreviewItem   `protobuf:"bytes,2,rep,name=vectors,proto3" json:"vectors,omitempty"`
+	Total         int64                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Page          int32                  `protobuf:"varint,4,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize      int32                  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListVectorsResp) Reset() {
+	*x = ListVectorsResp{}
+	mi := &file_ai_vector_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListVectorsResp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListVectorsResp) ProtoMessage() {}
+
+func (x *ListVectorsResp) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_vector_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+func (x *ListVectorsResp) GetBaseResp() *common.BaseResp {
+	if x != nil {
+		return x.BaseResp
+	}
+	return nil
+}
+
+func (x *ListVectorsResp) GetVectors() []*VectorPreviewItem {
+	if x != nil {
+		return x.Vectors
+	}
+	return nil
+}
+
+func (x *ListVectorsResp) GetTotal() int64 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *ListVectorsResp) GetPage() int32 {
+	if x != nil {
+		return x.Page
+	}
+	return 0
+}
+
+func (x *ListVectorsResp) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
 var File_ai_vector_proto protoreflect.FileDescriptor
 
 const file_ai_vector_proto_rawDesc = "" +
@@ -1329,7 +1711,7 @@ const file_ai_vector_proto_rawDesc = "" +
 	"created_at\x18\x04 \x01(\x03R\tcreatedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x99\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x06\n" +
 	"\x10VectorCollection\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x126\n" +
@@ -1345,10 +1727,26 @@ const file_ai_vector_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\b \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\x03R\tupdatedAt\x1a=\n" +
+	"updated_at\x18\t \x01(\x03R\tupdatedAt\x12\x1b\n" +
+	"\tvlm_model\x18\n" +
+	" \x01(\tR\bvlmModel\x12 \n" +
+	"\fvlm_base_url\x18\v \x01(\tR\n" +
+	"vlmBaseUrl\x12\x1e\n" +
+	"\vvlm_api_key\x18\f \x01(\tR\tvlmApiKey\x12\x1b\n" +
+	"\tllm_model\x18\r \x01(\tR\bllmModel\x12 \n" +
+	"\fllm_base_url\x18\x0e \x01(\tR\n" +
+	"llmBaseUrl\x12\x1e\n" +
+	"\vllm_api_key\x18\x0f \x01(\tR\tllmApiKey\x12\x1b\n" +
+	"\tasr_model\x18\x10 \x01(\tR\basrModel\x12 \n" +
+	"\fasr_base_url\x18\x11 \x01(\tR\n" +
+	"asrBaseUrl\x12\x1e\n" +
+	"\vasr_api_key\x18\x12 \x01(\tR\tasrApiKey\x12'\n" +
+	"\x0fembedding_model\x18\x13 \x01(\tR\x0eembeddingModel\x12,\n" +
+	"\x12embedding_base_url\x18\x14 \x01(\tR\x10embeddingBaseUrl\x12*\n" +
+	"\x11embedding_api_key\x18\x15 \x01(\tR\x0fembeddingApiKey\x1a=\n" +
 	"\x0fParametersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbd\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdd\x05\n" +
 	"\x13CreateCollectionReq\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x126\n" +
 	"\n" +
@@ -1358,7 +1756,23 @@ const file_ai_vector_proto_rawDesc = "" +
 	"\tdimension\x18\x04 \x01(\x05R\tdimension\x12K\n" +
 	"\n" +
 	"parameters\x18\x05 \x03(\v2+.vector.CreateCollectionReq.ParametersEntryR\n" +
-	"parameters\x1a=\n" +
+	"parameters\x12\x1b\n" +
+	"\tvlm_model\x18\x06 \x01(\tR\bvlmModel\x12 \n" +
+	"\fvlm_base_url\x18\a \x01(\tR\n" +
+	"vlmBaseUrl\x12\x1e\n" +
+	"\vvlm_api_key\x18\b \x01(\tR\tvlmApiKey\x12\x1b\n" +
+	"\tllm_model\x18\t \x01(\tR\bllmModel\x12 \n" +
+	"\fllm_base_url\x18\n" +
+	" \x01(\tR\n" +
+	"llmBaseUrl\x12\x1e\n" +
+	"\vllm_api_key\x18\v \x01(\tR\tllmApiKey\x12\x1b\n" +
+	"\tasr_model\x18\f \x01(\tR\basrModel\x12 \n" +
+	"\fasr_base_url\x18\r \x01(\tR\n" +
+	"asrBaseUrl\x12\x1e\n" +
+	"\vasr_api_key\x18\x0e \x01(\tR\tasrApiKey\x12'\n" +
+	"\x0fembedding_model\x18\x0f \x01(\tR\x0eembeddingModel\x12,\n" +
+	"\x12embedding_base_url\x18\x10 \x01(\tR\x10embeddingBaseUrl\x12*\n" +
+	"\x11embedding_api_key\x18\x11 \x01(\tR\x0fembeddingApiKey\x1a=\n" +
 	"\x0fParametersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd3\x01\n" +

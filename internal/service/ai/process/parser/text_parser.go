@@ -22,10 +22,11 @@ func (p *TextParser) Parse(ctx context.Context, reader io.Reader, filename strin
 		return "", nil, fmt.Errorf("读取文件失败: %w", err)
 	}
 
-	text := string(content)
+	text := strings.ToValidUTF8(string(content), "")
+
 	metadata := make(map[string]interface{})
 	metadata["file_name"] = filename
-	metadata["size"] = len(content)
+	metadata["size"] = len(text)
 	metadata["lines"] = countLines(text)
 	metadata["words"] = countWords(text)
 

@@ -36,6 +36,8 @@ type VectorService interface {
 	// 向量管理
 	DeleteVector(ctx context.Context, collectionID string, vectorID string) error
 	BatchDeleteVector(ctx context.Context, collectionID string, vectorIDs []string) error
+
+	ListVectors(ctx context.Context, collectionID string, page, pageSize int) ([]*model.VectorPreviewItem, int64, error)
 }
 
 type vectorServiceImpl struct {
@@ -113,6 +115,21 @@ func (s *vectorServiceImpl) UpdateCollection(ctx context.Context, req *model.Vec
 	if req.IndexType == 0 {
 		req.IndexType = existing.IndexType
 	}
+	if req.VLM.Model == "" && req.VLM.BaseURL == "" && req.VLM.APIKey == "" {
+		req.VLM = existing.VLM
+	}
+	if req.LLM.Model == "" && req.LLM.BaseURL == "" && req.LLM.APIKey == "" {
+		req.LLM = existing.LLM
+	}
+	if req.ASR.Model == "" && req.ASR.BaseURL == "" && req.ASR.APIKey == "" {
+		req.ASR = existing.ASR
+	}
+	if req.Embedding.Model == "" && req.Embedding.BaseURL == "" && req.Embedding.APIKey == "" {
+		req.Embedding = existing.Embedding
+	}
+	if req.Parameters == nil {
+		req.Parameters = existing.Parameters
+	}
 	req.CreatedAt = existing.CreatedAt
 	req.Size = existing.Size
 
@@ -148,6 +165,32 @@ func (s *vectorServiceImpl) DeleteCollection(ctx context.Context, id string) err
 		logger.StringField("id", id))
 
 	return nil
+}
+
+func (s *vectorServiceImpl) ListVectors(ctx context.Context, collectionID string, page, pageSize int) ([]*model.VectorPreviewItem, int64, error) {
+	logger.Info("列出向量预览请求",
+		logger.StringField("collection_id", collectionID),
+		logger.IntField("page", page),
+		logger.IntField("page_size", pageSize))
+
+	if collectionID == "" {
+		return nil, 0, errors.New("集合ID不能为空")
+	}
+
+	items, total, err := s.repo.ListVectors(ctx, collectionID, page, pageSize)
+	if err != nil {
+		logger.Error("列出向量预览失败",
+			logger.StringField("collection_id", collectionID),
+			logger.ErrorField(err))
+		return nil, 0, ErrInternalServer
+	}
+
+	logger.Info("列出向量预览成功",
+		logger.StringField("collection_id", collectionID),
+		logger.IntField("count", len(items)),
+		logger.Int64Field("total", total))
+
+	return items, total, nil
 }
 
 func (s *vectorServiceImpl) GetCollection(ctx context.Context, id string) (*model.VectorCollection, error) {
@@ -208,7 +251,7 @@ func (s *vectorServiceImpl) Vectorize(ctx context.Context, text string, collecti
 		logger.Error("文本向量化失败",
 			logger.StringField("text", text),
 			logger.ErrorField(err))
-		return nil, ErrInternalServer
+		return nil, fmt.Errorf("文本向量化失败: %w", err)
 	}
 
 	logger.Info("文本向量化成功",
@@ -233,7 +276,7 @@ func (s *vectorServiceImpl) BatchVectorize(ctx context.Context, texts []string, 
 	if err != nil {
 		logger.Error("批量文本向量化失败",
 			logger.ErrorField(err))
-		return nil, ErrInternalServer
+		return nil, fmt.Errorf("批量文本向量化失败: %w", err)
 	}
 
 	logger.Info("批量文本向量化成功",

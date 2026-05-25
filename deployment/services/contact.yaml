@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: contact
+  namespace: logos
+  labels:
+    app: contact
+    domain: messaging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: contact
+  template:
+    metadata:
+      labels:
+        app: contact
+        domain: messaging
+    spec:
+      containers:
+        - name: contact
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./contact"]
+          ports:
+            - containerPort: 9013
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9013
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: contact-svc
+  namespace: logos
+spec:
+  selector:
+    app: contact
+  ports:
+    - port: 9013
+      targetPort: 9013

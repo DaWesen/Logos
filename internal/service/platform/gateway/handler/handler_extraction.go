@@ -36,7 +36,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 
 func (h *Handler) ListTasks(c *gin.Context) {
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.ListTasks(context.Background(), &pb.EmptyReq{})
@@ -54,7 +54,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 func (h *Handler) GetTask(c *gin.Context) {
 	id := c.Param("id")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.GetTask(context.Background(), &pb.GetByIdReq{Id: id})
@@ -71,7 +71,7 @@ func (h *Handler) GetTask(c *gin.Context) {
 
 func (h *Handler) UpdateTask(c *gin.Context) {
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.UpdateExtractionTaskReq
@@ -95,7 +95,7 @@ func (h *Handler) UpdateTask(c *gin.Context) {
 func (h *Handler) DeleteTask(c *gin.Context) {
 	id := c.Param("id")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.DeleteTask(context.Background(), &pb.GetByIdReq{Id: id})
@@ -113,7 +113,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 func (h *Handler) ExecuteTask(c *gin.Context) {
 	taskID := c.Param("id")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	req := &pb.ExecuteExtractionTaskReq{TaskId: taskID}
@@ -132,7 +132,7 @@ func (h *Handler) ExecuteTask(c *gin.Context) {
 func (h *Handler) CancelTask(c *gin.Context) {
 	taskID := c.Param("id")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.CancelTask(context.Background(), &pb.CancelByTaskIdReq{TaskId: taskID})
@@ -149,7 +149,7 @@ func (h *Handler) CancelTask(c *gin.Context) {
 
 func (h *Handler) ExtractFromText(c *gin.Context) {
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.TextExtractionReq
@@ -176,7 +176,7 @@ func (h *Handler) ExtractFromText(c *gin.Context) {
 func (h *Handler) GetResults(c *gin.Context) {
 	taskID := c.Param("taskId")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.ListExtractionResults(context.Background(), &pb.GetByTaskIdReq{TaskId: taskID})
@@ -194,7 +194,7 @@ func (h *Handler) GetResults(c *gin.Context) {
 func (h *Handler) GetResult(c *gin.Context) {
 	id := c.Param("id")
 	if h.ExtractionClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ȡ�����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.ExtractionClient.GetExtractionResult(context.Background(), &pb.GetByIdReq{Id: id})

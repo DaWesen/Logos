@@ -9,6 +9,7 @@ package vector
 import (
 	common "Logos/proto_gen/common"
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -31,6 +32,7 @@ const (
 	VectorService_TextSearch_FullMethodName        = "/vector.VectorService/TextSearch"
 	VectorService_DeleteVector_FullMethodName      = "/vector.VectorService/DeleteVector"
 	VectorService_BatchDeleteVector_FullMethodName = "/vector.VectorService/BatchDeleteVector"
+	VectorService_ListVectors_FullMethodName       = "/vector.VectorService/ListVectors"
 )
 
 // VectorServiceClient is the client API for VectorService service.
@@ -48,6 +50,7 @@ type VectorServiceClient interface {
 	TextSearch(ctx context.Context, in *TextSearchReq, opts ...grpc.CallOption) (*SearchResp, error)
 	DeleteVector(ctx context.Context, in *DeleteVectorReq, opts ...grpc.CallOption) (*common.BaseResp, error)
 	BatchDeleteVector(ctx context.Context, in *BatchDeleteVectorReq, opts ...grpc.CallOption) (*common.BaseResp, error)
+	ListVectors(ctx context.Context, in *ListVectorsReq, opts ...grpc.CallOption) (*ListVectorsResp, error)
 }
 
 type vectorServiceClient struct {
@@ -168,6 +171,16 @@ func (c *vectorServiceClient) BatchDeleteVector(ctx context.Context, in *BatchDe
 	return out, nil
 }
 
+func (c *vectorServiceClient) ListVectors(ctx context.Context, in *ListVectorsReq, opts ...grpc.CallOption) (*ListVectorsResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListVectorsResp)
+	err := c.cc.Invoke(ctx, VectorService_ListVectors_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VectorServiceServer is the server API for VectorService service.
 // All implementations must embed UnimplementedVectorServiceServer
 // for forward compatibility.
@@ -183,6 +196,7 @@ type VectorServiceServer interface {
 	TextSearch(context.Context, *TextSearchReq) (*SearchResp, error)
 	DeleteVector(context.Context, *DeleteVectorReq) (*common.BaseResp, error)
 	BatchDeleteVector(context.Context, *BatchDeleteVectorReq) (*common.BaseResp, error)
+	ListVectors(context.Context, *ListVectorsReq) (*ListVectorsResp, error)
 	mustEmbedUnimplementedVectorServiceServer()
 }
 
@@ -225,6 +239,10 @@ func (UnimplementedVectorServiceServer) DeleteVector(context.Context, *DeleteVec
 }
 func (UnimplementedVectorServiceServer) BatchDeleteVector(context.Context, *BatchDeleteVectorReq) (*common.BaseResp, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchDeleteVector not implemented")
+}
+
+func (UnimplementedVectorServiceServer) ListVectors(context.Context, *ListVectorsReq) (*ListVectorsResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListVectors not implemented")
 }
 func (UnimplementedVectorServiceServer) mustEmbedUnimplementedVectorServiceServer() {}
 func (UnimplementedVectorServiceServer) testEmbeddedByValue()                       {}
@@ -445,6 +463,24 @@ func _VectorService_BatchDeleteVector_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VectorService_ListVectors_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListVectorsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectorServiceServer).ListVectors(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectorService_ListVectors_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectorServiceServer).ListVectors(ctx, req.(*ListVectorsReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VectorService_ServiceDesc is the grpc.ServiceDesc for VectorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -495,6 +531,10 @@ var VectorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchDeleteVector",
 			Handler:    _VectorService_BatchDeleteVector_Handler,
+		},
+		{
+			MethodName: "ListVectors",
+			Handler:    _VectorService_ListVectors_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -1,4 +1,4 @@
-﻿package jwt
+package jwt
 
 import (
 	"errors"
@@ -33,7 +33,6 @@ type JWTManager struct {
 	refreshExpireDays int
 }
 
-// NewJWTManager 创建JWT管理器
 func NewJWTManager() *JWTManager {
 	cfg := config.GetConfig()
 	return &JWTManager{
@@ -41,6 +40,10 @@ func NewJWTManager() *JWTManager {
 		tokenExpireHours:  cfg.JWT.ExpireHours,
 		refreshExpireDays: 14,
 	}
+}
+
+func (m *JWTManager) GetTokenExpireHours() int {
+	return m.tokenExpireHours
 }
 
 // GenerateToken 生成访问令牌

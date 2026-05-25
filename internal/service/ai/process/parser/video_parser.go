@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"Logos/internal/models/asr"
-	"Logos/internal/models/vlm"
 	"Logos/internal/models/video"
+	"Logos/internal/models/vlm"
 )
 
 const (
@@ -166,6 +166,10 @@ func (p *VideoParser) resolveExtractOptions(videoInfo map[string]interface{}) *v
 	opts := video.DefaultExtractOptions()
 	opts.MaxFrames = 5
 	return opts
+}
+
+func (p *VideoParser) SetVLMModel(vlmModel vlm.VLM) {
+	p.vlmModel = vlmModel
 }
 
 func (p *VideoParser) SupportedTypes() []string {

@@ -9,6 +9,7 @@ import (
 	"Logos/internal/service/messaging/types"
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
+	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
@@ -57,7 +58,31 @@ func main() {
 		logger.Info("Moderation服务客户端已连接")
 	}
 
-	chatService := service.NewChatServiceWithAI(chatRepo, eventBus, ctx, botClient, moderationClient)
+	var translationClient service.TranslationClient
+	if modRawClient != nil {
+		translationClient = service.NewTranslationClientAdapter(modRawClient)
+		logger.Info("翻译服务客户端已连接")
+	}
+
+	var contactChecker service.ContactChecker
+	contactRawClient, contactErr := client.NewContactClientFromConfig(cfg)
+	if contactErr != nil {
+		logger.Warn("连接Contact服务失败，好友关系检查不可用", logger.ErrorField(contactErr))
+	} else {
+		contactChecker = service.NewContactCheckerAdapter(contactRawClient)
+		logger.Info("Contact服务客户端已连接")
+	}
+
+	var userClient *client.UserClient
+	userRawClient, userErr := client.NewUserClientFromConfig(cfg)
+	if userErr != nil {
+		logger.Warn("连接User服务失败，获取用户信息不可用", logger.ErrorField(userErr))
+	} else {
+		userClient = userRawClient
+		logger.Info("User服务客户端已连接")
+	}
+
+	chatService := service.NewChatServiceWithContact(chatRepo, eventBus, ctx, botClient, moderationClient, translationClient, contactChecker, userClient)
 	chatServiceImpl := handler.NewChatServiceImpl(chatService)
 
 	if err := chatService.StartEventConsumer(); err != nil {
@@ -71,7 +96,9 @@ func main() {
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.chat",
 		Port:        cfg.Ports.Chat,
+		Host:        "127.0.0.1",
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		Governance:  governance.DefaultConfig(),
 	}, func(s *grpc.Server) {
 		pb.RegisterChatServiceServer(s, chatServiceImpl)
 	}, serverOpt); err != nil {

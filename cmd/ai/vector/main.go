@@ -4,11 +4,13 @@ import (
 	"Logos/config"
 	"Logos/internal/service/ai/vector/dao"
 	"Logos/internal/service/ai/vector/handler"
+	"Logos/internal/service/ai/vector/model"
 	"Logos/internal/service/ai/vector/service"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
+	pgsql "Logos/pkg/database/pgsql"
 	"Logos/pkg/vector"
 	pb "Logos/proto_gen/vector"
 	"context"
@@ -22,8 +24,17 @@ func main() {
 
 	logger.InitLogger()
 
+	db, err := pgsql.InitPostgres()
+	if err != nil {
+		log.Fatalf("Failed to init postgres: %v", err)
+	}
+
+	if autoMigrateErr := model.AutoMigrate(db); autoMigrateErr != nil {
+		log.Printf("Warning: AutoMigrate failed: %v", autoMigrateErr)
+	}
+
 	var milvusManager *vector.MilvusManager
-	milvusManager, err := vector.InitMilvus()
+	milvusManager, err = vector.InitMilvus()
 	if err != nil {
 		logger.Warn("Milvus不可用，向量服务以降级模式运行", logger.ErrorField(err))
 	} else {
@@ -36,7 +47,7 @@ func main() {
 		log.Printf("Failed to init eino: %v", err)
 	}
 
-	repo := dao.NewVectorRepository(milvusManager, einoClient)
+	repo := dao.NewVectorRepository(db, milvusManager, einoClient)
 
 	vectorService := service.NewVectorService(repo)
 

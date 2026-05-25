@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat
+  namespace: logos
+  labels:
+    app: chat
+    domain: messaging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat
+  template:
+    metadata:
+      labels:
+        app: chat
+        domain: messaging
+    spec:
+      containers:
+        - name: chat
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./chat"]
+          ports:
+            - containerPort: 9012
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9012
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-svc
+  namespace: logos
+spec:
+  selector:
+    app: chat
+  ports:
+    - port: 9012
+      targetPort: 9012

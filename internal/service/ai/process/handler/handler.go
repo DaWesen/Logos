@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"Logos/internal/service/ai/process/model"
 	"Logos/internal/service/ai/process/service"
 	"Logos/pkg/logger"
 )
@@ -35,33 +36,23 @@ func (h *ProcessHandler) RegisterRoutes(r *gin.Engine) {
 	}
 }
 
-type ProcessURLRequest struct {
-	URL string `json:"url" binding:"required"`
-}
-
 func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请上传文件",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请上传文件"})
 		return
 	}
 
 	src, err := file.Open()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "读取文件失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
 		return
 	}
 	defer src.Close()
 
 	fileData, err := io.ReadAll(src)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "读取文件失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
 		return
 	}
 
@@ -70,47 +61,48 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 		fileURL = "upload://" + file.Filename
 	}
 
-	doc, err := h.processService.ProcessFile(c.Request.Context(), file.Filename, fileData, fileURL)
+	collectionID := c.PostForm("collection_id")
+
+	doc, err := h.processService.ProcessFile(c.Request.Context(), file.Filename, fileData, fileURL, collectionID)
 	if err != nil {
-		logger.Error("处理文件失败",
-			logger.StringField("filename", file.Filename),
-			logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "处理文件失败",
-		})
+		logger.Error("处理文件失败", logger.StringField("filename", file.Filename), logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理文件失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    doc,
-	})
+	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), doc.ID)
+	if dto == nil {
+		dto = model.ToDocumentDTO(doc, 0)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
+}
+
+type ProcessURLRequest struct {
+	URL          string `json:"url" binding:"required"`
+	CollectionID string `json:"collection_id"`
 }
 
 func (h *ProcessHandler) ProcessURL(c *gin.Context) {
 	var req ProcessURLRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "参数错误",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
 		return
 	}
 
-	doc, err := h.processService.ProcessURL(c.Request.Context(), req.URL)
+	doc, err := h.processService.ProcessURL(c.Request.Context(), req.URL, req.CollectionID)
 	if err != nil {
-		logger.Error("处理URL失败",
-			logger.StringField("url", req.URL),
-			logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "处理URL失败",
-		})
+		logger.Error("处理URL失败", logger.StringField("url", req.URL), logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理URL失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    doc,
-	})
+	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), doc.ID)
+	if dto == nil {
+		dto = model.ToDocumentDTO(doc, 0)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
 }
 
 func (h *ProcessHandler) ListDocuments(c *gin.Context) {
@@ -125,17 +117,15 @@ func (h *ProcessHandler) ListDocuments(c *gin.Context) {
 		}
 	}
 
-	docs, total, err := h.processService.ListDocuments(c.Request.Context(), status, page, pageSize)
+	dtos, total, err := h.processService.ListDocumentDTOs(c.Request.Context(), status, page, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "查询文档列表失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档列表失败"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":   true,
-		"data":      docs,
+		"data":      dtos,
 		"total":     total,
 		"page":      page,
 		"page_size": pageSize,
@@ -145,61 +135,42 @@ func (h *ProcessHandler) ListDocuments(c *gin.Context) {
 func (h *ProcessHandler) GetDocument(c *gin.Context) {
 	id := c.Param("id")
 
-	doc, err := h.processService.GetDocument(c.Request.Context(), id)
+	dto, err := h.processService.GetDocumentDTO(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "查询文档失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档失败"})
 		return
 	}
 
-	if doc == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "文档不存在",
-		})
+	if dto == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文档不存在"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    doc,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
 }
 
 func (h *ProcessHandler) DeleteDocument(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.processService.DeleteDocument(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "删除文档失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除文档失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 func (h *ProcessHandler) ReprocessDocument(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.processService.ProcessDocument(c.Request.Context(), id); err != nil {
-		logger.Error("重新处理文档失败",
-			logger.StringField("doc_id", id),
-			logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "重新处理文档失败",
-		})
+		logger.Error("重新处理文档失败", logger.StringField("doc_id", id), logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新处理文档失败"})
 		return
 	}
 
-	doc, _ := h.processService.GetDocument(c.Request.Context(), id)
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    doc,
-	})
+	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), id)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
 }
 
 func (h *ProcessHandler) GetDocumentChunks(c *gin.Context) {
@@ -207,16 +178,11 @@ func (h *ProcessHandler) GetDocumentChunks(c *gin.Context) {
 
 	chunks, err := h.processService.GetChunks(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "查询文档块失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档块失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    chunks,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": chunks})
 }
 
 func (h *ProcessHandler) RegisterMiddlewares(r *gin.Engine) {

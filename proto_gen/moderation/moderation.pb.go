@@ -140,6 +140,83 @@ func (ModerationCategory) EnumDescriptor() ([]byte, []int) {
 	return file_ai_moderation_proto_rawDescGZIP(), []int{1}
 }
 
+// AI模型配置
+type ModelConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	ApiKey        string                 `protobuf:"bytes,3,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	BaseUrl       string                 `protobuf:"bytes,4,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
+	Temperature   float64                `protobuf:"fixed64,5,opt,name=temperature,proto3" json:"temperature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModelConfig) Reset() {
+	*x = ModelConfig{}
+	mi := &file_ai_moderation_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelConfig) ProtoMessage() {}
+
+func (x *ModelConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_moderation_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelConfig.ProtoReflect.Descriptor instead.
+func (*ModelConfig) Descriptor() ([]byte, []int) {
+	return file_ai_moderation_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ModelConfig) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetBaseUrl() string {
+	if x != nil {
+		return x.BaseUrl
+	}
+	return ""
+}
+
+func (x *ModelConfig) GetTemperature() float64 {
+	if x != nil {
+		return x.Temperature
+	}
+	return 0
+}
+
 // 审核记录
 type ModerationRecord struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -157,7 +234,7 @@ type ModerationRecord struct {
 
 func (x *ModerationRecord) Reset() {
 	*x = ModerationRecord{}
-	mi := &file_ai_moderation_proto_msgTypes[0]
+	mi := &file_ai_moderation_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -169,7 +246,7 @@ func (x *ModerationRecord) String() string {
 func (*ModerationRecord) ProtoMessage() {}
 
 func (x *ModerationRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[0]
+	mi := &file_ai_moderation_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -182,7 +259,7 @@ func (x *ModerationRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModerationRecord.ProtoReflect.Descriptor instead.
 func (*ModerationRecord) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{0}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ModerationRecord) GetId() string {
@@ -248,13 +325,14 @@ type TranslateRequest struct {
 	SourceLang    string                 `protobuf:"bytes,2,opt,name=source_lang,json=sourceLang,proto3" json:"source_lang,omitempty"`
 	TargetLang    string                 `protobuf:"bytes,3,opt,name=target_lang,json=targetLang,proto3" json:"target_lang,omitempty"`
 	ContentId     string                 `protobuf:"bytes,4,opt,name=content_id,json=contentId,proto3" json:"content_id,omitempty"`
+	ModelConfig   *ModelConfig           `protobuf:"bytes,5,opt,name=model_config,json=modelConfig,proto3" json:"model_config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TranslateRequest) Reset() {
 	*x = TranslateRequest{}
-	mi := &file_ai_moderation_proto_msgTypes[1]
+	mi := &file_ai_moderation_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -266,7 +344,7 @@ func (x *TranslateRequest) String() string {
 func (*TranslateRequest) ProtoMessage() {}
 
 func (x *TranslateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[1]
+	mi := &file_ai_moderation_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -279,7 +357,7 @@ func (x *TranslateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranslateRequest.ProtoReflect.Descriptor instead.
 func (*TranslateRequest) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{1}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *TranslateRequest) GetContent() string {
@@ -310,6 +388,13 @@ func (x *TranslateRequest) GetContentId() string {
 	return ""
 }
 
+func (x *TranslateRequest) GetModelConfig() *ModelConfig {
+	if x != nil {
+		return x.ModelConfig
+	}
+	return nil
+}
+
 // 翻译响应
 type TranslateResponse struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
@@ -324,7 +409,7 @@ type TranslateResponse struct {
 
 func (x *TranslateResponse) Reset() {
 	*x = TranslateResponse{}
-	mi := &file_ai_moderation_proto_msgTypes[2]
+	mi := &file_ai_moderation_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +421,7 @@ func (x *TranslateResponse) String() string {
 func (*TranslateResponse) ProtoMessage() {}
 
 func (x *TranslateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[2]
+	mi := &file_ai_moderation_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +434,7 @@ func (x *TranslateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TranslateResponse.ProtoReflect.Descriptor instead.
 func (*TranslateResponse) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{2}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *TranslateResponse) GetCode() int32 {
@@ -393,13 +478,14 @@ type ModerateContentRequest struct {
 	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
 	ContentId     string                 `protobuf:"bytes,2,opt,name=content_id,json=contentId,proto3" json:"content_id,omitempty"`
 	ContentType   string                 `protobuf:"bytes,3,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	ModelConfig   *ModelConfig           `protobuf:"bytes,4,opt,name=model_config,json=modelConfig,proto3" json:"model_config,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ModerateContentRequest) Reset() {
 	*x = ModerateContentRequest{}
-	mi := &file_ai_moderation_proto_msgTypes[3]
+	mi := &file_ai_moderation_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -411,7 +497,7 @@ func (x *ModerateContentRequest) String() string {
 func (*ModerateContentRequest) ProtoMessage() {}
 
 func (x *ModerateContentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[3]
+	mi := &file_ai_moderation_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -424,7 +510,7 @@ func (x *ModerateContentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModerateContentRequest.ProtoReflect.Descriptor instead.
 func (*ModerateContentRequest) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{3}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ModerateContentRequest) GetContent() string {
@@ -448,6 +534,13 @@ func (x *ModerateContentRequest) GetContentType() string {
 	return ""
 }
 
+func (x *ModerateContentRequest) GetModelConfig() *ModelConfig {
+	if x != nil {
+		return x.ModelConfig
+	}
+	return nil
+}
+
 // 审核响应
 type ModerateContentResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -460,7 +553,7 @@ type ModerateContentResponse struct {
 
 func (x *ModerateContentResponse) Reset() {
 	*x = ModerateContentResponse{}
-	mi := &file_ai_moderation_proto_msgTypes[4]
+	mi := &file_ai_moderation_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -472,7 +565,7 @@ func (x *ModerateContentResponse) String() string {
 func (*ModerateContentResponse) ProtoMessage() {}
 
 func (x *ModerateContentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[4]
+	mi := &file_ai_moderation_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -485,7 +578,7 @@ func (x *ModerateContentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModerateContentResponse.ProtoReflect.Descriptor instead.
 func (*ModerateContentResponse) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{4}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ModerateContentResponse) GetCode() int32 {
@@ -523,7 +616,7 @@ type GetModerationRecordsRequest struct {
 
 func (x *GetModerationRecordsRequest) Reset() {
 	*x = GetModerationRecordsRequest{}
-	mi := &file_ai_moderation_proto_msgTypes[5]
+	mi := &file_ai_moderation_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -535,7 +628,7 @@ func (x *GetModerationRecordsRequest) String() string {
 func (*GetModerationRecordsRequest) ProtoMessage() {}
 
 func (x *GetModerationRecordsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[5]
+	mi := &file_ai_moderation_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -548,7 +641,7 @@ func (x *GetModerationRecordsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetModerationRecordsRequest.ProtoReflect.Descriptor instead.
 func (*GetModerationRecordsRequest) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{5}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetModerationRecordsRequest) GetResult() ModerationResult {
@@ -599,7 +692,7 @@ type GetModerationRecordsResponse struct {
 
 func (x *GetModerationRecordsResponse) Reset() {
 	*x = GetModerationRecordsResponse{}
-	mi := &file_ai_moderation_proto_msgTypes[6]
+	mi := &file_ai_moderation_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -611,7 +704,7 @@ func (x *GetModerationRecordsResponse) String() string {
 func (*GetModerationRecordsResponse) ProtoMessage() {}
 
 func (x *GetModerationRecordsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_moderation_proto_msgTypes[6]
+	mi := &file_ai_moderation_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -624,7 +717,7 @@ func (x *GetModerationRecordsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetModerationRecordsResponse.ProtoReflect.Descriptor instead.
 func (*GetModerationRecordsResponse) Descriptor() ([]byte, []int) {
-	return file_ai_moderation_proto_rawDescGZIP(), []int{6}
+	return file_ai_moderation_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetModerationRecordsResponse) GetCode() int32 {
@@ -659,7 +752,13 @@ var File_ai_moderation_proto protoreflect.FileDescriptor
 
 const file_ai_moderation_proto_rawDesc = "" +
 	"\n" +
-	"\x13ai/moderation.proto\x12\rai.moderation\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb9\x03\n" +
+	"\x13ai/moderation.proto\x12\rai.moderation\x1a\x1fgoogle/protobuf/timestamp.proto\"\x95\x01\n" +
+	"\vModelConfig\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05model\x18\x02 \x01(\tR\x05model\x12\x17\n" +
+	"\aapi_key\x18\x03 \x01(\tR\x06apiKey\x12\x19\n" +
+	"\bbase_url\x18\x04 \x01(\tR\abaseUrl\x12 \n" +
+	"\vtemperature\x18\x05 \x01(\x01R\vtemperature\"\xb9\x03\n" +
 	"\x10ModerationRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x127\n" +
@@ -674,7 +773,7 @@ const file_ai_moderation_proto_rawDesc = "" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a9\n" +
 	"\vScoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x02R\x05value:\x028\x01\"\x8d\x01\n" +
+	"\x05value\x18\x02 \x01(\x02R\x05value:\x028\x01\"\xcc\x01\n" +
 	"\x10TranslateRequest\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x1f\n" +
 	"\vsource_lang\x18\x02 \x01(\tR\n" +
@@ -682,7 +781,8 @@ const file_ai_moderation_proto_rawDesc = "" +
 	"\vtarget_lang\x18\x03 \x01(\tR\n" +
 	"targetLang\x12\x1d\n" +
 	"\n" +
-	"content_id\x18\x04 \x01(\tR\tcontentId\"\xb2\x01\n" +
+	"content_id\x18\x04 \x01(\tR\tcontentId\x12=\n" +
+	"\fmodel_config\x18\x05 \x01(\v2\x1a.ai.moderation.ModelConfigR\vmodelConfig\"\xb2\x01\n" +
 	"\x11TranslateResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12-\n" +
@@ -690,12 +790,13 @@ const file_ai_moderation_proto_rawDesc = "" +
 	"\vsource_lang\x18\x04 \x01(\tR\n" +
 	"sourceLang\x12\x1f\n" +
 	"\vtarget_lang\x18\x05 \x01(\tR\n" +
-	"targetLang\"t\n" +
+	"targetLang\"\xb3\x01\n" +
 	"\x16ModerateContentRequest\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x1d\n" +
 	"\n" +
 	"content_id\x18\x02 \x01(\tR\tcontentId\x12!\n" +
-	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\"|\n" +
+	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\x12=\n" +
+	"\fmodel_config\x18\x04 \x01(\v2\x1a.ai.moderation.ModelConfigR\vmodelConfig\"|\n" +
 	"\x17ModerateContentResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x123\n" +
@@ -744,41 +845,44 @@ func file_ai_moderation_proto_rawDescGZIP() []byte {
 }
 
 var file_ai_moderation_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_ai_moderation_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_ai_moderation_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_ai_moderation_proto_goTypes = []any{
 	(ModerationResult)(0),                // 0: ai.moderation.ModerationResult
 	(ModerationCategory)(0),              // 1: ai.moderation.ModerationCategory
-	(*ModerationRecord)(nil),             // 2: ai.moderation.ModerationRecord
-	(*TranslateRequest)(nil),             // 3: ai.moderation.TranslateRequest
-	(*TranslateResponse)(nil),            // 4: ai.moderation.TranslateResponse
-	(*ModerateContentRequest)(nil),       // 5: ai.moderation.ModerateContentRequest
-	(*ModerateContentResponse)(nil),      // 6: ai.moderation.ModerateContentResponse
-	(*GetModerationRecordsRequest)(nil),  // 7: ai.moderation.GetModerationRecordsRequest
-	(*GetModerationRecordsResponse)(nil), // 8: ai.moderation.GetModerationRecordsResponse
-	nil,                                  // 9: ai.moderation.ModerationRecord.ScoresEntry
-	(*timestamppb.Timestamp)(nil),        // 10: google.protobuf.Timestamp
+	(*ModelConfig)(nil),                  // 2: ai.moderation.ModelConfig
+	(*ModerationRecord)(nil),             // 3: ai.moderation.ModerationRecord
+	(*TranslateRequest)(nil),             // 4: ai.moderation.TranslateRequest
+	(*TranslateResponse)(nil),            // 5: ai.moderation.TranslateResponse
+	(*ModerateContentRequest)(nil),       // 6: ai.moderation.ModerateContentRequest
+	(*ModerateContentResponse)(nil),      // 7: ai.moderation.ModerateContentResponse
+	(*GetModerationRecordsRequest)(nil),  // 8: ai.moderation.GetModerationRecordsRequest
+	(*GetModerationRecordsResponse)(nil), // 9: ai.moderation.GetModerationRecordsResponse
+	nil,                                  // 10: ai.moderation.ModerationRecord.ScoresEntry
+	(*timestamppb.Timestamp)(nil),        // 11: google.protobuf.Timestamp
 }
 var file_ai_moderation_proto_depIdxs = []int32{
 	0,  // 0: ai.moderation.ModerationRecord.result:type_name -> ai.moderation.ModerationResult
 	1,  // 1: ai.moderation.ModerationRecord.categories:type_name -> ai.moderation.ModerationCategory
-	9,  // 2: ai.moderation.ModerationRecord.scores:type_name -> ai.moderation.ModerationRecord.ScoresEntry
-	10, // 3: ai.moderation.ModerationRecord.created_at:type_name -> google.protobuf.Timestamp
-	2,  // 4: ai.moderation.ModerateContentResponse.data:type_name -> ai.moderation.ModerationRecord
-	0,  // 5: ai.moderation.GetModerationRecordsRequest.result:type_name -> ai.moderation.ModerationResult
-	10, // 6: ai.moderation.GetModerationRecordsRequest.start_time:type_name -> google.protobuf.Timestamp
-	10, // 7: ai.moderation.GetModerationRecordsRequest.end_time:type_name -> google.protobuf.Timestamp
-	2,  // 8: ai.moderation.GetModerationRecordsResponse.records:type_name -> ai.moderation.ModerationRecord
-	3,  // 9: ai.moderation.ModerationService.Translate:input_type -> ai.moderation.TranslateRequest
-	5,  // 10: ai.moderation.ModerationService.ModerateContent:input_type -> ai.moderation.ModerateContentRequest
-	7,  // 11: ai.moderation.ModerationService.GetModerationRecords:input_type -> ai.moderation.GetModerationRecordsRequest
-	4,  // 12: ai.moderation.ModerationService.Translate:output_type -> ai.moderation.TranslateResponse
-	6,  // 13: ai.moderation.ModerationService.ModerateContent:output_type -> ai.moderation.ModerateContentResponse
-	8,  // 14: ai.moderation.ModerationService.GetModerationRecords:output_type -> ai.moderation.GetModerationRecordsResponse
-	12, // [12:15] is the sub-list for method output_type
-	9,  // [9:12] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	10, // 2: ai.moderation.ModerationRecord.scores:type_name -> ai.moderation.ModerationRecord.ScoresEntry
+	11, // 3: ai.moderation.ModerationRecord.created_at:type_name -> google.protobuf.Timestamp
+	2,  // 4: ai.moderation.TranslateRequest.model_config:type_name -> ai.moderation.ModelConfig
+	2,  // 5: ai.moderation.ModerateContentRequest.model_config:type_name -> ai.moderation.ModelConfig
+	3,  // 6: ai.moderation.ModerateContentResponse.data:type_name -> ai.moderation.ModerationRecord
+	0,  // 7: ai.moderation.GetModerationRecordsRequest.result:type_name -> ai.moderation.ModerationResult
+	11, // 8: ai.moderation.GetModerationRecordsRequest.start_time:type_name -> google.protobuf.Timestamp
+	11, // 9: ai.moderation.GetModerationRecordsRequest.end_time:type_name -> google.protobuf.Timestamp
+	3,  // 10: ai.moderation.GetModerationRecordsResponse.records:type_name -> ai.moderation.ModerationRecord
+	4,  // 11: ai.moderation.ModerationService.Translate:input_type -> ai.moderation.TranslateRequest
+	6,  // 12: ai.moderation.ModerationService.ModerateContent:input_type -> ai.moderation.ModerateContentRequest
+	8,  // 13: ai.moderation.ModerationService.GetModerationRecords:input_type -> ai.moderation.GetModerationRecordsRequest
+	5,  // 14: ai.moderation.ModerationService.Translate:output_type -> ai.moderation.TranslateResponse
+	7,  // 15: ai.moderation.ModerationService.ModerateContent:output_type -> ai.moderation.ModerateContentResponse
+	9,  // 16: ai.moderation.ModerationService.GetModerationRecords:output_type -> ai.moderation.GetModerationRecordsResponse
+	14, // [14:17] is the sub-list for method output_type
+	11, // [11:14] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_ai_moderation_proto_init() }
@@ -792,7 +896,7 @@ func file_ai_moderation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_moderation_proto_rawDesc), len(file_ai_moderation_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -9,17 +9,17 @@ import (
 )
 
 type User struct {
-	ID          int64          `gorm:"primaryKey;autoIncrement;comment:用户ID" json:"id"`
-	Username    string         `gorm:"uniqueIndex;size:50;not null;comment:用户名" json:"username"`
+	ID          int64          `gorm:"primaryKey;autoIncrement;comment:用户ID;index:idx_users_id_deleted" json:"id"`
+	Username    string         `gorm:"uniqueIndex;size:50;not null;comment:用户名;index:idx_users_username_deleted" json:"username"`
 	Password    string         `gorm:"size:255;not null;comment:密码" json:"-"`
-	Email       *string        `gorm:"size:100;comment:邮箱" json:"email,omitempty"`
-	Phone       *string        `gorm:"size:20;comment:手机号" json:"phone,omitempty"`
+	Email       *string        `gorm:"size:100;comment:邮箱;index:idx_users_email_deleted" json:"email,omitempty"`
+	Phone       *string        `gorm:"size:20;comment:手机号;index:idx_users_phone_deleted" json:"phone,omitempty"`
 	Avatar      *string        `gorm:"size:255;comment:头像" json:"avatar,omitempty"`
 	Preferences JSONMap        `gorm:"type:jsonb;comment:偏好设置" json:"preferences,omitempty"`
 	Interests   StringSlice    `gorm:"type:jsonb;comment:兴趣标签" json:"interests,omitempty"`
 	CreatedAt   time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
 	UpdatedAt   time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
-	DeletedAt   gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
+	DeletedAt   gorm.DeletedAt `gorm:"index;comment:删除时间;index:idx_users_id_deleted;index:idx_users_username_deleted;index:idx_users_email_deleted;index:idx_users_phone_deleted" json:"-"`
 }
 
 type UserStats struct {

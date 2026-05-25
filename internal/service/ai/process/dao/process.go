@@ -17,8 +17,11 @@ type ProcessRepository interface {
 	ListDocuments(ctx context.Context, status *int, page, pageSize int) ([]*model.Document, int64, error)
 	DeleteDocument(ctx context.Context, id string) error
 	CreateChunk(ctx context.Context, chunk *model.DocumentChunk) error
+	UpdateChunk(ctx context.Context, chunk *model.DocumentChunk) error
 	GetChunksByDocumentID(ctx context.Context, docID string) ([]*model.DocumentChunk, error)
 	DeleteChunksByDocumentID(ctx context.Context, docID string) error
+	GetChunkCountByDocumentID(ctx context.Context, docID string) (int64, error)
+	GetChunkCountsByDocumentIDs(ctx context.Context, docIDs []string) (map[string]int64, error)
 	WithTransaction(ctx context.Context, fn func(repo ProcessRepository) error) error
 }
 
@@ -92,6 +95,13 @@ func (r *processRepository) CreateChunk(ctx context.Context, chunk *model.Docume
 	return r.db.WithContext(ctx).Create(chunk).Error
 }
 
+func (r *processRepository) UpdateChunk(ctx context.Context, chunk *model.DocumentChunk) error {
+	return r.db.WithContext(ctx).Model(&model.DocumentChunk{}).Where("id = ?", chunk.ID).Updates(map[string]interface{}{
+		"vector_id":  chunk.VectorID,
+		"updated_at": time.Now(),
+	}).Error
+}
+
 func (r *processRepository) GetChunksByDocumentID(ctx context.Context, docID string) ([]*model.DocumentChunk, error) {
 	var chunks []*model.DocumentChunk
 	err := r.db.WithContext(ctx).Where("document_id = ?", docID).Order("chunk_index ASC").Find(&chunks).Error
@@ -100,6 +110,40 @@ func (r *processRepository) GetChunksByDocumentID(ctx context.Context, docID str
 
 func (r *processRepository) DeleteChunksByDocumentID(ctx context.Context, docID string) error {
 	return r.db.WithContext(ctx).Delete(&model.DocumentChunk{}, "document_id = ?", docID).Error
+}
+
+func (r *processRepository) GetChunkCountByDocumentID(ctx context.Context, docID string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.DocumentChunk{}).Where("document_id = ?", docID).Count(&count).Error
+	return count, err
+}
+
+func (r *processRepository) GetChunkCountsByDocumentIDs(ctx context.Context, docIDs []string) (map[string]int64, error) {
+	if len(docIDs) == 0 {
+		return make(map[string]int64), nil
+	}
+
+	type result struct {
+		DocumentID string
+		Count      int64
+	}
+
+	var results []result
+	err := r.db.WithContext(ctx).
+		Model(&model.DocumentChunk{}).
+		Select("document_id, COUNT(*) as count").
+		Where("document_id IN ?", docIDs).
+		Group("document_id").
+		Find(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int64, len(results))
+	for _, r := range results {
+		counts[r.DocumentID] = r.Count
+	}
+	return counts, nil
 }
 
 func (r *processRepository) WithTransaction(ctx context.Context, fn func(repo ProcessRepository) error) error {

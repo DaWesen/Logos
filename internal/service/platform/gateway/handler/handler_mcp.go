@@ -55,10 +55,7 @@ func (h *Handler) ListMCPTools(c *gin.Context) {
 		return
 	}
 	var req pb.ListToolsRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
-		return
-	}
+	c.ShouldBindJSON(&req)
 	resp, err := h.MCPClient.ListTools(context.Background(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
@@ -115,5 +112,116 @@ func (h *Handler) DeleteMCPTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+		"success": resp.Code == 0,
+		"message": resp.Message,
+	}})
+}
+
+func (h *Handler) CreateMCPService(c *gin.Context) {
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	var req pb.CreateMCPServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	resp, err := h.MCPClient.CreateMCPService(context.Background(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+}
+
+func (h *Handler) ListMCPServices(c *gin.Context) {
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	var req pb.ListMCPServicesRequest
+	c.ShouldBindJSON(&req)
+	if req.PageSize == 0 {
+		req.PageSize = 100
+	}
+	resp, err := h.MCPClient.ListMCPServices(context.Background(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+		"services": resp.Services,
+		"total":    resp.Total,
+	}})
+}
+
+func (h *Handler) GetMCPService(c *gin.Context) {
+	serviceID := c.Param("id")
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	resp, err := h.MCPClient.GetMCPService(context.Background(), &pb.GetMCPServiceRequest{ServiceId: serviceID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+}
+
+func (h *Handler) UpdateMCPService(c *gin.Context) {
+	serviceID := c.Param("id")
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	var req pb.UpdateMCPServiceRequest
+	req.ServiceId = serviceID
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	resp, err := h.MCPClient.UpdateMCPService(context.Background(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+}
+
+func (h *Handler) DeleteMCPService(c *gin.Context) {
+	serviceID := c.Param("id")
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	resp, err := h.MCPClient.DeleteMCPService(context.Background(), &pb.DeleteMCPServiceRequest{ServiceId: serviceID})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
 	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message})
+}
+
+func (h *Handler) TestMCPService(c *gin.Context) {
+	if h.MCPClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
+		return
+	}
+	var req pb.TestMCPServiceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	resp, err := h.MCPClient.TestMCPService(context.Background(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+		"success": resp.Code == 0,
+		"message": resp.Message,
+	}})
 }

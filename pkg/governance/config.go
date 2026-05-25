@@ -3,10 +3,10 @@ package governance
 import "time"
 
 type Config struct {
-	Timeout    TimeoutConfig    `mapstructure:"timeout"`
-	Retry      RetryConfig      `mapstructure:"retry"`
+	Timeout        TimeoutConfig        `mapstructure:"timeout"`
+	Retry          RetryConfig          `mapstructure:"retry"`
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	RateLimit  RateLimitConfig  `mapstructure:"rate_limit"`
+	RateLimit      RateLimitConfig      `mapstructure:"rate_limit"`
 }
 
 type TimeoutConfig struct {
@@ -16,18 +16,18 @@ type TimeoutConfig struct {
 }
 
 type RetryConfig struct {
-	MaxAttempts   int           `mapstructure:"max_attempts"`
-	InitialDelay  time.Duration `mapstructure:"initial_delay"`
-	MaxDelay      time.Duration `mapstructure:"max_delay"`
-	RetryableCodes []string     `mapstructure:"retryable_codes"`
+	MaxAttempts    int           `mapstructure:"max_attempts"`
+	InitialDelay   time.Duration `mapstructure:"initial_delay"`
+	MaxDelay       time.Duration `mapstructure:"max_delay"`
+	RetryableCodes []string      `mapstructure:"retryable_codes"`
 }
 
 type CircuitBreakerConfig struct {
-	MaxRequests    int32         `mapstructure:"max_requests"`
-	Interval       time.Duration `mapstructure:"interval"`
-	Timeout        time.Duration `mapstructure:"timeout"`
-	FailureThreshold int32       `mapstructure:"failure_threshold"`
-	SuccessThreshold int32       `mapstructure:"success_threshold"`
+	MaxRequests      int32         `mapstructure:"max_requests"`
+	Interval         time.Duration `mapstructure:"interval"`
+	Timeout          time.Duration `mapstructure:"timeout"`
+	FailureThreshold int32         `mapstructure:"failure_threshold"`
+	SuccessThreshold int32         `mapstructure:"success_threshold"`
 }
 
 type RateLimitConfig struct {
@@ -50,14 +50,14 @@ func DefaultConfig() *Config {
 		},
 		CircuitBreaker: CircuitBreakerConfig{
 			MaxRequests:      3,
-			Interval:         60 * time.Second,
-			Timeout:          30 * time.Second,
-			FailureThreshold: 5,
-			SuccessThreshold: 3,
+			Interval:         30 * time.Second,
+			Timeout:          10 * time.Second,
+			FailureThreshold: 50,
+			SuccessThreshold: 2,
 		},
 		RateLimit: RateLimitConfig{
-			MaxRequestsPerSecond: 100,
-			MaxConcurrent:        50,
+			MaxRequestsPerSecond: 1000,
+			MaxConcurrent:        200,
 		},
 	}
 }

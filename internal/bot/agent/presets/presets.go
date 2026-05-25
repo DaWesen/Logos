@@ -27,6 +27,10 @@ func RegisterAllPresets(mgr *agent.AgentManager) error {
 		return err
 	}
 
+	if err := RegisterKnowledgeAssistantAgent(mgr); err != nil {
+		return err
+	}
+
 	logger.Info("All hardcoded preset agents registered successfully")
 	return nil
 }

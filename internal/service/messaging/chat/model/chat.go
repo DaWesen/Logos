@@ -5,20 +5,19 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
-// ChatType 聊天类型
 type ChatType int
 
 const (
 	ChatTypePrivate ChatType = iota + 1
 	ChatTypeGroup
 	ChatTypeBroadcast
-	ChatTypeEnd // 边界标记
+	ChatTypeEnd
 )
 
-// String 实现 String 方法
 func (c ChatType) String() string {
 	switch c {
 	case ChatTypePrivate:
@@ -32,7 +31,6 @@ func (c ChatType) String() string {
 	}
 }
 
-// MessageType 消息类型
 type MessageType int
 
 const (
@@ -40,11 +38,12 @@ const (
 	MessageTypeImage
 	MessageTypeFile
 	MessageTypeVoice
+	MessageTypeVideo
+	MessageTypeLocation
 	MessageTypeSystem
-	MessageTypeEnd // 边界标记
+	MessageTypeEnd
 )
 
-// String 实现 String 方法
 func (m MessageType) String() string {
 	switch m {
 	case MessageTypeText:
@@ -55,6 +54,10 @@ func (m MessageType) String() string {
 		return "file"
 	case MessageTypeVoice:
 		return "voice"
+	case MessageTypeVideo:
+		return "video"
+	case MessageTypeLocation:
+		return "location"
 	case MessageTypeSystem:
 		return "system"
 	default:
@@ -62,7 +65,6 @@ func (m MessageType) String() string {
 	}
 }
 
-// MessageStatus 消息状态
 type MessageStatus int
 
 const (
@@ -71,10 +73,9 @@ const (
 	MessageStatusRead
 	MessageStatusWithdrawn
 	MessageStatusEdited
-	MessageStatusEnd // 边界标记
+	MessageStatusEnd
 )
 
-// String 实现 String 方法
 func (s MessageStatus) String() string {
 	switch s {
 	case MessageStatusSent:
@@ -92,91 +93,219 @@ func (s MessageStatus) String() string {
 	}
 }
 
-// Metadata 用于存储元数据的map类型
 type Metadata map[string]string
 
-// Value 实现 driver.Valuer 接口
 func (m Metadata) Value() (driver.Value, error) {
+	if m == nil {
+		return json.Marshal(map[string]string{})
+	}
 	return json.Marshal(m)
 }
 
-// Scan 实现 sql.Scanner 接口
 func (m *Metadata) Scan(value interface{}) error {
-	bytes, ok := value.([]byte)
-	if !ok {
+	if value == nil {
+		*m = make(Metadata)
 		return nil
 	}
-	return json.Unmarshal(bytes, &m)
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		*m = make(Metadata)
+		return nil
+	}
+	return json.Unmarshal(b, m)
 }
 
-// Message 消息模型
+type StringArray []string
+
+func (a StringArray) Value() (driver.Value, error) {
+	if a == nil {
+		return json.Marshal([]string{})
+	}
+	return json.Marshal(a)
+}
+
+func (a *StringArray) Scan(value interface{}) error {
+	if value == nil {
+		*a = make(StringArray, 0)
+		return nil
+	}
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		*a = make(StringArray, 0)
+		return nil
+	}
+	return json.Unmarshal(b, a)
+}
+
+type JSONRaw json.RawMessage
+
+func (j JSONRaw) Value() (driver.Value, error) {
+	if len(j) == 0 {
+		return json.Marshal(map[string]interface{}{})
+	}
+	return []byte(j), nil
+}
+
+func (j *JSONRaw) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return nil
+	}
+	*j = JSONRaw(b)
+	return nil
+}
+
+type ImageContent struct {
+	URL       string `json:"url"`
+	Thumbnail string `json:"thumbnail,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+	MimeType  string `json:"mime_type,omitempty"`
+}
+
+type FileContent struct {
+	URL      string `json:"url"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+}
+
+type VoiceContent struct {
+	URL      string  `json:"url"`
+	Duration float64 `json:"duration,omitempty"`
+	Size     int64   `json:"size,omitempty"`
+	MimeType string  `json:"mime_type,omitempty"`
+}
+
+type VideoContent struct {
+	URL       string  `json:"url"`
+	Thumbnail string  `json:"thumbnail,omitempty"`
+	Duration  float64 `json:"duration,omitempty"`
+	Width     int     `json:"width,omitempty"`
+	Height    int     `json:"height,omitempty"`
+	Size      int64   `json:"size,omitempty"`
+	MimeType  string  `json:"mime_type,omitempty"`
+}
+
+type LocationContent struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Title     string  `json:"title,omitempty"`
+	Address   string  `json:"address,omitempty"`
+}
+
 type Message struct {
-	ID             string         `gorm:"primaryKey;size:100" json:"id"`
-	ChatID         string         `gorm:"index;size:100" json:"chat_id"`
-	ChatType       ChatType       `gorm:"index" json:"chat_type"`
-	SenderID       string         `gorm:"index;size:100" json:"sender_id"`
-	MessageType    MessageType    `json:"message_type"`
+	ID             string         `gorm:"type:varchar(64);primaryKey" json:"id"`
+	RequestID      string         `gorm:"type:varchar(64);index" json:"request_id"`
+	ConversationID string         `gorm:"type:varchar(100);index" json:"conversation_id"`
+	ChatID         string         `gorm:"type:varchar(100);index" json:"chat_id"`
+	ChatType       int            `gorm:"type:integer;index" json:"chat_type"`
+	SenderID       string         `gorm:"type:varchar(64);index;not null" json:"sender_id"`
+	SenderName     string         `gorm:"type:varchar(100)" json:"sender_name"`
+	SenderAvatar   string         `gorm:"type:varchar(500)" json:"sender_avatar"`
+	MessageType    int            `gorm:"type:integer" json:"message_type"`
 	Content        string         `gorm:"type:text" json:"content"`
-	Metadata       Metadata       `gorm:"type:json" json:"metadata"`
-	Status         MessageStatus  `gorm:"type:int;default:1" json:"status"`
+	MediaURL       string         `gorm:"type:varchar(500)" json:"media_url"`
+	MediaMeta      JSONRaw        `gorm:"type:jsonb" json:"media_meta"`
+	Metadata       Metadata       `gorm:"type:jsonb" json:"metadata"`
+	MentionUserIDs StringArray    `gorm:"type:jsonb" json:"mention_user_ids"`
+	ReplyToMessage string         `gorm:"type:varchar(100)" json:"reply_to_message"`
+	Status         string         `gorm:"type:varchar(50);default:'sent'" json:"status"`
+	IsRead         bool           `gorm:"default:false" json:"is_read"`
+	Channel        string         `gorm:"type:varchar(50);default:'web'" json:"channel"`
+	Role           string         `gorm:"type:varchar(50);default:'user'" json:"role"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
-	ReplyToMessage string         `gorm:"size:100" json:"reply_to_message_id"`
-	MentionUserIDs string         `gorm:"type:text" json:"mention_user_ids"` // 存储 JSON 数组
 }
 
-// TableName 指定表名
 func (Message) TableName() string {
 	return "messages"
 }
 
-// Conversation 会话模型（用于单聊/群聊基本信息）
-type Conversation struct {
-	ID            string         `gorm:"primaryKey;size:100" json:"id"`
-	Type          ChatType       `gorm:"index" json:"type"`
-	Name          string         `gorm:"size:200" json:"name"`
-	Metadata      Metadata       `gorm:"type:json" json:"metadata"`
-	LastMessage   *Message       `gorm:"foreignKey:LastMessageID;references:ID" json:"last_message,omitempty"`
-	LastMessageID string         `gorm:"size:100" json:"last_message_id"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+func (m *Message) BeforeCreate(tx *gorm.DB) error {
+	if m.ID == "" {
+		m.ID = uuid.New().String()
+	}
+	if m.RequestID == "" {
+		m.RequestID = m.ID
+	}
+	if m.Metadata == nil {
+		m.Metadata = make(Metadata)
+	}
+	if m.MentionUserIDs == nil {
+		m.MentionUserIDs = make(StringArray, 0)
+	}
+	return nil
 }
 
-// TableName 指定表名
+type Conversation struct {
+	ID        string         `gorm:"type:varchar(100);primaryKey" json:"id"`
+	ChatID    string         `gorm:"type:varchar(100);index;not null" json:"chat_id"`
+	ChatType  int            `gorm:"type:integer;index;not null" json:"chat_type"`
+	Name      string         `gorm:"type:varchar(255)" json:"name"`
+	Avatar    string         `gorm:"type:varchar(255)" json:"avatar"`
+	BotID     string         `gorm:"type:varchar(36);default:''" json:"bot_id"`
+	UserID    string         `gorm:"type:varchar(36);default:''" json:"user_id"`
+	Title     string         `gorm:"type:text" json:"title"`
+	Status    string         `gorm:"type:varchar(20);default:'active'" json:"status"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
 func (Conversation) TableName() string {
 	return "conversations"
 }
 
-// Group 群组模型
 type Group struct {
-	ID           string         `gorm:"primaryKey;size:100" json:"id"`
-	Name         string         `gorm:"size:200" json:"name"`
-	OwnerID      string         `gorm:"index;size:100" json:"owner_id"`
-	Metadata     Metadata       `gorm:"type:json" json:"metadata"`
+	ID           string         `gorm:"type:varchar(36);primaryKey" json:"id"`
+	Name         string         `gorm:"type:varchar(255);not null" json:"name"`
+	OwnerID      string         `gorm:"type:varchar(36);index;not null" json:"owner_id"`
+	Avatar       string         `gorm:"type:varchar(255)" json:"avatar"`
+	Description  string         `gorm:"type:text" json:"description"`
 	Announcement string         `gorm:"type:text" json:"announcement"`
+	MaxMembers   int            `gorm:"default:500" json:"max_members"`
+	MemberCount  int            `gorm:"default:0" json:"member_count"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// TableName 指定表名
 func (Group) TableName() string {
 	return "groups"
 }
 
-// GroupMemberRole 群成员角色
 type GroupMemberRole int
 
 const (
 	GroupMemberRoleOwner GroupMemberRole = iota + 1
 	GroupMemberRoleAdmin
 	GroupMemberRoleMember
-	GroupMemberRoleEnd // 边界标记
+	GroupMemberRoleBot
+	GroupMemberRoleEnd
 )
 
-// String 实现 String 方法
 func (r GroupMemberRole) String() string {
 	switch r {
 	case GroupMemberRoleOwner:
@@ -185,22 +314,22 @@ func (r GroupMemberRole) String() string {
 		return "admin"
 	case GroupMemberRoleMember:
 		return "member"
+	case GroupMemberRoleBot:
+		return "bot"
 	default:
 		return "unknown"
 	}
 }
 
-// MuteType 禁言类型
 type MuteType int
 
 const (
 	MuteTypeNone MuteType = iota + 1
 	MuteTypeTemporary
 	MuteTypePermanent
-	MuteTypeEnd // 边界标记
+	MuteTypeEnd
 )
 
-// String 实现 String 方法
 func (mt MuteType) String() string {
 	switch mt {
 	case MuteTypeNone:
@@ -214,48 +343,92 @@ func (mt MuteType) String() string {
 	}
 }
 
-// GroupMember 群成员
 type GroupMember struct {
-	ID        string          `gorm:"primaryKey;size:100" json:"id"`
-	GroupID   string          `gorm:"index;size:100" json:"group_id"`
-	UserID    string          `gorm:"index;size:100" json:"user_id"`
+	ID        int64           `gorm:"primaryKey;autoIncrement" json:"id"`
+	GroupID   string          `gorm:"type:varchar(36);uniqueIndex:idx_group_user;index;not null" json:"group_id"`
+	UserID    string          `gorm:"type:varchar(64);uniqueIndex:idx_group_user;index;not null" json:"user_id"`
+	Nickname  string          `gorm:"type:varchar(50)" json:"nickname"`
 	Role      GroupMemberRole `gorm:"default:3" json:"role"`
 	MuteType  MuteType        `gorm:"default:1" json:"mute_type"`
-	MuteUntil time.Time       `json:"mute_until"`
+	MuteUntil *time.Time      `json:"mute_until"`
 	JoinedAt  time.Time       `json:"joined_at"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
-// TableName 指定表名
 func (GroupMember) TableName() string {
 	return "group_members"
 }
 
-// Participant 会话参与者（用于单聊）
-type Participant struct {
-	ID             string    `gorm:"primaryKey;size:100" json:"id"`
-	ConversationID string    `gorm:"index;size:100" json:"conversation_id"`
-	UserID         string    `gorm:"index;size:100" json:"user_id"`
+type ConversationParticipant struct {
+	ID             int64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	ConversationID string    `gorm:"index;type:varchar(100);not null" json:"conversation_id"`
+	UserID         string    `gorm:"type:varchar(64);index;not null" json:"user_id"`
 	LastReadAt     time.Time `json:"last_read_at"`
+	JoinedAt       time.Time `json:"joined_at"`
 	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// TableName 指定表名
-func (Participant) TableName() string {
-	return "participants"
+func (ConversationParticipant) TableName() string {
+	return "conversation_participants"
 }
 
-// AutoMigrate 自动迁移
+type ConversationItem struct {
+	ChatID      string    `json:"chat_id"`
+	ChatType    int       `json:"chat_type"`
+	Name        string    `json:"name"`
+	Avatar      string    `json:"avatar"`
+	LastMessage *Message  `json:"last_message,omitempty"`
+	UnreadCount int64     `json:"unread_count"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	IsPinned    bool      `json:"is_pinned"`
+	IsMuted     bool      `json:"is_muted"`
+	IsFriend    bool      `json:"is_friend"`
+	IsBlocked   bool      `json:"is_blocked"`
+}
+
 func AutoMigrate(db *gorm.DB) error {
+	// 先清理无效的 JSON 数据
+	cleanInvalidJSON(db)
+
 	return db.AutoMigrate(
 		&Message{},
 		&Conversation{},
 		&Group{},
 		&GroupMember{},
-		&Participant{},
-		&SyncPoint{},
-		&Device{},
-		&MessageState{},
+		&ConversationParticipant{},
 	)
+}
+
+func cleanInvalidJSON(db *gorm.DB) {
+	// 检查 messages 表是否存在
+	var tableExists bool
+	db.Raw("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'messages')").Scan(&tableExists)
+	if !tableExists {
+		return
+	}
+
+	// 检查 media_meta 列是否存在
+	var columnExists bool
+	db.Raw("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'media_meta')").Scan(&columnExists)
+	if !columnExists {
+		return
+	}
+
+	// 清理无效的 JSON 数据，设置为 NULL 或空对象
+	db.Exec("UPDATE messages SET media_meta = NULL WHERE media_meta IS NOT NULL AND media_meta::text = ''")
+	db.Exec("UPDATE messages SET media_meta = '{}' WHERE media_meta IS NULL")
+
+	// 尝试转换为 jsonb 类型（更宽松的方式）
+	db.Exec(`DO $$
+	BEGIN
+		IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'media_meta' AND data_type <> 'jsonb') THEN
+			ALTER TABLE messages ALTER COLUMN media_meta TYPE jsonb USING CASE 
+				WHEN media_meta IS NULL OR media_meta = '' THEN '{}'::jsonb 
+				WHEN media_meta::text LIKE '{%' OR media_meta::text LIKE '[%' THEN media_meta::jsonb 
+				ELSE '{}'::jsonb 
+			END;
+		END IF;
+	END $$;`)
 }

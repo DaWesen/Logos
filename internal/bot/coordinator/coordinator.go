@@ -31,15 +31,23 @@ const coordinatorInstruction = `你是一个智能协调助手，可以调用多
 - 如果用户的问题需要多步处理（如"总结并翻译"），按顺序调用多个Bot/工具
 - 前一个工具的输出可以作为后一个工具的输入
 - 如果没有合适的Bot/工具，直接用你的知识回答
+- 当用户的问题涉及知识库中的专业内容时，优先使用 knowledge_search 和 grep_chunks 工具搜索
 - 始终用中文回复`
 
+type KnowledgeSearchService interface {
+	tools.KnowledgeSearchService
+}
+
 type Coordinator struct {
-	agent      adk.Agent
-	runner     *adk.Runner
-	einoMgr    *eino.EinoManager
-	agentMgr   *agent.AgentManager
-	mcpRegistry *mcp_server.ToolRegistry
-	mu         sync.RWMutex
+	agent          adk.Agent
+	runner         *adk.Runner
+	einoMgr        *eino.EinoManager
+	agentMgr       *agent.AgentManager
+	mcpRegistry    *mcp_server.ToolRegistry
+	knowledgeSvc   KnowledgeSearchService
+	graphWriteSvc  tools.GraphWriteService
+	graphSearchSvc tools.GraphService
+	mu             sync.RWMutex
 }
 
 var (
@@ -53,6 +61,32 @@ func InitCoordinator(einoMgr *eino.EinoManager, agentMgr *agent.AgentManager, mc
 			einoMgr:     einoMgr,
 			agentMgr:    agentMgr,
 			mcpRegistry: mcpRegistry,
+		}
+	})
+	return coordinatorInstance
+}
+
+func InitCoordinatorWithKnowledge(einoMgr *eino.EinoManager, agentMgr *agent.AgentManager, mcpRegistry *mcp_server.ToolRegistry, knowledgeSvc KnowledgeSearchService) *Coordinator {
+	coordinatorOnce.Do(func() {
+		coordinatorInstance = &Coordinator{
+			einoMgr:      einoMgr,
+			agentMgr:     agentMgr,
+			mcpRegistry:  mcpRegistry,
+			knowledgeSvc: knowledgeSvc,
+		}
+	})
+	return coordinatorInstance
+}
+
+func InitCoordinatorWithGraph(einoMgr *eino.EinoManager, agentMgr *agent.AgentManager, mcpRegistry *mcp_server.ToolRegistry, knowledgeSvc KnowledgeSearchService, graphWriteSvc tools.GraphWriteService, graphSearchSvc tools.GraphService) *Coordinator {
+	coordinatorOnce.Do(func() {
+		coordinatorInstance = &Coordinator{
+			einoMgr:        einoMgr,
+			agentMgr:       agentMgr,
+			mcpRegistry:    mcpRegistry,
+			knowledgeSvc:   knowledgeSvc,
+			graphWriteSvc:  graphWriteSvc,
+			graphSearchSvc: graphSearchSvc,
 		}
 	})
 	return coordinatorInstance
@@ -169,6 +203,20 @@ func (c *Coordinator) initialize(ctx context.Context) error {
 		mcpTools := tools.BuildMCPTools(c.mcpRegistry)
 		allTools = append(allTools, mcpTools...)
 		logger.Info("Coordinator 注册 MCP 工具", logger.IntField("count", len(mcpTools)))
+	}
+
+	if c.knowledgeSvc != nil {
+		knowledgeTools := tools.BuildKnowledgeTools(c.knowledgeSvc)
+		allTools = append(allTools, knowledgeTools...)
+		logger.Info("Coordinator 注册知识库工具", logger.IntField("count", len(knowledgeTools)))
+	}
+
+	if c.graphSearchSvc != nil && c.graphWriteSvc != nil {
+		graphSearchTools := tools.BuildGraphSearchTools(c.graphSearchSvc, "")
+		graphWriteTools := tools.BuildGraphWriteTools(c.graphWriteSvc, c.graphSearchSvc, "")
+		allTools = append(allTools, graphSearchTools...)
+		allTools = append(allTools, graphWriteTools...)
+		logger.Info("Coordinator 注册图谱工具", logger.IntField("search_count", len(graphSearchTools)), logger.IntField("write_count", len(graphWriteTools)))
 	}
 
 	toolDescriptions := c.buildToolDescriptions(allTools)

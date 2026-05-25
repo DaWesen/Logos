@@ -57,7 +57,7 @@ func (m *RetryManager) isRetryable(err error) bool {
 	}
 
 	switch st.Code() {
-	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+	case codes.Unavailable, codes.ResourceExhausted, codes.Aborted:
 		return true
 	default:
 		return false

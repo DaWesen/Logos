@@ -58,17 +58,27 @@ func BuildBotTools(agents []agent.BotAgent) []tool.BaseTool {
 	return tools
 }
 
-func sanitizeToolName(name string) string {
+func sanitizeName(name string) string {
 	name = strings.ReplaceAll(name, " ", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ToLower(name)
-	if len(name) > 64 {
-		name = name[:64]
+	var sb strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			sb.WriteRune(r)
+		}
 	}
-	if len(name) == 0 {
-		name = "bot"
+	result := strings.ToLower(sb.String())
+	if len(result) > 64 {
+		result = result[:64]
 	}
-	return "bot_" + name
+	return result
+}
+
+func sanitizeToolName(name string) string {
+	cleaned := sanitizeName(name)
+	if cleaned == "" {
+		cleaned = "bot"
+	}
+	return "bot_" + cleaned
 }
 
 var _ tool.InvokableTool = (*botToolWrapper)(nil)

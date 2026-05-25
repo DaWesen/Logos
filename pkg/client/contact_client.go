@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"Logos/config"
 	pb "Logos/proto_gen/contact"
@@ -19,7 +20,7 @@ func NewContactClient(client pb.ContactServiceClient, conn *grpc.ClientConn) *Co
 }
 
 func NewContactClientFromConfig(cfg *config.Config) (*ContactClient, error) {
-	conn, err := newConn(cfg, "logos.contact")
+	conn, err := tryDialWithFallback(cfg, "logos.contact", cfg.Ports.Contact)
 	if err != nil {
 		return nil, err
 	}
@@ -65,4 +66,26 @@ func (c *ContactClient) Close() error {
 type FriendInfo struct {
 	UserID string
 	Remark string
+}
+
+type FriendshipStatus struct {
+	IsFriend  bool
+	IsBlocked bool
+}
+
+func (c *ContactClient) IsFriend(ctx context.Context, userID, friendID string) (*FriendshipStatus, error) {
+	resp, err := c.client.CheckFriendship(ctx, &pb.CheckFriendshipRequest{
+		UserId:   userID,
+		FriendId: friendID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("check friendship failed: %s", resp.Message)
+	}
+	return &FriendshipStatus{
+		IsFriend:  resp.IsFriend,
+		IsBlocked: resp.IsBlocked,
+	}, nil
 }

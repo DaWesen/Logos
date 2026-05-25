@@ -182,15 +182,15 @@ func (s *monitoringServiceImpl) checkThreshold(ctx context.Context, m *model.Met
 	case 6:
 		threshold = 10.0
 		level = 3
-		alertMsg = fmt.Sprintf("������ %.2f%% ������ֵ %.0f%%", m.Value, threshold)
+		alertMsg = fmt.Sprintf("operation: value=%.2f threshold=%.2f", m.Value, threshold)
 	case 7:
 		threshold = 5000.0
 		level = 2
-		alertMsg = fmt.Sprintf("�ӳ� %.2fms ������ֵ %.0fms", m.Value, threshold)
+		alertMsg = fmt.Sprintf("operation: value=%.2f threshold=%.2f", m.Value, threshold)
 	case 8:
 		threshold = 100.0
 		level = 2
-		alertMsg = fmt.Sprintf("������ %.2f ������ֵ %.0f", m.Value, threshold)
+		alertMsg = fmt.Sprintf("operation: value=%.2f threshold=%.2f", m.Value, threshold)
 	default:
 		return
 	}

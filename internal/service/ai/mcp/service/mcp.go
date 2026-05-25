@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"Logos/internal/mcp"
 	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/mcp/dao"
 	"Logos/internal/service/ai/mcp/model"
@@ -302,4 +303,163 @@ func (s *mcpServiceImpl) UpdateTool(ctx context.Context, toolID string, name str
 func (s *mcpServiceImpl) DeleteTool(ctx context.Context, toolID string) error {
 	logger.Info("删除工具", logger.StringField("id", toolID))
 	return s.repo.DeleteTool(ctx, toolID)
+}
+
+type MCPServiceService interface {
+	CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error)
+	GetService(ctx context.Context, id string) (*model.MCPService, error)
+	ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error)
+	UpdateService(ctx context.Context, id string, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error)
+	DeleteService(ctx context.Context, id string) error
+	TestConnection(ctx context.Context, url, transportType string, headers map[string]string, authConfig map[string]string) error
+}
+
+type mcpServiceServiceImpl struct {
+	svcRepo   dao.MCPServiceRepository
+	clientMgr *mcp.MCPClientManager
+}
+
+func NewMCPServiceService(svcRepo dao.MCPServiceRepository, clientMgr *mcp.MCPClientManager) MCPServiceService {
+	return &mcpServiceServiceImpl{
+		svcRepo:   svcRepo,
+		clientMgr: clientMgr,
+	}
+}
+
+func (s *mcpServiceServiceImpl) CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error) {
+	logger.Info("创建MCP服务", logger.StringField("name", name))
+
+	existing, _ := s.svcRepo.GetServiceByName(ctx, name)
+	if existing != nil {
+		return nil, fmt.Errorf("服务名称已存在: %s", name)
+	}
+
+	mergedHeaders := mergeHeadersWithAuthConfig(headers, authConfig)
+
+	headersBytes, _ := json.Marshal(mergedHeaders)
+	authConfigBytes, _ := json.Marshal(authConfig)
+	advancedConfigBytes, _ := json.Marshal(advancedConfig)
+
+	svc := &model.MCPService{
+		ID:             uuid.New().String(),
+		Name:           name,
+		Description:    description,
+		Enabled:        enabled,
+		TransportType:  transportType,
+		URL:            url,
+		Headers:        string(headersBytes),
+		AuthConfig:     string(authConfigBytes),
+		AdvancedConfig: string(advancedConfigBytes),
+	}
+
+	if err := s.svcRepo.CreateService(ctx, svc); err != nil {
+		return nil, fmt.Errorf("创建MCP服务失败: %w", err)
+	}
+
+	if enabled {
+		s.clientMgr.GetOrCreateConnection(svc.ID, svc.URL, svc.TransportType, mergedHeaders)
+	}
+
+	return svc, nil
+}
+
+func (s *mcpServiceServiceImpl) GetService(ctx context.Context, id string) (*model.MCPService, error) {
+	return s.svcRepo.GetService(ctx, id)
+}
+
+func (s *mcpServiceServiceImpl) ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error) {
+	return s.svcRepo.ListServices(ctx, enabledOnly, page, pageSize)
+}
+
+func (s *mcpServiceServiceImpl) UpdateService(ctx context.Context, id string, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error) {
+	logger.Info("更新MCP服务", logger.StringField("id", id))
+
+	svc, err := s.svcRepo.GetService(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("查询MCP服务失败: %w", err)
+	}
+	if svc == nil {
+		return nil, fmt.Errorf("MCP服务不存在")
+	}
+
+	if name != "" {
+		svc.Name = name
+	}
+	if description != "" {
+		svc.Description = description
+	}
+	if transportType != "" {
+		svc.TransportType = transportType
+	}
+	if url != "" {
+		svc.URL = url
+	}
+
+	var mergedHeaders map[string]string
+	if headers != nil {
+		mergedHeaders = mergeHeadersWithAuthConfig(headers, authConfig)
+		headersBytes, _ := json.Marshal(mergedHeaders)
+		svc.Headers = string(headersBytes)
+	}
+	if authConfig != nil {
+		authConfigBytes, _ := json.Marshal(authConfig)
+		svc.AuthConfig = string(authConfigBytes)
+	}
+	if advancedConfig != nil {
+		advancedConfigBytes, _ := json.Marshal(advancedConfig)
+		svc.AdvancedConfig = string(advancedConfigBytes)
+	}
+	svc.Enabled = enabled
+
+	if err := s.svcRepo.UpdateService(ctx, svc); err != nil {
+		return nil, fmt.Errorf("更新MCP服务失败: %w", err)
+	}
+
+	if enabled {
+		s.clientMgr.GetOrCreateConnection(svc.ID, svc.URL, svc.TransportType, mergedHeaders)
+	} else {
+		s.clientMgr.RemoveConnection(svc.ID)
+	}
+
+	return svc, nil
+}
+
+func (s *mcpServiceServiceImpl) DeleteService(ctx context.Context, id string) error {
+	logger.Info("删除MCP服务", logger.StringField("id", id))
+
+	s.clientMgr.RemoveConnection(id)
+	return s.svcRepo.DeleteService(ctx, id)
+}
+
+func (s *mcpServiceServiceImpl) TestConnection(ctx context.Context, url, transportType string, headers map[string]string, authConfig map[string]string) error {
+	logger.Info("测试MCP服务连接", logger.StringField("url", url), logger.StringField("transport", transportType))
+	mergedHeaders := mergeHeadersWithAuthConfig(headers, authConfig)
+	return s.clientMgr.TestConnection(ctx, url, transportType, mergedHeaders)
+}
+
+func mergeHeadersWithAuthConfig(headers map[string]string, authConfig map[string]string) map[string]string {
+	result := make(map[string]string, len(headers)+1)
+	for k, v := range headers {
+		result[k] = v
+	}
+	if authConfig == nil {
+		return result
+	}
+	authType := authConfig["type"]
+	switch authType {
+	case "bearer":
+		if token := authConfig["token"]; token != "" {
+			result["Authorization"] = "Bearer " + token
+		}
+	case "api_key":
+		key := authConfig["key"]
+		headerName := authConfig["header_name"]
+		if headerName == "" {
+			headerName = "X-API-Key"
+		}
+		if key != "" {
+			result[headerName] = key
+		}
+	}
+	return result
 }

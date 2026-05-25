@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot
+  namespace: logos
+  labels:
+    app: bot
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bot
+  template:
+    metadata:
+      labels:
+        app: bot
+        domain: ai
+    spec:
+      containers:
+        - name: bot
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./bot"]
+          ports:
+            - containerPort: 9020
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9020
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bot-svc
+  namespace: logos
+spec:
+  selector:
+    app: bot
+  ports:
+    - port: 9020
+      targetPort: 9020

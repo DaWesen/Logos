@@ -14,6 +14,8 @@ message Entity {
   optional string description = 5;
   int64 created_at = 6;
   int64 updated_at = 7;
+  string collection_id = 8;
+  string color = 9;
 }
 
 message Relation {
@@ -25,6 +27,7 @@ message Relation {
   optional string description = 6;
   int64 created_at = 7;
   int64 updated_at = 8;
+  string collection_id = 9;
 }
 
 message AddEntityReq {
@@ -32,6 +35,8 @@ message AddEntityReq {
   string name = 2;
   map<string, string> properties = 3;
   optional string description = 4;
+  string collection_id = 5;
+  string color = 6;
 }
 
 message UpdateEntityReq {
@@ -40,6 +45,8 @@ message UpdateEntityReq {
   optional string name = 3;
   map<string, string> properties = 4;
   optional string description = 5;
+  string collection_id = 6;
+  string color = 7;
 }
 
 message DeleteEntityReq {
@@ -62,6 +69,7 @@ message AddRelationReq {
   string target_id = 3;
   map<string, string> properties = 4;
   optional string description = 5;
+  string collection_id = 6;
 }
 
 message UpdateRelationReq {
@@ -71,6 +79,7 @@ message UpdateRelationReq {
   optional string target_id = 4;
   map<string, string> properties = 5;
   optional string description = 6;
+  string collection_id = 7;
 }
 
 message DeleteRelationReq {
@@ -93,6 +102,7 @@ message QueryEntityReq {
   map<string, string> properties = 3;
   int32 page = 4;
   int32 page_size = 5;
+  string collection_id = 6;
 }
 
 message QueryRelationReq {
@@ -101,6 +111,7 @@ message QueryRelationReq {
   optional string target_id = 3;
   int32 page = 4;
   int32 page_size = 5;
+  string collection_id = 6;
 }
 
 message GraphStatsResp {
@@ -121,6 +132,7 @@ message SearchEntityReq {
   optional string type = 2;
   int32 page = 3;
   int32 page_size = 4;
+  string collection_id = 5;
 }
 
 message GetByIdReq {
@@ -132,10 +144,45 @@ message GetRelatedEntitiesReq {
   optional string relation_type = 2;
 }
 
-message EmptyReq {}
+message EmptyReq {
+  string collection_id = 1;
+}
+
+message GetSubgraphReq {
+  string entity_id = 1;
+  int32 depth = 2;
+  string collection_id = 3;
+}
+
+message SubgraphResp {
+  common.BaseResp base_resp = 1;
+  repeated Entity nodes = 2;
+  repeated Relation edges = 3;
+  int32 node_count = 4;
+  int32 edge_count = 5;
+}
+
+message GetEntityPathsReq {
+  string source_id = 1;
+  string target_id = 2;
+  int32 max_depth = 3;
+  string collection_id = 4;
+}
+
+message EntityPath {
+  repeated Entity entities = 1;
+  repeated Relation relations = 2;
+  int32 length = 3;
+}
+
+message EntityPathsResp {
+  common.BaseResp base_resp = 1;
+  repeated EntityPath paths = 2;
+}
 
 service KnowledgeService {
   rpc AddEntity(AddEntityReq) returns (EntityResp);
+  rpc FindOrCreateEntity(AddEntityReq) returns (EntityResp);
   rpc UpdateEntity(UpdateEntityReq) returns (EntityResp);
   rpc DeleteEntity(DeleteEntityReq) returns (common.BaseResp);
   rpc GetEntity(GetByIdReq) returns (EntityResp);
@@ -149,4 +196,6 @@ service KnowledgeService {
   rpc GetGraphStats(EmptyReq) returns (GraphStatsResp);
   rpc GetRelatedEntities(GetRelatedEntitiesReq) returns (BatchEntityResp);
   rpc ImportData(ImportDataReq) returns (common.BaseResp);
+  rpc GetSubgraph(GetSubgraphReq) returns (SubgraphResp);
+  rpc GetEntityPaths(GetEntityPathsReq) returns (EntityPathsResp);
 }

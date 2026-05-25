@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing
+  namespace: logos
+  labels:
+    app: billing
+    domain: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing
+  template:
+    metadata:
+      labels:
+        app: billing
+        domain: platform
+    spec:
+      containers:
+        - name: billing
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./billing"]
+          ports:
+            - containerPort: 9021
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9021
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-svc
+  namespace: logos
+spec:
+  selector:
+    app: billing
+  ports:
+    - port: 9021
+      targetPort: 9021

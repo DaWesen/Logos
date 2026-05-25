@@ -11,6 +11,13 @@ bin/
 # ==================== Go ====================
 vendor/
 
+# ==================== 前端 ====================
+web/node_modules/
+web/dist/
+web/.pnpm-store/
+web/pnpm-lock.yaml
+*.tsbuildinfo
+
 # ==================== IDE ====================
 .idea/
 .vscode/
@@ -54,3 +61,4 @@ coverage.txt
 coverage.html
 coverage.out
 profile.out
+web/node_modules

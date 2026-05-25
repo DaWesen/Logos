@@ -85,9 +85,9 @@ func (s *UserServiceImpl) Register(ctx context.Context, req *pb.RegisterReq) (*p
 func (s *UserServiceImpl) Login(ctx context.Context, req *pb.LoginReq) (*pb.LoginRegisterResp, error) {
 	resp := &pb.LoginRegisterResp{}
 
-	u, token, expireAt, err := s.UserService.Login(ctx, req.Account, req.Password)
+	u, token, expireAt, err := s.UserService.Login(ctx, req.Username, req.Password)
 	if err != nil {
-		logger.Error("��¼ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -105,7 +105,7 @@ func (s *UserServiceImpl) GetUserInfo(ctx context.Context, req *pb.UserInfoReq) 
 
 	u, err := s.UserService.GetUserInfo(ctx, req.UserId)
 	if err != nil {
-		logger.Error("��ȡ�û���Ϣʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -121,7 +121,7 @@ func (s *UserServiceImpl) GetUserInfoByUsername(ctx context.Context, req *pb.Use
 
 	u, err := s.UserService.GetUserInfoByUsername(ctx, req.Username)
 	if err != nil {
-		logger.Error("ͨ���û�����ȡ�û���Ϣʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -137,7 +137,7 @@ func (s *UserServiceImpl) BatchGetUserInfo(ctx context.Context, req *pb.BatchUse
 
 	userMap, err := s.UserService.BatchGetUserInfo(ctx, req.UserIds)
 	if err != nil {
-		logger.Error("������ȡ�û���Ϣʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -160,7 +160,7 @@ func (s *UserServiceImpl) UpdateUser(ctx context.Context, req *pb.UpdateUserReq)
 
 	err := s.UserService.UpdateUser(ctx, req.UserId, email, phone, avatar, req.Preferences, req.Interests, oldPassword, newPassword)
 	if err != nil {
-		logger.Error("�����û���Ϣʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -172,7 +172,7 @@ func (s *UserServiceImpl) UpdateAvatar(ctx context.Context, req *pb.UpdateAvatar
 	avatarStr := string(req.AvatarData)
 	err := s.UserService.UpdateAvatar(ctx, req.UserId, avatarStr)
 	if err != nil {
-		logger.Error("����ͷ��ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
@@ -185,7 +185,7 @@ func (s *UserServiceImpl) CheckUsername(ctx context.Context, req *pb.CheckUserna
 
 	available, err := s.UserService.CheckUsername(ctx, req.Username)
 	if err != nil {
-		logger.Error("����û���ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -201,7 +201,7 @@ func (s *UserServiceImpl) BatchCheckUsernames(ctx context.Context, req *pb.Batch
 
 	availableMap, err := s.UserService.BatchCheckUsernames(ctx, req.Usernames)
 	if err != nil {
-		logger.Error("��������û���ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -217,7 +217,7 @@ func (s *UserServiceImpl) GetUserStats(ctx context.Context, req *pb.UserStatsReq
 
 	stats, total, err := s.UserService.GetUserStats(ctx, req.UserId)
 	if err != nil {
-		logger.Error("��ȡ�û�ͳ����Ϣʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}
@@ -239,7 +239,7 @@ func (s *UserServiceImpl) SearchUsers(ctx context.Context, req *pb.SearchUsersRe
 
 	users, total, err := s.UserService.SearchUsers(ctx, req.Keyword, int(req.Page), int(req.PageSize))
 	if err != nil {
-		logger.Error("�����û�ʧ��", logger.ErrorField(err))
+		logger.Error("operation", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())
 		return resp, nil
 	}

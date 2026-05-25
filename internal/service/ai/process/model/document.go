@@ -9,20 +9,21 @@ import (
 )
 
 type Document struct {
-	ID          string         `gorm:"primaryKey;size:36;comment:文档ID" json:"id"`
-	FileName    string         `gorm:"size:255;not null;comment:文件名" json:"fileName"`
-	FileType    string         `gorm:"size:50;index;comment:文件类型" json:"fileType"`
-	FileSize    int64          `gorm:"comment:文件大小" json:"fileSize"`
-	FileURL     string         `gorm:"type:text;comment:文件URL" json:"fileURL"`
-	FileHash    string         `gorm:"size:64;index;comment:文件哈希" json:"fileHash"`
-	Status      int            `gorm:"index;comment:状态" json:"status"`
-	Content     string         `gorm:"type:text;comment:文件内容" json:"content"`
-	Metadata    JSONMap        `gorm:"type:jsonb;comment:元数据" json:"metadata"`
-	ErrorMsg    *string        `gorm:"type:text;comment:错误信息" json:"errorMsg"`
-	ProcessedAt *time.Time     `gorm:"comment:处理时间" json:"processedAt"`
-	CreatedAt   time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
-	UpdatedAt   time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
-	DeletedAt   gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
+	ID                 string         `gorm:"primaryKey;size:36;comment:文档ID" json:"id"`
+	VectorCollectionID string         `gorm:"size:36;index;comment:向量集合ID" json:"vectorCollectionId"`
+	FileName           string         `gorm:"size:255;not null;comment:文件名" json:"fileName"`
+	FileType           string         `gorm:"size:50;index;comment:文件类型" json:"fileType"`
+	FileSize           int64          `gorm:"comment:文件大小" json:"fileSize"`
+	FileURL            string         `gorm:"type:text;comment:文件URL" json:"fileURL"`
+	FileHash           string         `gorm:"size:64;index;comment:文件哈希" json:"fileHash"`
+	Status             int            `gorm:"index;comment:状态" json:"status"`
+	Content            string         `gorm:"type:text;comment:文件内容" json:"content"`
+	Metadata           JSONMap        `gorm:"type:jsonb;comment:元数据" json:"metadata"`
+	ErrorMsg           *string        `gorm:"type:text;comment:错误信息" json:"errorMsg"`
+	ProcessedAt        *time.Time     `gorm:"comment:处理时间" json:"processedAt"`
+	CreatedAt          time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
+	UpdatedAt          time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
+	DeletedAt          gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
 }
 
 type DocumentChunk struct {
@@ -36,6 +37,7 @@ type DocumentChunk struct {
 	ImageInfo  string         `gorm:"type:text;comment:图像信息" json:"imageInfo"`
 	IsEnabled  bool           `gorm:"default:true;comment:是否启用" json:"isEnabled"`
 	CreatedAt  time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
+	UpdatedAt  time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
 	DeletedAt  gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
 }
 
@@ -81,39 +83,39 @@ const (
 
 // Chunk types
 const (
-	ChunkTypeText        = "text"
-	ChunkTypeImageOCR    = "image_ocr"
+	ChunkTypeText         = "text"
+	ChunkTypeImageOCR     = "image_ocr"
 	ChunkTypeImageCaption = "image_caption"
-	ChunkTypeAudio       = "audio_transcript"
-	ChunkTypeVideo       = "video_transcript"
+	ChunkTypeAudio        = "audio_transcript"
+	ChunkTypeVideo        = "video_transcript"
 )
 
 // File types
 const (
-	FileTypeTXT   = "txt"
-	FileTypeMD    = "md"
-	FileTypePDF   = "pdf"
-	FileTypeDOC   = "doc"
-	FileTypeDOCX  = "docx"
-	FileTypeXLS   = "xls"
-	FileTypeXLSX  = "xlsx"
-	FileTypePPT   = "ppt"
-	FileTypePPTX  = "pptx"
-	FileTypeCSV   = "csv"
-	FileTypeHTML  = "html"
-	FileTypeJSON  = "json"
-	FileTypeJPG   = "jpg"
-	FileTypeJPEG  = "jpeg"
-	FileTypePNG   = "png"
-	FileTypeGIF   = "gif"
-	FileTypeBMP   = "bmp"
-	FileTypeWEBP  = "webp"
-	FileTypeMP3   = "mp3"
-	FileTypeWAV   = "wav"
-	FileTypeFLAC  = "flac"
-	FileTypeM4A   = "m4a"
-	FileTypeMP4   = "mp4"
-	FileTypeAVI   = "avi"
-	FileTypeMOV   = "mov"
-	FileTypeMKV   = "mkv"
+	FileTypeTXT  = "txt"
+	FileTypeMD   = "md"
+	FileTypePDF  = "pdf"
+	FileTypeDOC  = "doc"
+	FileTypeDOCX = "docx"
+	FileTypeXLS  = "xls"
+	FileTypeXLSX = "xlsx"
+	FileTypePPT  = "ppt"
+	FileTypePPTX = "pptx"
+	FileTypeCSV  = "csv"
+	FileTypeHTML = "html"
+	FileTypeJSON = "json"
+	FileTypeJPG  = "jpg"
+	FileTypeJPEG = "jpeg"
+	FileTypePNG  = "png"
+	FileTypeGIF  = "gif"
+	FileTypeBMP  = "bmp"
+	FileTypeWEBP = "webp"
+	FileTypeMP3  = "mp3"
+	FileTypeWAV  = "wav"
+	FileTypeFLAC = "flac"
+	FileTypeM4A  = "m4a"
+	FileTypeMP4  = "mp4"
+	FileTypeAVI  = "avi"
+	FileTypeMOV  = "mov"
+	FileTypeMKV  = "mkv"
 )

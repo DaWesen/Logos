@@ -77,7 +77,7 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 	}
 
 	if err := s.repo.SaveMessage(ctx, msg); err != nil {
-		return nil, fmt.Errorf("������Ϣʧ��: %w", err)
+		return nil, fmt.Errorf("failed: %w", err)
 	}
 
 	s.sendToKafka(ctx, msg)
@@ -93,7 +93,7 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 
 func (s *messageServiceImpl) sendToKafka(ctx context.Context, msg *model.Message) {
 	if s.kafkaProducer == nil {
-		logger.Warn("Kafka������δ��ʼ��������Kafka����")
+		logger.Warn("kafka operation")
 		return
 	}
 
@@ -109,7 +109,7 @@ func (s *messageServiceImpl) sendToKafka(ctx context.Context, msg *model.Message
 
 	eventData, err := json.Marshal(event)
 	if err != nil {
-		logger.Error("���л�Kafka��Ϣʧ��",
+		logger.Error("kafka operation",
 			logger.ErrorField(err))
 		return
 	}
@@ -120,13 +120,13 @@ func (s *messageServiceImpl) sendToKafka(ctx context.Context, msg *model.Message
 	}
 
 	if err := s.kafkaProducer.Send(ctx, topicName, msg.ID, eventData); err != nil {
-		logger.Error("������Ϣ��Kafkaʧ��",
+		logger.Error("kafka operation",
 			logger.StringField("kafka_topic", topicName),
 			logger.ErrorField(err))
 		return
 	}
 
-	logger.Info("��Ϣ�ѷ��͵�Kafka",
+	logger.Info("kafka operation",
 		logger.StringField("kafka_topic", topicName),
 		logger.StringField("message_id", msg.ID))
 }
@@ -143,7 +143,7 @@ func (s *messageServiceImpl) BatchSendMessage(ctx context.Context, msgs []struct
 	for _, m := range msgs {
 		msg, err := s.SendMessage(ctx, m.Topic, m.Content, m.Priority, m.Headers, m.CorrelationID)
 		if err != nil {
-			logger.Warn("����������Ϣ�е���ʧ��",
+			logger.Warn("operation",
 				logger.ErrorField(err))
 			continue
 		}
@@ -154,7 +154,7 @@ func (s *messageServiceImpl) BatchSendMessage(ctx context.Context, msgs []struct
 }
 
 func (s *messageServiceImpl) Subscribe(ctx context.Context, topic int32, consumerGroup string, config map[string]string) error {
-	logger.Info("��������",
+	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))),
 		logger.StringField("consumer_group", consumerGroup))
 
@@ -174,7 +174,7 @@ func (s *messageServiceImpl) Subscribe(ctx context.Context, topic int32, consume
 func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup string, topic int32, maxMessages int32, timeoutMs int32) ([]*model.Message, error) {
 	topicStr := dao.TopicString(int(topic))
 
-	logger.Info("������Ϣ",
+	logger.Info("operation",
 		logger.StringField("consumer_group", consumerGroup),
 		logger.StringField("topic", topicStr),
 		logger.IntField("max_messages", int(maxMessages)))
@@ -204,19 +204,19 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 }
 
 func (s *messageServiceImpl) AcknowledgeMessage(ctx context.Context, consumerGroup string, messageID string, topic int32) error {
-	logger.Info("ȷ����Ϣ",
+	logger.Info("operation",
 		logger.StringField("message_id", messageID))
 
 	return s.repo.UpdateMessageStatus(ctx, messageID, "ACKED")
 }
 
 func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consumerGroup string, messageIDs []string, topic int32) error {
-	logger.Info("����ȷ����Ϣ",
+	logger.Info("operation",
 		logger.IntField("count", len(messageIDs)))
 
 	for _, id := range messageIDs {
 		if err := s.repo.UpdateMessageStatus(ctx, id, "ACKED"); err != nil {
-			logger.Warn("ȷ����Ϣʧ��",
+			logger.Warn("operation",
 				logger.StringField("id", id),
 				logger.ErrorField(err))
 			continue
@@ -228,7 +228,7 @@ func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consu
 func (s *messageServiceImpl) GetMessageStats() ([]map[string]interface{}, error) {
 	total, pending, processed, failed, err := s.repo.GetMessageStats(context.Background(), "")
 	if err != nil {
-		return nil, fmt.Errorf("��ȡȫ��ͳ��ʧ��: %w", err)
+		return nil, fmt.Errorf("failed: %w", err)
 	}
 
 	topics := []int32{1, 2, 3, 4, 5, 6, 7}
@@ -262,17 +262,17 @@ func (s *messageServiceImpl) GetMessageStats() ([]map[string]interface{}, error)
 }
 
 func (s *messageServiceImpl) CreateTopic(topic int32) error {
-	logger.Info("������Ϣ����",
+	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))))
 
 	if s.kafkaProducer != nil {
 		ctx := context.Background()
 		topicName := dao.TopicString(int(topic))
 		if err := s.kafkaProducer.Send(ctx, topicName, "system-topic-create", []byte(fmt.Sprintf(`{"action":"create_topic","topic":"%s","timestamp":"%s"}`, topicName, time.Now().Format(time.RFC3339)))); err != nil {
-			logger.Warn("�������ⴴ���¼���Kafkaʧ��",
+			logger.Warn("kafka operation",
 				logger.ErrorField(err))
 		} else {
-			logger.Info("�ѷ������ⴴ���¼���Kafka",
+			logger.Info("kafka operation",
 				logger.StringField("topic", topicName))
 		}
 	}
@@ -324,7 +324,7 @@ func (s *messageServiceImpl) ClearMessages(topic int32) error {
 }
 
 func (s *messageServiceImpl) StartKafkaConsumer(ctx context.Context) error {
-	logger.Info("����Message Service��Kafka������")
+	logger.Info("kafka operation")
 
 	topics := []string{mq.TopicQARequest, mq.TopicRecommendation, mq.TopicSystemEvent}
 
@@ -333,13 +333,13 @@ func (s *messageServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 
 		go func(t string, c *mq.Consumer) {
 			if err := c.Subscribe(ctx, s.handleGenericMessage); err != nil {
-				logger.Error("������Ϣʧ��",
+				logger.Error("operation",
 					logger.StringField("topic", t),
 					logger.ErrorField(err))
 			}
 		}(topic, consumer)
 
-		logger.Info("������������",
+		logger.Info("operation",
 			logger.StringField("topic", topic))
 	}
 
@@ -347,13 +347,13 @@ func (s *messageServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 }
 
 func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
-	logger.Info("�յ�Kafka��Ϣ",
+	logger.Info("kafka operation",
 		logger.StringField("topic", msg.Topic),
 		logger.StringField("key", msg.Key))
 
 	var event map[string]interface{}
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		logger.Error("����Kafka��Ϣʧ��",
+		logger.Error("kafka operation",
 			logger.ErrorField(err))
 		return err
 	}
@@ -369,9 +369,9 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 			}()
 		}
 	case mq.TopicRecommendation:
-		logger.Info("�����Ƽ�������Ϣ")
+		logger.Info("operation")
 	default:
-		logger.Info("����ϵͳ�¼���Ϣ")
+		logger.Info("operation")
 	}
 
 	if messageID != "" {

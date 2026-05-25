@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: question
+  namespace: logos
+  labels:
+    app: question
+    domain: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: question
+  template:
+    metadata:
+      labels:
+        app: question
+        domain: ai
+    spec:
+      containers:
+        - name: question
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./question"]
+          ports:
+            - containerPort: 9005
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: question-svc
+  namespace: logos
+spec:
+  selector:
+    app: question
+  ports:
+    - port: 9005
+      targetPort: 9005

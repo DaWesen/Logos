@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
@@ -31,7 +32,8 @@ func GetProviderRegistry() *ProviderRegistry {
 		registry.RegisterProvider(NewDeepSeekProvider())
 		registry.RegisterProvider(NewChatGLMProvider())
 		registry.RegisterProvider(NewAnthropicProvider())
-		registry.RegisterProvider(NewPlatformProvider())
+		// 注册平台提供器（使用 GetPlatformProvider 获取初始化过的实例）
+		registry.RegisterProvider(GetPlatformProvider())
 	})
 	return registry
 }
@@ -79,6 +81,7 @@ func (p *OpenAIProvider) NewChatModel(apiKey, baseURL, modelName string) (model.
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   modelName,
+		Timeout: 120 * time.Second,
 	})
 }
 
@@ -102,6 +105,7 @@ func (p *DeepSeekProvider) NewChatModel(apiKey, baseURL, modelName string) (mode
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   modelName,
+		Timeout: 120 * time.Second,
 	})
 }
 
@@ -125,6 +129,7 @@ func (p *ChatGLMProvider) NewChatModel(apiKey, baseURL, modelName string) (model
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   modelName,
+		Timeout: 120 * time.Second,
 	})
 }
 
@@ -148,25 +153,71 @@ func (p *AnthropicProvider) NewChatModel(apiKey, baseURL, modelName string) (mod
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   modelName,
+		Timeout: 120 * time.Second,
 	})
 }
 
-type PlatformProvider struct{}
+type PlatformProvider struct {
+	apiKey      string
+	baseURL     string
+	modelName   string
+	initialized bool
+}
 
-func NewPlatformProvider() *PlatformProvider { return &PlatformProvider{} }
+var platformProviderInstance *PlatformProvider
+var platformProviderOnce sync.Once
+
+func NewPlatformProvider() *PlatformProvider {
+	return &PlatformProvider{}
+}
+
+func InitPlatformProvider(apiKey, baseURL, modelName string) {
+	platformProviderOnce.Do(func() {
+		platformProviderInstance = &PlatformProvider{
+			apiKey:      apiKey,
+			baseURL:     baseURL,
+			modelName:   modelName,
+			initialized: apiKey != "" && modelName != "",
+		}
+	})
+}
+
+func GetPlatformProvider() *PlatformProvider {
+	if platformProviderInstance == nil {
+		return &PlatformProvider{
+			baseURL:   "https://api.openai.com/v1",
+			modelName: "gpt-4o",
+		}
+	}
+	return platformProviderInstance
+}
 
 func (p *PlatformProvider) Name() string { return "platform" }
 
 func (p *PlatformProvider) NewChatModel(apiKey, baseURL, modelName string) (model.BaseChatModel, error) {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+	// 使用全局配置而不是 Bot 的配置
+	if p.initialized {
+		apiKey = p.apiKey
+		baseURL = p.baseURL
+		modelName = p.modelName
+	} else {
+		// 回退默认配置
+		if baseURL == "" {
+			baseURL = "https://api.openai.com/v1"
+		}
+		if modelName == "" {
+			modelName = "gpt-4o"
+		}
 	}
-	if modelName == "" {
-		modelName = "gpt-4o"
+
+	if apiKey == "" {
+		return nil, fmt.Errorf("platform api key not configured, please set in config.yaml")
 	}
+
 	return openaimodel.NewChatModel(context.Background(), &openaimodel.ChatModelConfig{
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   modelName,
+		Timeout: 120 * time.Second,
 	})
 }

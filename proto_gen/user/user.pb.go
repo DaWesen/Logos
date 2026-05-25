@@ -8,11 +8,12 @@ package user
 
 import (
 	common "Logos/proto_gen/common"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -92,7 +93,7 @@ func (x *RegisterReq) GetPhone() string {
 
 type LoginReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Account       string                 `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
 	Password      string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -128,9 +129,9 @@ func (*LoginReq) Descriptor() ([]byte, []int) {
 	return file_platform_user_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *LoginReq) GetAccount() string {
+func (x *LoginReq) GetUsername() string {
 	if x != nil {
-		return x.Account
+		return x.Username
 	}
 	return ""
 }

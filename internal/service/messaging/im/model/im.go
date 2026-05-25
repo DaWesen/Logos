@@ -1,21 +1,28 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"time"
 
-// OnlineRecord 在线状态记录
+	"gorm.io/gorm"
+)
+
 type OnlineRecord struct {
-	gorm.Model
-	UserID    string `gorm:"index;not null;size:100"`
-	DeviceID  string `gorm:"size:100"`
-	SessionID string `gorm:"size:100;index"`
-	Online    bool   `gorm:"default:false"`
-	LastSeen  int64  `gorm:"index"`
-	Platform  string `gorm:"size:50"` // 平台标识：web、ios、android、desktop
+	ID        int64          `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserID    int64          `gorm:"index;not null" json:"user_id"`
+	DeviceID  string         `gorm:"size:100" json:"device_id"`
+	SessionID string         `gorm:"uniqueIndex;size:100" json:"session_id"`
+	Online    bool           `gorm:"default:false" json:"online"`
+	LastSeen  int64          `gorm:"index" json:"last_seen"`
+	Platform  string         `gorm:"size:50" json:"platform"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
-// AutoMigrate 自动迁移
+func (OnlineRecord) TableName() string {
+	return "online_records"
+}
+
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
-		&OnlineRecord{},
-	)
+	return db.AutoMigrate(&OnlineRecord{})
 }

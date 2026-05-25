@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -38,7 +39,7 @@ func (h *Handler) RecordMetric(c *gin.Context) {
 
 func (h *Handler) BatchRecordMetric(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchRecordMetricReq
@@ -60,7 +61,7 @@ func (h *Handler) BatchRecordMetric(c *gin.Context) {
 
 func (h *Handler) QueryMetrics(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	req := &pb.QueryMetricReq{
@@ -83,7 +84,7 @@ func (h *Handler) QueryMetrics(c *gin.Context) {
 
 func (h *Handler) RecordLog(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.RecordLogReq
@@ -105,7 +106,7 @@ func (h *Handler) RecordLog(c *gin.Context) {
 
 func (h *Handler) BatchRecordLog(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.BatchRecordLogReq
@@ -127,7 +128,7 @@ func (h *Handler) BatchRecordLog(c *gin.Context) {
 
 func (h *Handler) QueryLogs(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -163,7 +164,7 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 
 func (h *Handler) QueryAlerts(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	req := &pb.QueryAlertReq{
@@ -200,7 +201,7 @@ func (h *Handler) QueryAlerts(c *gin.Context) {
 func (h *Handler) ResolveAlert(c *gin.Context) {
 	alertId := c.Param("alertId")
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.MonitoringClient.ResolveAlert(context.Background(), &pb.GetByAlertIdReq{AlertId: alertId})
@@ -217,7 +218,7 @@ func (h *Handler) ResolveAlert(c *gin.Context) {
 
 func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	var req pb.ServiceStatus
@@ -240,7 +241,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 func (h *Handler) GetServiceStatus(c *gin.Context) {
 	serviceName := c.Query("service_name")
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.MonitoringClient.GetServiceStatus(context.Background(), &pb.GetByServiceNameReq{ServiceName: serviceName})
@@ -267,7 +268,7 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 
 func (h *Handler) ListServiceStatuses(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "��ط����ݲ�����"))
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
 	resp, err := h.MonitoringClient.ListServiceStatus(context.Background(), &pb.EmptyReq{})
@@ -290,6 +291,42 @@ func (h *Handler) ListServiceStatuses(c *gin.Context) {
 		return
 	}
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: []any{}})
+}
+
+func (h *Handler) ListServiceInfo(c *gin.Context) {
+	type ServiceInfo struct {
+		Name      string `json:"name"`
+		Port      int    `json:"port"`
+		Address   string `json:"address"`
+		EtcdName  string `json:"etcd_name"`
+	}
+	services := []ServiceInfo{
+		{Name: "logos.gateway", Port: h.Cfg.Ports.Gateway, EtcdName: ""},
+		{Name: "logos.user", Port: h.Cfg.Ports.User, EtcdName: "logos.user"},
+		{Name: "logos.monitoring", Port: h.Cfg.Ports.Monitoring, EtcdName: "logos.monitoring"},
+		{Name: "logos.billing", Port: h.Cfg.Ports.Billing, EtcdName: "logos.billing"},
+		{Name: "logos.im", Port: h.Cfg.Ports.IM, EtcdName: "logos.im"},
+		{Name: "logos.chat", Port: h.Cfg.Ports.Chat, EtcdName: "logos.chat"},
+		{Name: "logos.contact", Port: h.Cfg.Ports.Contact, EtcdName: "logos.contact"},
+		{Name: "logos.message", Port: h.Cfg.Ports.Message, EtcdName: "logos.message"},
+		{Name: "logos.bot", Port: h.Cfg.Ports.Bot, EtcdName: "logos.bot"},
+		{Name: "logos.vector", Port: h.Cfg.Ports.Vector, EtcdName: "logos.vector"},
+		{Name: "logos.summary", Port: h.Cfg.Ports.Summary, EtcdName: "logos.summary"},
+		{Name: "logos.moderation", Port: h.Cfg.Ports.Moderation, EtcdName: "logos.moderation"},
+		{Name: "logos.mcp", Port: h.Cfg.Ports.MCP, EtcdName: "logos.mcp"},
+		{Name: "logos.knowledge", Port: h.Cfg.Ports.Knowledge, EtcdName: "logos.knowledge"},
+		{Name: "logos.search", Port: h.Cfg.Ports.Search, EtcdName: "logos.search"},
+		{Name: "logos.extraction", Port: h.Cfg.Ports.Extraction, EtcdName: "logos.extraction"},
+		{Name: "logos.question", Port: h.Cfg.Ports.Question, EtcdName: "logos.question"},
+		{Name: "logos.recommend", Port: h.Cfg.Ports.Recommend, EtcdName: "logos.recommend"},
+		{Name: "logos.collection", Port: h.Cfg.Ports.Collection, EtcdName: "logos.collection"},
+	}
+	for i := range services {
+		if services[i].Port > 0 {
+			services[i].Address = fmt.Sprintf("127.0.0.1:%d", services[i].Port)
+		}
+	}
+	c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: services})
 }
 
 func mustAtoi(s string) int32   { v, _ := strconv.Atoi(s); return int32(v) }

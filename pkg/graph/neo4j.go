@@ -20,6 +20,16 @@ type Neo4jManager struct {
 	driver neo4j.DriverWithContext
 }
 
+type SubgraphResult struct {
+	Nodes         []map[string]interface{}
+	Relationships []map[string]interface{}
+}
+
+type PathResult struct {
+	Nodes         []map[string]interface{}
+	Relationships []map[string]interface{}
+}
+
 func InitNeo4j() (neo4j.DriverWithContext, error) {
 	var err error
 	neo4jOnce.Do(func() {
@@ -307,6 +317,221 @@ func (n *Neo4jManager) GetGraphStats(ctx context.Context) (map[string]interface{
 	}
 	if relCountResult.Next(ctx) {
 		stats["relationshipCount"] = relCountResult.Record().Values[0]
+	}
+
+	return stats, nil
+}
+
+func (n *Neo4jManager) GetSubgraph(ctx context.Context, label string, id string, depth int) (*SubgraphResult, error) {
+	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	if depth <= 0 {
+		depth = 2
+	}
+	if depth > 4 {
+		depth = 4
+	}
+
+	params := map[string]interface{}{
+		"id":    id,
+		"depth": depth,
+	}
+
+	query := fmt.Sprintf(`
+		MATCH path = (n:%s {id: $id})-[*1..%d]-(m)
+		RETURN nodes(path) as ns, relationships(path) as rs
+	`, label, depth)
+
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		logger.Error("获取子图失败",
+			logger.StringField("label", label),
+			logger.StringField("id", id),
+			logger.IntField("depth", depth),
+			logger.ErrorField(err))
+		return nil, err
+	}
+
+	subgraph := &SubgraphResult{}
+	nodeSet := make(map[string]bool)
+	relSet := make(map[string]bool)
+
+	for result.Next(ctx) {
+		record := result.Record()
+
+		if nodes, ok := record.Values[0].([]interface{}); ok {
+			for _, nodeVal := range nodes {
+				if node, ok := nodeVal.(neo4j.Node); ok {
+					nodeID, _ := node.Props["id"].(string)
+					if nodeID != "" && !nodeSet[nodeID] {
+						nodeSet[nodeID] = true
+						subgraph.Nodes = append(subgraph.Nodes, node.Props)
+					}
+				}
+			}
+		}
+
+		if rels, ok := record.Values[1].([]interface{}); ok {
+			for _, relVal := range rels {
+				if rel, ok := relVal.(neo4j.Relationship); ok {
+					relKey := fmt.Sprintf("%s", rel.ElementId)
+					if !relSet[relKey] {
+						relSet[relKey] = true
+						relProps := map[string]interface{}{
+							"id":   rel.ElementId,
+							"type": rel.Type,
+						}
+						for k, v := range rel.Props {
+							relProps[k] = v
+						}
+						subgraph.Relationships = append(subgraph.Relationships, relProps)
+					}
+				}
+			}
+		}
+	}
+
+	logger.Info("获取子图成功",
+		logger.StringField("id", id),
+		logger.IntField("nodes", len(subgraph.Nodes)),
+		logger.IntField("rels", len(subgraph.Relationships)))
+
+	return subgraph, nil
+}
+
+func (n *Neo4jManager) GetShortestPath(ctx context.Context, sourceLabel, sourceId, targetLabel, targetId string, maxDepth int) ([]*PathResult, error) {
+	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	if maxDepth <= 0 {
+		maxDepth = 4
+	}
+	if maxDepth > 6 {
+		maxDepth = 6
+	}
+
+	params := map[string]interface{}{
+		"sourceId": sourceId,
+		"targetId": targetId,
+		"maxDepth": maxDepth,
+	}
+
+	query := fmt.Sprintf(`
+		MATCH (a:%s {id: $sourceId}), (b:%s {id: $targetId})
+		MATCH path = shortestPath((a)-[*1..%d]-(b))
+		RETURN nodes(path) as ns, relationships(path) as rs
+		LIMIT 5
+	`, sourceLabel, targetLabel, maxDepth)
+
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		logger.Error("获取最短路径失败",
+			logger.StringField("sourceId", sourceId),
+			logger.StringField("targetId", targetId),
+			logger.ErrorField(err))
+		return nil, err
+	}
+
+	var paths []*PathResult
+
+	for result.Next(ctx) {
+		record := result.Record()
+		pathResult := &PathResult{}
+
+		if nodes, ok := record.Values[0].([]interface{}); ok {
+			for _, nodeVal := range nodes {
+				if node, ok := nodeVal.(neo4j.Node); ok {
+					pathResult.Nodes = append(pathResult.Nodes, node.Props)
+				}
+			}
+		}
+
+		if rels, ok := record.Values[1].([]interface{}); ok {
+			for _, relVal := range rels {
+				if rel, ok := relVal.(neo4j.Relationship); ok {
+					relProps := map[string]interface{}{
+						"id":   rel.ElementId,
+						"type": rel.Type,
+					}
+					for k, v := range rel.Props {
+						relProps[k] = v
+					}
+					pathResult.Relationships = append(pathResult.Relationships, relProps)
+				}
+			}
+		}
+
+		paths = append(paths, pathResult)
+	}
+
+	logger.Info("获取最短路径成功",
+		logger.StringField("sourceId", sourceId),
+		logger.StringField("targetId", targetId),
+		logger.IntField("paths", len(paths)))
+
+	return paths, nil
+}
+
+func (n *Neo4jManager) SearchNodes(ctx context.Context, keyword string, limit int) ([]map[string]interface{}, error) {
+	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	if limit <= 0 {
+		limit = 20
+	}
+
+	params := map[string]interface{}{
+		"keyword": fmt.Sprintf("(?i).*%s.*", keyword),
+		"limit":   limit,
+	}
+
+	query := `
+		MATCH (n)
+		WHERE n.name =~ $keyword OR n.description =~ $keyword
+		RETURN n
+		LIMIT $limit
+	`
+
+	result, err := session.Run(ctx, query, params)
+	if err != nil {
+		logger.Error("搜索节点失败",
+			logger.StringField("keyword", keyword),
+			logger.ErrorField(err))
+		return nil, err
+	}
+
+	var nodes []map[string]interface{}
+	for result.Next(ctx) {
+		record := result.Record()
+		if node, ok := record.Values[0].(neo4j.Node); ok {
+			nodes = append(nodes, node.Props)
+		}
+	}
+
+	return nodes, nil
+}
+
+func (n *Neo4jManager) GetTypeStats(ctx context.Context) (map[string]int64, error) {
+	session := n.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx, `
+		MATCH (n)
+		RETURN labels(n)[0] as label, count(n) as count
+		ORDER BY count DESC
+	`, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := make(map[string]int64)
+	for result.Next(ctx) {
+		record := result.Record()
+		label, _ := record.Values[0].(string)
+		if count, ok := record.Values[1].(int64); ok && label != "" {
+			stats[label] = count
+		}
 	}
 
 	return stats, nil

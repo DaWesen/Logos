@@ -47,7 +47,7 @@ LABEL maintainer="Logos Team"
 LABEL description="Logos - AI-Powered Instant Messaging Platform"
 LABEL version="2.0.0"
 
-RUN apk --no-cache add ca-certificates tzdata curl python3 nodejs
+RUN apk --no-cache add ca-certificates tzdata curl python3 nodejs ffmpeg
 
 WORKDIR /app
 
