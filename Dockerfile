@@ -79,7 +79,7 @@ COPY --from=builder /app/mcp .
 COPY --from=builder /app/moderation .
 COPY --from=builder /app/config ./config
 
-EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9014 9015 9016 9017 9018 9019
+EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9016 9017 9018 9019 9020 9021
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8888/health || exit 1
