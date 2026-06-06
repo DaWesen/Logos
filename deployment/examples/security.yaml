@@ -1,0 +1,123 @@
+# Logos - 安全上下文配置
+# 使用方式：kubectl apply -f security.yaml
+#
+# 包含：
+# - Pod 安全上下文（运行用户/组）
+# - Container 安全上下文（权限控制）
+# - 网络策略（NetworkPolicy）
+# - Seccomp 配置
+
+---
+# Gateway 安全部署示例
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: logos
+  labels:
+    app: gateway
+    domain: platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        domain: platform
+    spec:
+      # Pod 级别安全上下文
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: "OnRootMismatch"
+        seccompProfile:
+          type: RuntimeDefault
+      
+      containers:
+        - name: gateway
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./gateway"]
+          ports:
+            - containerPort: 8888
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true  # 配置目录只读
+            - name: temp
+              mountPath: /tmp
+          # Container 级别安全上下文
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true  # 根文件系统只读
+            capabilities:
+              drop:
+                - ALL  # 丢弃所有能力
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+        - name: temp
+          emptyDir: {}
+
+---
+# 网络策略 - 只允许必要的流量
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: logos
+spec:
+  podSelector: {}  # 选择所有 Pod
+  policyTypes:
+  - Ingress
+
+---
+# 网络策略 - 允许网关访问所有服务
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway
+  namespace: logos
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  policyTypes:
+  - Egress
+  egress:
+  - {}  # 允许所有出站流量
+
+---
+# 网络策略 - 只允许网关访问 Bot
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-bot-access
+  namespace: logos
+spec:
+  podSelector:
+    matchLabels:
+      app: bot
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: gateway
+    ports:
+    - protocol: TCP
+      port: 9020

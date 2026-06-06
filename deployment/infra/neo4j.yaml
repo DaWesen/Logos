@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: neo4j
-          image: neo4j:5
+          image: docker.1ms.run/neo4j:latest
           ports:
             - containerPort: 7474
             - containerPort: 7687

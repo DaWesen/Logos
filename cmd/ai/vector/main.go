@@ -1,20 +1,22 @@
 package main
 
 import (
+	"context"
+	"log"
+
 	"Logos/config"
 	"Logos/internal/service/ai/vector/dao"
 	"Logos/internal/service/ai/vector/handler"
 	"Logos/internal/service/ai/vector/model"
 	"Logos/internal/service/ai/vector/service"
+	pgsql "Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
+	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
-	pgsql "Logos/pkg/database/pgsql"
 	"Logos/pkg/vector"
 	pb "Logos/proto_gen/vector"
-	"context"
-	"log"
 
 	"google.golang.org/grpc"
 )
@@ -58,6 +60,7 @@ func main() {
 		ServiceName: "logos.vector",
 		Port:        cfg.Ports.Vector,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		Governance:  governance.DefaultConfig(),
 	}, func(s *grpc.Server) {
 		pb.RegisterVectorServiceServer(s, &handler.VectorServiceImpl{
 			VectorService: vectorService,

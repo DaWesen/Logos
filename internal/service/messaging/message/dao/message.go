@@ -26,6 +26,9 @@ type MessageRepository interface {
 	GetSubscription(ctx context.Context, topic, consumerGroup string) (*model.MessageSubscription, error)
 	ListSubscriptions(ctx context.Context) ([]*model.MessageSubscription, error)
 	DeleteSubscription(ctx context.Context, topic, consumerGroup string) error
+
+	WithTransaction(ctx context.Context, fn func(txRepo MessageRepository) error) error
+	DB() *gorm.DB
 }
 
 type messageRepository struct {
@@ -147,6 +150,17 @@ func (r *messageRepository) ListSubscriptions(ctx context.Context) ([]*model.Mes
 
 func (r *messageRepository) DeleteSubscription(ctx context.Context, topic, consumerGroup string) error {
 	return r.db.WithContext(ctx).Where("topic = ? AND consumer_group = ?", topic, consumerGroup).Delete(&model.MessageSubscription{}).Error
+}
+
+func (r *messageRepository) WithTransaction(ctx context.Context, fn func(txRepo MessageRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &messageRepository{db: tx}
+		return fn(txRepo)
+	})
+}
+
+func (r *messageRepository) DB() *gorm.DB {
+	return r.db
 }
 
 func MarshalHeaders(m map[string]string) string {

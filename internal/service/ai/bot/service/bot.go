@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,7 +22,7 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
-	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
 	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/components/model"
@@ -121,7 +120,7 @@ type botServiceImpl struct {
 	billingService   BillingService
 	vectorService    VectorService
 	searchService    SearchService
-	producer         *mq.Producer
+	outboxRepo       outbox.OutboxRepository
 	mcpRegistry      *mcp_server.ToolRegistry
 	mcpClientMgr     *mcp.MCPClientManager
 	mcpClient        *client.MCPClient
@@ -138,7 +137,7 @@ func NewBotService(
 	billingService BillingService,
 	vectorService VectorService,
 	searchService SearchService,
-	producer *mq.Producer,
+	outboxRepo outbox.OutboxRepository,
 	mcpClient *client.MCPClient,
 	cfg *config.Config,
 	knowledgeService botTools.GraphWriteService,
@@ -164,7 +163,7 @@ func NewBotService(
 		billingService:   billingService,
 		vectorService:    vectorService,
 		searchService:    searchService,
-		producer:         producer,
+		outboxRepo:       outboxRepo,
 		mcpRegistry:      mcpReg,
 		mcpClientMgr:     mcpClientMgr,
 		mcpClient:        mcpClient,
@@ -195,18 +194,25 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 		UpdatedAt:      time.Now(),
 	}
 
-	if err := s.repo.CreateBot(ctx, bot); err != nil {
+	err := s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
+		if err := txRepo.CreateBot(ctx, bot); err != nil {
+			return err
+		}
+		event := map[string]any{
+			"action":    "create",
+			"bot_id":    bot.ID,
+			"user_id":   userID,
+			"metadata":  map[string]string{"name": name, "provider": modelProvider, "model": modelName},
+			"timestamp": time.Now().Unix(),
+		}
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), "bot_events", bot.ID, event)
+	})
+	if err != nil {
 		logger.Error("创建 Bot 失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
 
 	s.syncEmbeddingToCollections(ctx, bot)
-
-	s.publishBotEvent(ctx, "create", bot.ID, userID, map[string]string{
-		"name":     name,
-		"provider": modelProvider,
-		"model":    modelName,
-	})
 
 	logger.Info("创建 Bot 成功", logger.StringField("id", bot.ID))
 	return bot, nil
@@ -587,6 +593,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 				logger.StringField("baseURL", bot.BaseURL))
 		}
 	}
+	_ = usePlatformModel // 始终计费，不再区分
 
 	var conversation *botmodel.Conversation
 	conversation, err = s.repo.GetConversation(ctx, conversationID)
@@ -618,35 +625,8 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	estimatedTokens := estimateTokenCount(content)
 	var cost float64
-	if s.billingService != nil {
-		billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
 
-		provider := bot.Provider
-		if provider == "" {
-			provider = "custom"
-		}
-		if provider == "openai" && bot.Model != "" {
-			if strings.HasPrefix(bot.Model, "deepseek") {
-				provider = "deepseek"
-			} else if strings.HasPrefix(bot.Model, "claude") {
-				provider = "claude"
-			} else if strings.HasPrefix(bot.Model, "ernie") || strings.HasPrefix(bot.Model, "wenxin") {
-				provider = "qianfan"
-			}
-		}
-		cost, err = s.billingService.ConsumeModelCall(billingCtx, userID, provider, bot.Model, estimatedTokens, map[string]string{
-			"bot_id":             bot.ID,
-			"use_platform_model": fmt.Sprintf("%v", usePlatformModel),
-		})
-		if err != nil {
-			if usePlatformModel && strings.Contains(err.Error(), "insufficient") {
-				cancel()
-				return "", "", 0, 0, ErrInsufficientBalance
-			}
-			logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
-		}
-	}
+	// 计费移到 AI 调用之后，先继续处理
 
 	agentStartTime := time.Now()
 	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID)
@@ -675,6 +655,15 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 			logger.Error("Agent 调用失败", logger.ErrorField(chatErr), logger.StringField("elapsed_ai", time.Since(agentStartTime).String()))
 			return "", "", 0, 0, fmt.Errorf("AI 调用失败: %w", chatErr)
 		}
+
+		// AI 调用完成后计费
+		inputTokens := estimateTokenCount(content)
+		outputTokens := estimateTokenCount(chatResp)
+		estimatedTokens = inputTokens + outputTokens
+		if s.billingService != nil {
+			cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+		}
+
 		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
 		logger.Info("发送消息成功(简单对话)", logger.StringField("elapsed_total", time.Since(startTime).String()))
 		return chatResp, conversationID, cost, estimatedTokens, nil
@@ -705,15 +694,34 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	logger.Info("AI 调用完成", logger.StringField("botID", botID), logger.StringField("elapsed_ai", time.Since(aiCallStart).String()))
 
+	// AI 调用完成后计费：估算输入+输出 tokens
+	inputTokens := estimateTokenCount(content)
+	outputTokens := estimateTokenCount(response)
+	totalTokens := inputTokens + outputTokens
+	estimatedTokens = totalTokens
+
+	if s.billingService != nil {
+		cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+	}
+
 	s.saveAssistantMessage(ctx, botID, conversationID, response)
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
 	go s.autoSaveToKnowledgeBase(bot, content, response, autoSave)
 
-	s.publishBotEvent(ctx, "message", botID, userID, map[string]string{
-		"conversation_id": conversationID,
-		"tokens":          fmt.Sprintf("%d", estimatedTokens),
-	})
+	event := map[string]any{
+		"action":    "message",
+		"bot_id":    botID,
+		"user_id":   userID,
+		"metadata":  map[string]string{"conversation_id": conversationID, "tokens": fmt.Sprintf("%d", estimatedTokens)},
+		"timestamp": time.Now().Unix(),
+	}
+	if err := s.outboxRepo.Save(ctx, s.repo.DB(), "bot_events", botID, event); err != nil {
+		logger.Warn("保存 Bot 事件到 outbox 失败",
+			logger.StringField("action", "message"),
+			logger.StringField("botID", botID),
+			logger.ErrorField(err))
+	}
 
 	logger.Info("发送消息成功", logger.StringField("elapsed_total", time.Since(startTime).String()))
 	return response, conversationID, cost, estimatedTokens, nil
@@ -744,22 +752,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 	}
 
 	usePlatformModel := bot.Provider == "platform" || bot.APIKey == ""
-
-	if usePlatformModel && s.billingService != nil {
-		estimatedTokens := estimateTokenCount(content)
-		billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		_, err = s.billingService.ConsumeModelCall(billingCtx, userID, bot.Provider, bot.Model, estimatedTokens, map[string]string{
-			"bot_id": bot.ID,
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "insufficient") {
-				return "", ErrInsufficientBalance
-			}
-			logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
-		}
-	}
+	_ = usePlatformModel // 始终计费，不再区分
 
 	var conversation *botmodel.Conversation
 	conversation, err = s.repo.GetConversation(ctx, conversationID)
@@ -807,6 +800,14 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 			logger.Error("Agent 流式调用失败", logger.ErrorField(err))
 			return "", ErrInternalServer
 		}
+
+		// 简单流式对话完成后计费
+		if s.billingService != nil {
+			inputTokens := estimateTokenCount(content)
+			outputTokens := estimateTokenCount(fullResponse.String())
+			s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+		}
+
 		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
 		return conversationID, nil
 	}
@@ -825,10 +826,31 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return "", ErrInternalServer
 	}
 
+	// 流式调用完成后计费
+	if s.billingService != nil {
+		inputTokens := estimateTokenCount(content)
+		outputTokens := estimateTokenCount(fullResponse.String())
+		s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+	}
+
 	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
 	go s.autoSaveToKnowledgeBase(bot, content, fullResponse.String(), autoSave)
+
+	event := map[string]any{
+		"action":    "message_stream",
+		"bot_id":    botID,
+		"user_id":   userID,
+		"metadata":  map[string]string{"conversation_id": conversationID},
+		"timestamp": time.Now().Unix(),
+	}
+	if err := s.outboxRepo.Save(ctx, s.repo.DB(), "bot_events", botID, event); err != nil {
+		logger.Warn("保存 Bot 事件到 outbox 失败",
+			logger.StringField("action", "message_stream"),
+			logger.StringField("botID", botID),
+			logger.ErrorField(err))
+	}
 
 	logger.Info("发送流式消息成功")
 	return conversationID, nil
@@ -996,24 +1018,17 @@ func (s *botServiceImpl) ChatWithCoordinator(ctx context.Context, userID, conten
 		return "", ErrAgentNotInitialized
 	}
 
-	usePlatformModel := s.einoManager != nil && s.einoManager.HasChatModel()
-	if usePlatformModel && s.billingService != nil {
-		estimatedTokens := estimateTokenCount(content)
-		_, err := s.billingService.ConsumeModelCall(ctx, userID, "platform", "coordinator", estimatedTokens, map[string]string{
-			"type": "coordinator",
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "insufficient") {
-				return "", ErrInsufficientBalance
-			}
-			logger.Warn("Coordinator 计费失败", logger.ErrorField(err))
-		}
-	}
-
 	response, err := coord.Chat(ctx, content)
 	if err != nil {
 		logger.Error("Coordinator 调用失败", logger.ErrorField(err))
 		return "", ErrInternalServer
+	}
+
+	// AI 调用完成后计费
+	if s.billingService != nil {
+		inputTokens := estimateTokenCount(content)
+		outputTokens := estimateTokenCount(response)
+		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens)
 	}
 
 	return response, nil
@@ -1027,23 +1042,22 @@ func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, 
 		return ErrAgentNotInitialized
 	}
 
-	usePlatformModel := s.einoManager != nil && s.einoManager.HasChatModel()
-	if usePlatformModel && s.billingService != nil {
-		estimatedTokens := estimateTokenCount(content)
-		_, err := s.billingService.ConsumeModelCall(ctx, userID, "platform", "coordinator", estimatedTokens, map[string]string{
-			"type": "coordinator",
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), "insufficient") {
-				return ErrInsufficientBalance
-			}
-			logger.Warn("Coordinator 计费失败", logger.ErrorField(err))
-		}
+	var fullResponse strings.Builder
+	wrappedOnChunk := func(chunk string) error {
+		fullResponse.WriteString(chunk)
+		return onChunk(chunk)
 	}
 
-	if err := coord.ChatStream(ctx, content, onChunk); err != nil {
+	if err := coord.ChatStream(ctx, content, wrappedOnChunk); err != nil {
 		logger.Error("Coordinator 流式调用失败", logger.ErrorField(err))
 		return ErrInternalServer
+	}
+
+	// 流式调用完成后计费
+	if s.billingService != nil {
+		inputTokens := estimateTokenCount(content)
+		outputTokens := estimateTokenCount(fullResponse.String())
+		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens)
 	}
 
 	return nil
@@ -1051,7 +1065,7 @@ func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, 
 
 func (s *botServiceImpl) WithTransaction(ctx context.Context, fn func(txService BotService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
-		txService := NewBotService(txRepo, s.agentManager, s.einoManager, s.billingService, s.vectorService, s.searchService, s.producer, s.mcpClient, s.cfg, s.knowledgeService, s.graphSearchSvc)
+		txService := NewBotService(txRepo, s.agentManager, s.einoManager, s.billingService, s.vectorService, s.searchService, s.outboxRepo, s.mcpClient, s.cfg, s.knowledgeService, s.graphSearchSvc)
 		return fn(txService)
 	})
 }
@@ -1377,10 +1391,6 @@ func (s *botServiceImpl) saveAssistantMessage(ctx context.Context, botID, conver
 }
 
 func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, userID string, metadata map[string]string) {
-	if s.producer == nil {
-		return
-	}
-
 	event := map[string]any{
 		"action":    action,
 		"bot_id":    botID,
@@ -1389,14 +1399,8 @@ func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, use
 		"timestamp": time.Now().Unix(),
 	}
 
-	eventJSON, err := json.Marshal(event)
-	if err != nil {
-		logger.Warn("序列化 Bot 事件失败", logger.ErrorField(err))
-		return
-	}
-
-	if err := s.producer.Send(ctx, "bot_events", botID, eventJSON); err != nil {
-		logger.Warn("发送 Bot 事件失败",
+	if err := s.outboxRepo.Save(ctx, s.repo.DB(), "bot_events", botID, event); err != nil {
+		logger.Warn("保存 Bot 事件到 outbox 失败",
 			logger.StringField("action", action),
 			logger.StringField("botID", botID),
 			logger.ErrorField(err))
@@ -1407,7 +1411,53 @@ func estimateTokenCount(text string) int {
 	charCount := utf8.RuneCountInString(text)
 	asciiCount := max(0, len(text)-charCount*3)
 	nonAsciiCount := charCount - asciiCount
-	return nonAsciiCount*2 + asciiCount/4 + 50
+	// 1个英文字符 ≈ 0.3 token，1个中文字符 ≈ 0.6 token
+	return int(float64(asciiCount)*0.3+float64(nonAsciiCount)*0.6) + 50
+}
+
+// doBilling 统一计费逻辑，始终计费（不区分 usePlatformModel）
+func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botmodel.Bot, inputTokens, outputTokens int) float64 {
+	if s.billingService == nil {
+		logger.Warn("计费跳过：billingService未初始化")
+		return 0
+	}
+
+	billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	provider := bot.Provider
+	if provider == "" {
+		provider = "custom"
+	}
+	if provider == "openai" && bot.Model != "" {
+		if strings.HasPrefix(bot.Model, "deepseek") {
+			provider = "deepseek"
+		} else if strings.HasPrefix(bot.Model, "claude") {
+			provider = "claude"
+		} else if strings.HasPrefix(bot.Model, "ernie") || strings.HasPrefix(bot.Model, "wenxin") {
+			provider = "qianfan"
+		}
+	}
+
+	totalTokens := inputTokens + outputTokens
+	logger.Info("开始计费",
+		logger.StringField("userID", userID),
+		logger.StringField("provider", provider),
+		logger.StringField("model", bot.Model),
+		logger.IntField("inputTokens", inputTokens),
+		logger.IntField("outputTokens", outputTokens))
+
+	cost, err := s.billingService.ConsumeModelCall(billingCtx, userID, provider, bot.Model, totalTokens, map[string]string{
+		"bot_id":        bot.ID,
+		"input_tokens":  fmt.Sprintf("%d", inputTokens),
+		"output_tokens": fmt.Sprintf("%d", outputTokens),
+	})
+	if err != nil {
+		logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
+		return 0
+	}
+	logger.Info("计费成功", logger.Float64Field("cost", cost))
+	return cost
 }
 
 type knowledgeSearchAdapter struct {

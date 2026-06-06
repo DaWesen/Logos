@@ -52,7 +52,25 @@ client.interceptors.response.use(
       }
     }
     
-    return Promise.reject(err)
+    // 提取后端返回的错误消息
+    let errorMsg = '操作失败'
+    if (err.response?.data) {
+      const data = err.response.data as Record<string, unknown>
+      if (data.message) {
+        errorMsg = String(data.message)
+      } else if (data.msg) {
+        errorMsg = String(data.msg)
+      } else if (data.error) {
+        errorMsg = String(data.error)
+      }
+    } else if (err.message) {
+      errorMsg = err.message
+    }
+    
+    // 创建一个新的 Error 对象，包含我们提取的消息
+    const error = new Error(errorMsg)
+    ;(error as any).original = err
+    return Promise.reject(error)
   },
 )
 

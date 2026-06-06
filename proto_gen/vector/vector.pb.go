@@ -8,12 +8,11 @@ package vector
 
 import (
 	common "Logos/proto_gen/common"
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -1543,6 +1542,11 @@ func (x *ListVectorsReq) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
+// Deprecated: Use ListVectorsReq.ProtoReflect.Descriptor instead.
+func (*ListVectorsReq) Descriptor() ([]byte, []int) {
+	return file_ai_vector_proto_rawDescGZIP(), []int{20}
+}
+
 func (x *ListVectorsReq) GetCollectionId() string {
 	if x != nil {
 		return x.CollectionId
@@ -1597,6 +1601,11 @@ func (x *VectorPreviewItem) ProtoReflect() protoreflect.Message {
 		return ms
 	}
 	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VectorPreviewItem.ProtoReflect.Descriptor instead.
+func (*VectorPreviewItem) Descriptor() ([]byte, []int) {
+	return file_ai_vector_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *VectorPreviewItem) GetId() string {
@@ -1661,6 +1670,11 @@ func (x *ListVectorsResp) ProtoReflect() protoreflect.Message {
 		return ms
 	}
 	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListVectorsResp.ProtoReflect.Descriptor instead.
+func (*ListVectorsResp) Descriptor() ([]byte, []int) {
+	return file_ai_vector_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ListVectorsResp) GetBaseResp() *common.BaseResp {
@@ -1865,7 +1879,26 @@ const file_ai_vector_proto_rawDesc = "" +
 	"GetByIdReq\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\n" +
 	"\n" +
-	"\bEmptyReq*`\n" +
+	"\bEmptyReq\"f\n" +
+	"\x0eListVectorsReq\x12#\n" +
+	"\rcollection_id\x18\x01 \x01(\tR\fcollectionId\x12\x12\n" +
+	"\x04page\x18\x02 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\"\xde\x01\n" +
+	"\x11VectorPreviewItem\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\x12C\n" +
+	"\bmetadata\x18\x03 \x03(\v2'.vector.VectorPreviewItem.MetadataEntryR\bmetadata\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x04 \x01(\x03R\tcreatedAt\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbc\x01\n" +
+	"\x0fListVectorsResp\x12-\n" +
+	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x123\n" +
+	"\avectors\x18\x02 \x03(\v2\x19.vector.VectorPreviewItemR\avectors\x12\x14\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\x12\x12\n" +
+	"\x04page\x18\x04 \x01(\x05R\x04page\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize*`\n" +
 	"\x0fVectorModelType\x12\b\n" +
 	"\x04BERT\x10\x00\x12\f\n" +
 	"\bWord2Vec\x10\x01\x12\t\n" +
@@ -1879,7 +1912,7 @@ const file_ai_vector_proto_rawDesc = "" +
 	"\bIVF_FLAT\x10\x01\x12\n" +
 	"\n" +
 	"\x06IVF_PQ\x10\x02\x12\b\n" +
-	"\x04HNSW\x10\x032\xd0\x05\n" +
+	"\x04HNSW\x10\x032\x90\x06\n" +
 	"\rVectorService\x12G\n" +
 	"\x10CreateCollection\x12\x1b.vector.CreateCollectionReq\x1a\x16.vector.CollectionResp\x12G\n" +
 	"\x10UpdateCollection\x12\x1b.vector.UpdateCollectionReq\x1a\x16.vector.CollectionResp\x12A\n" +
@@ -1892,7 +1925,8 @@ const file_ai_vector_proto_rawDesc = "" +
 	"\n" +
 	"TextSearch\x12\x15.vector.TextSearchReq\x1a\x12.vector.SearchResp\x129\n" +
 	"\fDeleteVector\x12\x17.vector.DeleteVectorReq\x1a\x10.common.BaseResp\x12C\n" +
-	"\x11BatchDeleteVector\x12\x1c.vector.BatchDeleteVectorReq\x1a\x10.common.BaseRespB\x18Z\x16Logos/proto_gen/vectorb\x06proto3"
+	"\x11BatchDeleteVector\x12\x1c.vector.BatchDeleteVectorReq\x1a\x10.common.BaseResp\x12>\n" +
+	"\vListVectors\x12\x16.vector.ListVectorsReq\x1a\x17.vector.ListVectorsRespB\x18Z\x16Logos/proto_gen/vectorb\x06proto3"
 
 var (
 	file_ai_vector_proto_rawDescOnce sync.Once
@@ -1907,7 +1941,7 @@ func file_ai_vector_proto_rawDescGZIP() []byte {
 }
 
 var file_ai_vector_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_ai_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_ai_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_ai_vector_proto_goTypes = []any{
 	(VectorModelType)(0),         // 0: vector.VectorModelType
 	(IndexType)(0),               // 1: vector.IndexType
@@ -1931,69 +1965,78 @@ var file_ai_vector_proto_goTypes = []any{
 	(*BatchDeleteVectorReq)(nil), // 19: vector.BatchDeleteVectorReq
 	(*GetByIdReq)(nil),           // 20: vector.GetByIdReq
 	(*EmptyReq)(nil),             // 21: vector.EmptyReq
-	nil,                          // 22: vector.Vector.MetadataEntry
-	nil,                          // 23: vector.VectorCollection.ParametersEntry
-	nil,                          // 24: vector.CreateCollectionReq.ParametersEntry
-	nil,                          // 25: vector.UpdateCollectionReq.ParametersEntry
-	nil,                          // 26: vector.VectorizeReq.MetadataEntry
-	nil,                          // 27: vector.MapWrapper.DataEntry
-	nil,                          // 28: vector.SearchReq.FilterEntry
-	nil,                          // 29: vector.SearchResultItem.MetadataEntry
-	nil,                          // 30: vector.TextSearchReq.FilterEntry
-	(*common.BaseResp)(nil),      // 31: common.BaseResp
+	(*ListVectorsReq)(nil),       // 22: vector.ListVectorsReq
+	(*VectorPreviewItem)(nil),    // 23: vector.VectorPreviewItem
+	(*ListVectorsResp)(nil),      // 24: vector.ListVectorsResp
+	nil,                          // 25: vector.Vector.MetadataEntry
+	nil,                          // 26: vector.VectorCollection.ParametersEntry
+	nil,                          // 27: vector.CreateCollectionReq.ParametersEntry
+	nil,                          // 28: vector.UpdateCollectionReq.ParametersEntry
+	nil,                          // 29: vector.VectorizeReq.MetadataEntry
+	nil,                          // 30: vector.MapWrapper.DataEntry
+	nil,                          // 31: vector.SearchReq.FilterEntry
+	nil,                          // 32: vector.SearchResultItem.MetadataEntry
+	nil,                          // 33: vector.TextSearchReq.FilterEntry
+	nil,                          // 34: vector.VectorPreviewItem.MetadataEntry
+	(*common.BaseResp)(nil),      // 35: common.BaseResp
 }
 var file_ai_vector_proto_depIdxs = []int32{
-	22, // 0: vector.Vector.metadata:type_name -> vector.Vector.MetadataEntry
+	25, // 0: vector.Vector.metadata:type_name -> vector.Vector.MetadataEntry
 	0,  // 1: vector.VectorCollection.model_type:type_name -> vector.VectorModelType
 	1,  // 2: vector.VectorCollection.index_type:type_name -> vector.IndexType
-	23, // 3: vector.VectorCollection.parameters:type_name -> vector.VectorCollection.ParametersEntry
+	26, // 3: vector.VectorCollection.parameters:type_name -> vector.VectorCollection.ParametersEntry
 	0,  // 4: vector.CreateCollectionReq.model_type:type_name -> vector.VectorModelType
 	1,  // 5: vector.CreateCollectionReq.index_type:type_name -> vector.IndexType
-	24, // 6: vector.CreateCollectionReq.parameters:type_name -> vector.CreateCollectionReq.ParametersEntry
-	25, // 7: vector.UpdateCollectionReq.parameters:type_name -> vector.UpdateCollectionReq.ParametersEntry
-	31, // 8: vector.CollectionResp.base_resp:type_name -> common.BaseResp
+	27, // 6: vector.CreateCollectionReq.parameters:type_name -> vector.CreateCollectionReq.ParametersEntry
+	28, // 7: vector.UpdateCollectionReq.parameters:type_name -> vector.UpdateCollectionReq.ParametersEntry
+	35, // 8: vector.CollectionResp.base_resp:type_name -> common.BaseResp
 	3,  // 9: vector.CollectionResp.collection:type_name -> vector.VectorCollection
-	31, // 10: vector.BatchCollectionResp.base_resp:type_name -> common.BaseResp
+	35, // 10: vector.BatchCollectionResp.base_resp:type_name -> common.BaseResp
 	3,  // 11: vector.BatchCollectionResp.collections:type_name -> vector.VectorCollection
-	26, // 12: vector.VectorizeReq.metadata:type_name -> vector.VectorizeReq.MetadataEntry
-	27, // 13: vector.MapWrapper.data:type_name -> vector.MapWrapper.DataEntry
+	29, // 12: vector.VectorizeReq.metadata:type_name -> vector.VectorizeReq.MetadataEntry
+	30, // 13: vector.MapWrapper.data:type_name -> vector.MapWrapper.DataEntry
 	10, // 14: vector.BatchVectorizeReq.metadata_list:type_name -> vector.MapWrapper
-	31, // 15: vector.VectorizeResp.base_resp:type_name -> common.BaseResp
+	35, // 15: vector.VectorizeResp.base_resp:type_name -> common.BaseResp
 	2,  // 16: vector.VectorizeResp.vector:type_name -> vector.Vector
-	31, // 17: vector.BatchVectorizeResp.base_resp:type_name -> common.BaseResp
+	35, // 17: vector.BatchVectorizeResp.base_resp:type_name -> common.BaseResp
 	2,  // 18: vector.BatchVectorizeResp.vectors:type_name -> vector.Vector
-	28, // 19: vector.SearchReq.filter:type_name -> vector.SearchReq.FilterEntry
-	29, // 20: vector.SearchResultItem.metadata:type_name -> vector.SearchResultItem.MetadataEntry
-	31, // 21: vector.SearchResp.base_resp:type_name -> common.BaseResp
+	31, // 19: vector.SearchReq.filter:type_name -> vector.SearchReq.FilterEntry
+	32, // 20: vector.SearchResultItem.metadata:type_name -> vector.SearchResultItem.MetadataEntry
+	35, // 21: vector.SearchResp.base_resp:type_name -> common.BaseResp
 	15, // 22: vector.SearchResp.results:type_name -> vector.SearchResultItem
-	30, // 23: vector.TextSearchReq.filter:type_name -> vector.TextSearchReq.FilterEntry
-	4,  // 24: vector.VectorService.CreateCollection:input_type -> vector.CreateCollectionReq
-	5,  // 25: vector.VectorService.UpdateCollection:input_type -> vector.UpdateCollectionReq
-	6,  // 26: vector.VectorService.DeleteCollection:input_type -> vector.DeleteCollectionReq
-	20, // 27: vector.VectorService.GetCollection:input_type -> vector.GetByIdReq
-	21, // 28: vector.VectorService.ListCollections:input_type -> vector.EmptyReq
-	9,  // 29: vector.VectorService.Vectorize:input_type -> vector.VectorizeReq
-	11, // 30: vector.VectorService.BatchVectorize:input_type -> vector.BatchVectorizeReq
-	14, // 31: vector.VectorService.Search:input_type -> vector.SearchReq
-	17, // 32: vector.VectorService.TextSearch:input_type -> vector.TextSearchReq
-	18, // 33: vector.VectorService.DeleteVector:input_type -> vector.DeleteVectorReq
-	19, // 34: vector.VectorService.BatchDeleteVector:input_type -> vector.BatchDeleteVectorReq
-	7,  // 35: vector.VectorService.CreateCollection:output_type -> vector.CollectionResp
-	7,  // 36: vector.VectorService.UpdateCollection:output_type -> vector.CollectionResp
-	31, // 37: vector.VectorService.DeleteCollection:output_type -> common.BaseResp
-	7,  // 38: vector.VectorService.GetCollection:output_type -> vector.CollectionResp
-	8,  // 39: vector.VectorService.ListCollections:output_type -> vector.BatchCollectionResp
-	12, // 40: vector.VectorService.Vectorize:output_type -> vector.VectorizeResp
-	13, // 41: vector.VectorService.BatchVectorize:output_type -> vector.BatchVectorizeResp
-	16, // 42: vector.VectorService.Search:output_type -> vector.SearchResp
-	16, // 43: vector.VectorService.TextSearch:output_type -> vector.SearchResp
-	31, // 44: vector.VectorService.DeleteVector:output_type -> common.BaseResp
-	31, // 45: vector.VectorService.BatchDeleteVector:output_type -> common.BaseResp
-	35, // [35:46] is the sub-list for method output_type
-	24, // [24:35] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	33, // 23: vector.TextSearchReq.filter:type_name -> vector.TextSearchReq.FilterEntry
+	34, // 24: vector.VectorPreviewItem.metadata:type_name -> vector.VectorPreviewItem.MetadataEntry
+	35, // 25: vector.ListVectorsResp.base_resp:type_name -> common.BaseResp
+	23, // 26: vector.ListVectorsResp.vectors:type_name -> vector.VectorPreviewItem
+	4,  // 27: vector.VectorService.CreateCollection:input_type -> vector.CreateCollectionReq
+	5,  // 28: vector.VectorService.UpdateCollection:input_type -> vector.UpdateCollectionReq
+	6,  // 29: vector.VectorService.DeleteCollection:input_type -> vector.DeleteCollectionReq
+	20, // 30: vector.VectorService.GetCollection:input_type -> vector.GetByIdReq
+	21, // 31: vector.VectorService.ListCollections:input_type -> vector.EmptyReq
+	9,  // 32: vector.VectorService.Vectorize:input_type -> vector.VectorizeReq
+	11, // 33: vector.VectorService.BatchVectorize:input_type -> vector.BatchVectorizeReq
+	14, // 34: vector.VectorService.Search:input_type -> vector.SearchReq
+	17, // 35: vector.VectorService.TextSearch:input_type -> vector.TextSearchReq
+	18, // 36: vector.VectorService.DeleteVector:input_type -> vector.DeleteVectorReq
+	19, // 37: vector.VectorService.BatchDeleteVector:input_type -> vector.BatchDeleteVectorReq
+	22, // 38: vector.VectorService.ListVectors:input_type -> vector.ListVectorsReq
+	7,  // 39: vector.VectorService.CreateCollection:output_type -> vector.CollectionResp
+	7,  // 40: vector.VectorService.UpdateCollection:output_type -> vector.CollectionResp
+	35, // 41: vector.VectorService.DeleteCollection:output_type -> common.BaseResp
+	7,  // 42: vector.VectorService.GetCollection:output_type -> vector.CollectionResp
+	8,  // 43: vector.VectorService.ListCollections:output_type -> vector.BatchCollectionResp
+	12, // 44: vector.VectorService.Vectorize:output_type -> vector.VectorizeResp
+	13, // 45: vector.VectorService.BatchVectorize:output_type -> vector.BatchVectorizeResp
+	16, // 46: vector.VectorService.Search:output_type -> vector.SearchResp
+	16, // 47: vector.VectorService.TextSearch:output_type -> vector.SearchResp
+	35, // 48: vector.VectorService.DeleteVector:output_type -> common.BaseResp
+	35, // 49: vector.VectorService.BatchDeleteVector:output_type -> common.BaseResp
+	24, // 50: vector.VectorService.ListVectors:output_type -> vector.ListVectorsResp
+	39, // [39:51] is the sub-list for method output_type
+	27, // [27:39] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_ai_vector_proto_init() }
@@ -2010,7 +2053,7 @@ func file_ai_vector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_vector_proto_rawDesc), len(file_ai_vector_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   29,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -102,14 +102,32 @@ export async function sendMediaMessage(chatId: string, content: string, mediaUrl
   return extractData(res, null)
 }
 
-export async function uploadChatMedia(chatId: string, file: File): Promise<{ url: string; media_type: string; media_meta: string }> {
+export async function uploadChatMedia(chatId: string, file: File, onProgress?: (progress: number) => void): Promise<{ url: string; media_type: string; media_meta: string }> {
   const form = new FormData()
   form.append('file', file)
   form.append('chat_id', chatId)
   try {
+    // 模拟进度：先快速到 90%，等上传完成后跳到 100%
+    let fakeProgress = 0
+    let fakeTimer: ReturnType<typeof setInterval> | null = null
+    if (onProgress) {
+      onProgress(0)
+      fakeTimer = setInterval(() => {
+        fakeProgress += Math.random() * 15 + 5
+        if (fakeProgress >= 90) { fakeProgress = 90; if (fakeTimer) clearInterval(fakeTimer) }
+        onProgress(Math.round(fakeProgress))
+      }, 200)
+    }
+
+    const cleanup = () => { if (fakeTimer) clearInterval(fakeTimer) }
+
     const res = await client.post('/chat/upload', form, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+      transformRequest: [(data) => data], // 不让 axios 序列化 FormData
+      headers: {}, // 清空 headers，让浏览器自动设置 Content-Type
     })
+    cleanup()
+    if (onProgress) onProgress(100)
+
     const data = extractData(res, { url: '', media_type: 'file', media_meta: '' })
     return {
       url: data.url || '',

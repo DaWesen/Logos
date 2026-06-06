@@ -28,6 +28,9 @@ type CollectionRepository interface {
 	CreateResult(ctx context.Context, result *model.CollectionResult) error
 	GetResult(ctx context.Context, id string) (*model.CollectionResult, error)
 	ListResultsByTaskID(ctx context.Context, taskID string) ([]*model.CollectionResult, error)
+
+	WithTransaction(ctx context.Context, fn func(txRepo CollectionRepository) error) error
+	DB() *gorm.DB
 }
 
 type collectionRepository struct {
@@ -166,6 +169,17 @@ func (r *collectionRepository) ListResultsByTaskID(ctx context.Context, taskID s
 	var results []*model.CollectionResult
 	err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("created_at desc").Find(&results).Error
 	return results, err
+}
+
+func (r *collectionRepository) WithTransaction(ctx context.Context, fn func(txRepo CollectionRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &collectionRepository{db: tx}
+		return fn(txRepo)
+	})
+}
+
+func (r *collectionRepository) DB() *gorm.DB {
+	return r.db
 }
 
 func MarshalConfig(m map[string]string) string {

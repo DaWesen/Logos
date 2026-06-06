@@ -102,6 +102,28 @@
   display: block;
 }
 
+/* 上传进度覆盖层 - 灰色薄膜从中间渐变消失 */
+.chat-bubble-upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: clip-path 0.6s ease-out, opacity 0.4s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.chat-bubble-upload-text {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  letter-spacing: 1px;
+}
+
 .chat-bubble-file {
   display: flex;
   align-items: center;

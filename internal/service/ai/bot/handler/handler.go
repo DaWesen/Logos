@@ -340,12 +340,24 @@ func (s *BotServiceImpl) SetUserMemory(ctx context.Context, req *pb.SetUserMemor
 func (s *BotServiceImpl) DeleteUserMemory(ctx context.Context, req *pb.DeleteUserMemoryRequest) (*pb.DeleteUserMemoryResponse, error) {
 	resp := &pb.DeleteUserMemoryResponse{}
 
+	logger.Info("Bot服务收到删除记忆请求",
+		logger.StringField("user_id", req.UserId),
+		logger.StringField("bot_id", req.BotId),
+		logger.StringField("key", req.Key),
+	)
+
 	if err := s.BotService.DeleteUserMemory(ctx, req.UserId, req.BotId, req.Key); err != nil {
 		logger.Error("删除用户记忆失败", logger.ErrorField(err))
 		resp.Code = 1
 		resp.Message = err.Error()
 		return resp, nil
 	}
+
+	logger.Info("删除用户记忆成功",
+		logger.StringField("user_id", req.UserId),
+		logger.StringField("bot_id", req.BotId),
+		logger.StringField("key", req.Key),
+	)
 
 	resp.Code = 0
 	resp.Message = "success"

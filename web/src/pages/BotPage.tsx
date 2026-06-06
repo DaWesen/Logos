@@ -247,16 +247,31 @@ export default function BotPage() {
           return list.map((item) => {
             const raw = item as unknown as Record<string, unknown>
             const config = (raw.config || {}) as Record<string, string>
+            // API返回snake_case字段，需要映射到camelCase
+            // provider可能是枚举数字(1=openai,2=claude,3=qianfan,4=platform)
+            const providerNum = raw.provider as number | undefined
+            const providerMap: Record<number, string> = { 1: 'openai', 2: 'anthropic', 3: 'chatglm', 4: 'platform' }
+            const providerStr = (typeof providerNum === 'number' && providerNum > 0) ? providerMap[providerNum] : String(raw.provider || '')
             return {
               ...item,
-              avatar: item.avatar || localAvatars.get(item.id) || '',
+              id: (raw.id || raw.Id) as string,
+              name: (raw.name || raw.Name || '') as string,
+              avatar: ((raw.avatar || raw.Avatar || '') as string) || localAvatars.get((raw.id || raw.Id) as string) || '',
+              description: (raw.description || raw.Description || '') as string,
+              systemPrompt: (raw.system_prompt || raw.systemPrompt || raw.SystemPrompt || '') as string,
+              provider: providerStr,
+              model: (raw.model || raw.Model || '') as string,
+              baseUrl: (raw.base_url || raw.baseUrl || raw.BaseUrl || '') as string,
+              apiKey: (raw.api_key || raw.apiKey || raw.ApiKey || '') as string,
+              embeddingModel: (raw.embedding_model || raw.embeddingModel || raw.EmbeddingModel || '') as string,
+              embeddingBaseUrl: (config.embedding_base_url || '') as string,
+              embeddingApiKey: (config.embedding_api_key || '') as string,
+              temperature: parseFloat(String(config.temperature || raw.temperature || '0.7')) || 0.7,
               enableRag: config.enable_rag === 'true',
               enableMemory: config.enable_memory === 'true',
               enableGraph: config.enable_graph === 'true',
               autoSaveToKb: config.auto_save_to_kb === 'true',
               knowledgeBaseIds: (config.collection_ids || '').split(',').filter(Boolean),
-              embeddingBaseUrl: config.embedding_base_url || '',
-              embeddingApiKey: config.embedding_api_key || '',
             } as BotItem
           })
         })
@@ -359,6 +374,8 @@ export default function BotPage() {
     setShowPersona(!!config.persona)
     setShowExamples(config.chat_examples.length > 0)
     setPromptMode(config.persona || config.chat_examples.length > 0 ? 'yaml' : 'yaml')
+    // 编辑时如果有API Key则自动显示
+    setShowApiKey(!!bot.apiKey || !!bot.embeddingApiKey)
     setForm({
       name: bot.name,
       avatar: bot.avatar,
@@ -376,6 +393,7 @@ export default function BotPage() {
       enableRag: bot.enableRag,
       enableGraph: bot.enableGraph,
       autoSaveToKb: bot.autoSaveToKb,
+      knowledgeBaseIds: bot.knowledgeBaseIds || [],
     })
   }
 
@@ -433,10 +451,20 @@ export default function BotPage() {
   }
 
   const handleDeleteMemory = async (key: string) => {
-    if (!memoryBotId) return
-    await deleteUserMemory(memoryBotId, key)
-    const list = await getUserMemory(memoryBotId)
-    setMemories(list)
+    if (!memoryBotId) {
+      console.error('删除记忆失败: memoryBotId 为空')
+      return
+    }
+    try {
+      console.log('删除记忆:', { botId: memoryBotId, key })
+      await deleteUserMemory(memoryBotId, key)
+      console.log('删除记忆成功，重新加载列表')
+      const list = await getUserMemory(memoryBotId)
+      console.log('重新加载的记忆列表:', list)
+      setMemories(list)
+    } catch (e) {
+      console.error('删除记忆失败:', e)
+    }
   }
 
   const categoryLabels: Record<string, string> = {
@@ -805,27 +833,23 @@ export default function BotPage() {
             <label>Embedding 模型（选填）</label>
             <input className="ba-input" placeholder="如 text-embedding-3-small" value={form.embeddingModel || ''} onChange={(e) => setForm({ ...form, embeddingModel: e.target.value })} />
           </div>
-          {form.embeddingModel && (
-            <>
-              <div className="login-field">
-                <label>Embedding Base URL（选填，默认复用上方 Base URL）</label>
-                <input className="ba-input" placeholder="留空则使用 LLM 的 Base URL" value={form.embeddingBaseUrl || ''} onChange={(e) => setForm({ ...form, embeddingBaseUrl: e.target.value })} />
-              </div>
-              <div className="login-field">
-                <label>Embedding API Key（选填，默认复用上方 API Key）</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    className="ba-input"
-                    type={showApiKey ? 'text' : 'password'}
-                    placeholder="留空则使用 LLM 的 API Key"
-                    value={form.embeddingApiKey || ''}
-                    onChange={(e) => setForm({ ...form, embeddingApiKey: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                </div>
-              </div>
-            </>
-          )}
+          <div className="login-field">
+            <label>Embedding Base URL（选填，默认复用上方 Base URL）</label>
+            <input className="ba-input" placeholder="留空则使用 LLM 的 Base URL" value={form.embeddingBaseUrl || ''} onChange={(e) => setForm({ ...form, embeddingBaseUrl: e.target.value })} />
+          </div>
+          <div className="login-field">
+            <label>Embedding API Key（选填，默认复用上方 API Key）</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="ba-input"
+                type={showApiKey ? 'text' : 'password'}
+                placeholder="留空则使用 LLM 的 API Key"
+                value={form.embeddingApiKey || ''}
+                onChange={(e) => setForm({ ...form, embeddingApiKey: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+          </div>
 
           <div className="bot-form-section-title">参数</div>
           <div className="login-field">

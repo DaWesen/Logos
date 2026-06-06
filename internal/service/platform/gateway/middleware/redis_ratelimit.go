@@ -45,7 +45,7 @@ func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cac
 		"global_api",
 		"sliding",
 		cache,
-		120,
+		600000,
 		time.Minute,
 	)
 
@@ -80,31 +80,31 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 
 	switch {
 	case contains(path, "/auth/login"), contains(path, "/auth/register"):
-		rate = 5
+		rate = 600000
 		window = time.Minute
 
 	case contains(path, "/question/ask"):
-		rate = 30
+		rate = 600000
 		window = time.Minute
 
 	case contains(path, "/extraction/"):
-		rate = 20
+		rate = 600000
 		window = time.Minute
 
 	case contains(path, "/collection/tasks/") && (c.Request.Method == "POST" || c.Request.Method == "PUT"):
-		rate = 10
+		rate = 600000
 		window = time.Minute
 
 	case contains(path, "/message/send"):
-		rate = 50
+		rate = 600000
 		window = time.Minute
 
 	case contains(path, "/recommend"):
-		rate = 60
+		rate = 600000
 		window = time.Minute
 
 	default:
-		rate = 100
+		rate = 600000
 		window = time.Minute
 	}
 

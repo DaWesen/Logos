@@ -61,7 +61,8 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, model.BadRequest("file required"))
+		logger.Error("UploadChatMedia: FormFile解析失败", logger.ErrorField(err), logger.StringField("content_type", c.GetHeader("Content-Type")))
+		c.JSON(http.StatusBadRequest, model.BadRequest("file required: "+err.Error()))
 		return
 	}
 	defer file.Close()
@@ -72,8 +73,8 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 		return
 	}
 
-	if len(fileData) > 50*1024*1024 {
-		c.JSON(http.StatusBadRequest, model.BadRequest("file too large (max 50MB)"))
+	if len(fileData) > 500*1024*1024 {
+		c.JSON(http.StatusBadRequest, model.BadRequest("file too large (max 500MB)"))
 		return
 	}
 
@@ -133,6 +134,8 @@ func (h *Handler) SendMediaMessage(c *gin.Context) {
 
 	userID, _ := c.Get("user_id")
 	senderID, _ := userID.(string)
+
+	logger.Info("SendMediaMessage", logger.StringField("chat_id", req.ChatID), logger.StringField("media_url", req.MediaURL), logger.IntField("message_type", req.MessageType))
 
 	messageID := uuid.New().String()
 	event := types.NewMediaMessageEvent(

@@ -15,6 +15,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/knowledge"
 	"context"
 	"log"
@@ -34,6 +35,10 @@ func main() {
 
 	if err := model.AutoMigrate(db); err != nil {
 		log.Fatalf("Failed to auto migrate: %v", err)
+	}
+
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
 	}
 
 	kafkaManager, err := mq.NewKafkaManager(cfg.Kafka.Brokers)
@@ -68,7 +73,15 @@ func main() {
 
 	repo := dao.NewKnowledgeRepository(db, neo4jManager)
 
-	knowledgeService := service.NewKnowledgeService(repo, cacheInstance, producer, esManager)
+	outboxRepo := outbox.NewOutboxRepository()
+
+	knowledgeService := service.NewKnowledgeService(repo, cacheInstance, outboxRepo, esManager)
+
+	if producer != nil {
+		relay := outbox.NewRelay(db, producer)
+		relay.Start()
+		defer relay.Stop()
+	}
 
 	if kafkaManager != nil && esManager != nil {
 		esConsumer := mq.NewConsumer("knowledge_events", "knowledge-es-consumer")

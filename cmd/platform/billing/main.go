@@ -14,6 +14,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/billing"
 
 	"google.golang.org/grpc"
@@ -33,14 +34,25 @@ func main() {
 		log.Fatalf("Failed to auto migrate: %v", err)
 	}
 
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
+	}
+
 	repo := dao.NewBillingRepository(db)
+	outboxRepo := outbox.NewOutboxRepository()
 
 	var producer *mq.Producer
 	if len(cfg.Kafka.Brokers) > 0 {
 		producer = mq.NewProducer()
 	}
 
-	billingService := service.NewBillingService(repo, producer)
+	billingService := service.NewBillingService(repo, outboxRepo)
+
+	if producer != nil {
+		relay := outbox.NewRelay(db, producer)
+		relay.Start()
+		defer relay.Stop()
+	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("billing")
 	defer shutdown(context.Background())

@@ -872,3 +872,127 @@
   color: var(--ba-text-light);
   line-height: 1.4;
 }
+
+/* Chat History Modal */
+.chat-history-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-history-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-history-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-history-search-row input {
+  flex: 1;
+}
+
+.chat-history-filter-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.chat-history-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-history-active-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.chat-history-result-count {
+  font-size: 12px;
+  color: var(--ba-text-light);
+}
+
+.chat-history-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-history-date-divider {
+  text-align: center;
+  padding: 8px 0 4px;
+  font-size: 11px;
+  color: var(--ba-text-light);
+  position: sticky;
+  top: 0;
+  background: var(--ba-card);
+  z-index: 1;
+}
+
+.chat-history-item {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--ba-radius-sm);
+  transition: var(--ba-transition);
+  cursor: default;
+}
+
+.chat-history-item:hover {
+  background: var(--ba-bg-hover);
+}
+
+.chat-history-item-avatar {
+  flex-shrink: 0;
+}
+
+.chat-history-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-history-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.chat-history-item-sender {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ba-text);
+}
+
+.chat-history-item-time {
+  font-size: 11px;
+  color: var(--ba-text-light);
+}
+
+.chat-history-item-body {
+  font-size: 13px;
+  color: var(--ba-text);
+  line-height: 1.5;
+  word-break: break-word;
+  display: flex;
+  align-items: flex-start;
+}
+
+.chat-history-highlight {
+  animation: chat-highlight-pulse 2s ease-out;
+}
+
+@keyframes chat-highlight-pulse {
+  0% { background-color: rgba(99, 102, 241, 0.3); }
+  100% { background-color: transparent; }
+}

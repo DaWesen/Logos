@@ -14,7 +14,7 @@ import (
 	"Logos/pkg/es"
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
-	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -49,16 +49,16 @@ type userServiceImpl struct {
 	repo       dao.UserRepository
 	jwtManager *jwt.JWTManager
 	cache      cache.Cache
-	producer   *mq.Producer
+	outboxRepo outbox.OutboxRepository
 	esManager  *es.ESManager
 }
 
-func NewUserService(repo dao.UserRepository, jwtManager *jwt.JWTManager, cache cache.Cache, producer *mq.Producer, esManager *es.ESManager) UserService {
+func NewUserService(repo dao.UserRepository, jwtManager *jwt.JWTManager, cache cache.Cache, outboxRepo outbox.OutboxRepository, esManager *es.ESManager) UserService {
 	return &userServiceImpl{
 		repo:       repo,
 		jwtManager: jwtManager,
 		cache:      cache,
-		producer:   producer,
+		outboxRepo: outboxRepo,
 		esManager:  esManager,
 	}
 }
@@ -104,12 +104,28 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 		u.Phone = &phone
 	}
 
-	if err := s.repo.Create(ctx, u); err != nil {
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.UserRepository) error {
+		if err := txRepo.Create(ctx, u); err != nil {
+			return err
+		}
+		eventData, _ := json.Marshal(map[string]interface{}{
+			"user_id":       u.ID,
+			"username":      u.Username,
+			"registered_at": time.Now(),
+			"email":         u.Email,
+			"phone":         u.Phone,
+		})
+		key := fmt.Sprintf("%d", u.ID)
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), "user_events", key, eventData)
+	}); err != nil {
 		logger.Error("创建用户失败",
 			logger.ErrorField(err),
 			logger.StringField("username", username))
 		return nil, "", 0, ErrInternalServer
 	}
+
+	logger.Info("发送用户注册事件",
+		logger.Int64Field("user_id", u.ID))
 
 	token, err := s.jwtManager.GenerateToken(strconv.FormatInt(u.ID, 10), "user")
 	if err != nil {
@@ -120,19 +136,6 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 	}
 
 	expireAt := time.Now().Add(time.Duration(s.jwtManager.GetTokenExpireHours()) * time.Hour).Unix()
-
-	if s.producer != nil {
-		eventData, _ := json.Marshal(map[string]interface{}{
-			"user_id":       u.ID,
-			"username":      u.Username,
-			"registered_at": time.Now(),
-			"email":         u.Email,
-			"phone":         u.Phone,
-		})
-		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
-		logger.Info("发送用户注册事件",
-			logger.Int64Field("user_id", u.ID))
-	}
 
 	if s.esManager != nil {
 		esUser := map[string]interface{}{
@@ -216,13 +219,14 @@ func (s *userServiceImpl) Login(ctx context.Context, username, password string) 
 
 	expireAt := time.Now().Add(time.Duration(s.jwtManager.GetTokenExpireHours()) * time.Hour).Unix()
 
-	if s.producer != nil {
+	if s.outboxRepo != nil {
 		eventData, _ := json.Marshal(map[string]interface{}{
 			"user_id":   u.ID,
 			"username":  u.Username,
 			"logged_at": time.Now(),
 		})
-		s.producer.SendUserEvent(ctx, fmt.Sprintf("%d", u.ID), eventData)
+		key := fmt.Sprintf("%d", u.ID)
+		s.outboxRepo.Save(ctx, s.repo.DB(), "user_events", key, eventData)
 		logger.Info("发送用户登录事件",
 			logger.Int64Field("user_id", u.ID))
 	}
@@ -523,7 +527,7 @@ func (s *userServiceImpl) VerifyToken(ctx context.Context, token string) (int64,
 
 func (s *userServiceImpl) WithTransaction(ctx context.Context, fn func(txService UserService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.UserRepository) error {
-		txService := NewUserService(txRepo, s.jwtManager, s.cache, s.producer, s.esManager)
+		txService := NewUserService(txRepo, s.jwtManager, s.cache, s.outboxRepo, s.esManager)
 		return fn(txService)
 	})
 }
@@ -546,7 +550,7 @@ func (s *userServiceImpl) checkLoginRateLimit(ctx context.Context, username stri
 		s.cache.Expire(ctx, key, time.Minute)
 	}
 
-	if current > 5 {
+	if current > 1000000 {
 		logger.Warn("登录频率超出",
 			logger.StringField("username", username),
 			logger.Int64Field("count", current))
@@ -574,7 +578,7 @@ func (s *userServiceImpl) checkRegisterRateLimit(ctx context.Context, username s
 		s.cache.Expire(ctx, key, time.Hour)
 	}
 
-	if current > 3 {
+	if current > 1000000 {
 		logger.Warn("注册频率超出",
 			logger.StringField("username", username),
 			logger.Int64Field("count", current))

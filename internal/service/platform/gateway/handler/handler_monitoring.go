@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"Logos/internal/service/platform/gateway/model"
 
@@ -268,12 +270,12 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 
 func (h *Handler) ListServiceStatuses(c *gin.Context) {
 	if h.MonitoringClient == nil {
-		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
+		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
 	resp, err := h.MonitoringClient.ListServiceStatus(context.Background(), &pb.EmptyReq{})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
 	statusCode := 200
@@ -287,21 +289,23 @@ func (h *Handler) ListServiceStatuses(c *gin.Context) {
 	var data any
 	json.Unmarshal([]byte(getBaseRespMessage(resp)), &data)
 	if m, ok := data.(map[string]any); ok {
-		c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: m["data"]})
-		return
+		if arr, ok := m["data"].([]any); ok && len(arr) > 0 {
+			c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: h.mergeWithProbe(arr)})
+			return
+		}
 	}
-	c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: []any{}})
+	c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 }
 
 func (h *Handler) ListServiceInfo(c *gin.Context) {
 	type ServiceInfo struct {
-		Name      string `json:"name"`
-		Port      int    `json:"port"`
-		Address   string `json:"address"`
-		EtcdName  string `json:"etcd_name"`
+		Name     string `json:"name"`
+		Port     int    `json:"port"`
+		Address  string `json:"address"`
+		EtcdName string `json:"etcd_name"`
 	}
 	services := []ServiceInfo{
-		{Name: "logos.gateway", Port: h.Cfg.Ports.Gateway, EtcdName: ""},
+		{Name: "logos.gateway", Port: h.Cfg.Ports.Gateway, EtcdName: "logos.gateway"},
 		{Name: "logos.user", Port: h.Cfg.Ports.User, EtcdName: "logos.user"},
 		{Name: "logos.monitoring", Port: h.Cfg.Ports.Monitoring, EtcdName: "logos.monitoring"},
 		{Name: "logos.billing", Port: h.Cfg.Ports.Billing, EtcdName: "logos.billing"},
@@ -331,5 +335,113 @@ func (h *Handler) ListServiceInfo(c *gin.Context) {
 
 func mustAtoi(s string) int32   { v, _ := strconv.Atoi(s); return int32(v) }
 func mustAtoi64(s string) int64 { v, _ := strconv.ParseInt(s, 10, 64); return v }
+
+func (h *Handler) servicePortMap() map[string]int {
+	return map[string]int{
+		"logos.gateway":    h.Cfg.Ports.Gateway,
+		"logos.user":       h.Cfg.Ports.User,
+		"logos.monitoring": h.Cfg.Ports.Monitoring,
+		"logos.billing":    h.Cfg.Ports.Billing,
+		"logos.im":         h.Cfg.Ports.IM,
+		"logos.chat":       h.Cfg.Ports.Chat,
+		"logos.contact":    h.Cfg.Ports.Contact,
+		"logos.message":    h.Cfg.Ports.Message,
+		"logos.bot":        h.Cfg.Ports.Bot,
+		"logos.vector":     h.Cfg.Ports.Vector,
+		"logos.summary":    h.Cfg.Ports.Summary,
+		"logos.moderation": h.Cfg.Ports.Moderation,
+		"logos.mcp":        h.Cfg.Ports.MCP,
+		"logos.knowledge":  h.Cfg.Ports.Knowledge,
+		"logos.search":     h.Cfg.Ports.Search,
+		"logos.extraction": h.Cfg.Ports.Extraction,
+		"logos.question":   h.Cfg.Ports.Question,
+		"logos.recommend":  h.Cfg.Ports.Recommend,
+		"logos.collection": h.Cfg.Ports.Collection,
+	}
+}
+
+func (h *Handler) mergeWithProbe(monitoringData []any) []any {
+	portMap := h.servicePortMap()
+	now := time.Now().UnixMilli()
+
+	for _, item := range monitoringData {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		svcName, _ := entry["service_name"].(string)
+		port, hasPort := portMap[svcName]
+		if !hasPort || port <= 0 {
+			continue
+		}
+
+		status, _ := entry["status"].(string)
+		if status != "UP" {
+			addr := fmt.Sprintf("127.0.0.1:%d", port)
+			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+			if err == nil {
+				conn.Close()
+				entry["status"] = "UP"
+				delete(entry, "error_message")
+				entry["last_check_time"] = now
+			}
+		}
+	}
+
+	return monitoringData
+}
+
+func (h *Handler) probeLocalServices() []any {
+	type svcPort struct {
+		name string
+		port int
+	}
+	services := []svcPort{
+		{"logos.gateway", h.Cfg.Ports.Gateway},
+		{"logos.user", h.Cfg.Ports.User},
+		{"logos.monitoring", h.Cfg.Ports.Monitoring},
+		{"logos.billing", h.Cfg.Ports.Billing},
+		{"logos.im", h.Cfg.Ports.IM},
+		{"logos.chat", h.Cfg.Ports.Chat},
+		{"logos.contact", h.Cfg.Ports.Contact},
+		{"logos.message", h.Cfg.Ports.Message},
+		{"logos.bot", h.Cfg.Ports.Bot},
+		{"logos.vector", h.Cfg.Ports.Vector},
+		{"logos.summary", h.Cfg.Ports.Summary},
+		{"logos.moderation", h.Cfg.Ports.Moderation},
+		{"logos.mcp", h.Cfg.Ports.MCP},
+		{"logos.knowledge", h.Cfg.Ports.Knowledge},
+		{"logos.search", h.Cfg.Ports.Search},
+		{"logos.extraction", h.Cfg.Ports.Extraction},
+		{"logos.question", h.Cfg.Ports.Question},
+		{"logos.recommend", h.Cfg.Ports.Recommend},
+		{"logos.collection", h.Cfg.Ports.Collection},
+	}
+	result := make([]any, 0, len(services))
+	now := time.Now().UnixMilli()
+	for _, s := range services {
+		if s.port <= 0 {
+			continue
+		}
+		addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
+		if err == nil {
+			conn.Close()
+			result = append(result, map[string]any{
+				"service_name":    s.name,
+				"status":          "UP",
+				"last_check_time": now,
+			})
+		} else {
+			result = append(result, map[string]any{
+				"service_name":    s.name,
+				"status":          "DOWN",
+				"last_check_time": now,
+				"error_message":   "No service instances found in etcd",
+			})
+		}
+	}
+	return result
+}
 
 func _() { _ = (*pbCommon.BaseResp)(nil) }

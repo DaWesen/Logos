@@ -1,0 +1,125 @@
+# Logos - 蓝绿部署配置
+# 使用方式：
+# 1. 先部署 v1: kubectl apply -f blue-green.yaml
+# 2. 部署好 v1 后，再部署 v2: kubectl apply -f blue-green-v2.yaml
+# 3. 切换流量到 v2: 修改 gateway 中 selector，把 app: gateway-v1 改成 app: gateway-v2
+# 4. 确认没问题后，可以删除 v1: kubectl delete deployment gateway-v1
+
+---
+# 蓝版本（v1）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-v1
+  namespace: logos
+  labels:
+    app: gateway-v1
+    domain: platform
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gateway-v1
+  template:
+    metadata:
+      labels:
+        app: gateway-v1
+        version: v1
+        domain: platform
+    spec:
+      containers:
+        - name: gateway
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./gateway"]
+          ports:
+            - containerPort: 8888
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+
+---
+# 绿版本（v2）- 部署 v2 时使用
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: gateway-v2
+#   namespace: logos
+#   labels:
+#     app: gateway-v2
+#     domain: platform
+#     version: v2
+# spec:
+#   replicas: 2
+#   selector:
+#     matchLabels:
+#       app: gateway-v2
+#   template:
+#     metadata:
+#       labels:
+#         app: gateway-v2
+#         version: v2
+#         domain: platform
+#     spec:
+#       containers:
+#         - name: gateway
+#           image: logos:v2
+#           imagePullPolicy: IfNotPresent
+#           command: ["./gateway"]
+#           ports:
+#             - containerPort: 8888
+#           volumeMounts:
+#             - name: config
+#               mountPath: /app/config
+#           readinessProbe:
+#             httpGet:
+#               path: /health
+#               port: 8888
+#             initialDelaySeconds: 10
+#             periodSeconds: 5
+#           resources:
+#             requests:
+#               cpu: 100m
+#               memory: 128Mi
+#             limits:
+#               cpu: 500m
+#               memory: 512Mi
+#       volumes:
+#         - name: config
+#           configMap:
+#             name: logos-config
+
+---
+# Service（当前指向 v1，切换 v2 时修改 selector）
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-svc
+  namespace: logos
+spec:
+  type: NodePort
+  selector:
+    app: gateway-v1  # 切换蓝绿时，这里改成 gateway-v2
+  ports:
+    - name: http
+      port: 8888
+      targetPort: 8888
+      nodePort: 30080

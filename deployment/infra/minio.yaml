@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:latest
+          image: docker.1panel.live/minio/minio:latest
           args: ["server", "/data", "--console-address", ":9001"]
           ports:
             - containerPort: 9000

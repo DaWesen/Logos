@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare } from 'lucide-react'
+import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare, Filter, Image, File, Mic, Film, MapPin, Clock, X } from 'lucide-react'
 import type { Message, WsMessage } from '@/types'
 import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages } from '@/api/chat'
 import { sendBotMessage, getBotList, getBotHistory } from '@/api/bot'
@@ -14,6 +14,7 @@ import { getAISettings } from '@/api/settings'
 import ChatBubble from '@/components/ChatBubble'
 import MessageInput from '@/components/MessageInput'
 import Modal from '@/components/Modal'
+import FileViewerModal from '@/components/FileViewerModal'
 import './ChatPage.css'
 
 // 直接连接到后端 Gateway，避免代理问题
@@ -70,8 +71,21 @@ function loadChatMessages(chatId: string): Message[] {
   return loadAllMessages()[chatId] || []
 }
 
+function cleanBlobUrl(url?: string): string | undefined {
+  if (!url) return undefined
+  if (url.startsWith('blob:')) return undefined
+  return url
+}
+
+function cleanMsgForStorage(m: Message): Message {
+  return { ...m, mediaUrl: cleanBlobUrl(m.mediaUrl), uploading: undefined, uploadProgress: undefined }
+}
+
 function persistMessages(chatId: string, msgs: Message[]) {
-  try { const all = loadAllMessages(); all[chatId] = msgs; save('messages', all) } catch { /* */ }
+  try {
+    const cleaned = msgs.map(cleanMsgForStorage)
+    const all = loadAllMessages(); all[chatId] = cleaned; save('messages', all)
+  } catch { /* */ }
 }
 
 export default function ChatPage() {
@@ -83,6 +97,9 @@ export default function ChatPage() {
   const [groupMembers, setGroupMembers] = useState<Map<string, { userId: string; username: string; avatar: string; role: string }>>(new Map())
   const chatsRef = useRef<ChatItem[]>(chats)
   const lastMarkReadTime = useRef<Record<string, number>>({})
+
+  // 同步 messages 到 ref，供 WebSocket 兜底匹配使用
+  useEffect(() => { messagesRef.current = messages }, [messages])
   const [bots, setBots] = useState<{ id: string; name: string; avatar: string }[]>([])
   const [showBotPanel, setShowBotPanel] = useState(false)
 
@@ -127,6 +144,7 @@ export default function ChatPage() {
   const [newChatError, setNewChatError] = useState('')
   const [newChatLoading, setNewChatLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<Message[]>([])
   const activeChatIdRef = useRef<string | null>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
   const sentMessagesRef = useRef<Map<string, { localId: string; timestamp: number }>>(new Map())
@@ -194,6 +212,18 @@ export default function ChatPage() {
   const [searchEndTime, setSearchEndTime] = useState('')
   const [searchResults, setSearchResults] = useState<Message[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
+  const [showChatHistory, setShowChatHistory] = useState(false)
+  const [historyKeyword, setHistoryKeyword] = useState('')
+  const [historyStartTime, setHistoryStartTime] = useState('')
+  const [historyEndTime, setHistoryEndTime] = useState('')
+  const [historyMessageType, setHistoryMessageType] = useState('')
+  const [historyResults, setHistoryResults] = useState<Message[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyAllMessages, setHistoryAllMessages] = useState<Message[]>([])
+  const [historyLoadingAll, setHistoryLoadingAll] = useState(false)
+  const [fileViewerOpen, setFileViewerOpen] = useState(false)
+  const [fileViewerUrl, setFileViewerUrl] = useState('')
+  const [fileViewerName, setFileViewerName] = useState('')
 
   // 清理缓存函数
   const clearCache = useCallback(() => {
@@ -224,6 +254,22 @@ export default function ChatPage() {
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
     }, 50)
+  }
+
+  const scrollToMessage = (messageId: string) => {
+    const container = document.querySelector('.chat-window-messages')
+    if (!container) return
+    // 找到包含该消息ID的ChatBubble元素
+    const bubbles = container.querySelectorAll('[data-message-id]')
+    let targetEl: Element | null = null
+    for (const el of bubbles) {
+      if (el.getAttribute('data-message-id') === messageId) { targetEl = el; break }
+    }
+    if (!targetEl) return
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // 高亮效果
+    targetEl.classList.add('chat-history-highlight')
+    setTimeout(() => targetEl?.classList.remove('chat-history-highlight'), 2000)
   }
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => {
@@ -274,7 +320,7 @@ export default function ChatPage() {
         senderName: fixedName,
         senderAvatar: fixedAvatar,
         isBot: fixedIsBot,
-        mediaUrl: msg.mediaUrl ? toMediaUrl(msg.mediaUrl) : undefined
+        mediaUrl: msg.mediaUrl && !msg.mediaUrl.startsWith('blob:') ? toMediaUrl(msg.mediaUrl) : undefined
       }
     })
     console.log('%c📂 [加载] 从localStorage加载消息', 'background: #607D8B; color: white; padding:2px 5px; border-radius:3px;', {
@@ -285,11 +331,15 @@ export default function ChatPage() {
     })
     const deduped = fixedMsgs.filter((msg, idx, arr) => {
       if (arr.findIndex(m => m.id === msg.id) !== idx) return false
-      const contentKey = `${msg.senderId}:${(msg.content || '').trim()}`
+      // 媒体消息（非 text）不去重，因为 content 可能为空但 mediaUrl/mediaMeta 不同
+      if (msg.messageType !== 'text') return true
+      // 只去重3秒内完全相同的消息（真正重复的 echo），不误删用户主动重复发送的消息
       const earlier = arr.slice(0, idx).find(m =>
+        m.id !== msg.id &&
         m.senderId === msg.senderId &&
+        m.messageType === msg.messageType &&
         (m.content || '').trim() === (msg.content || '').trim() &&
-        Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) < 60000
+        Math.abs(new Date(m.createdAt).getTime() - new Date(msg.createdAt).getTime()) < 3000
       )
       if (earlier) return false
       return true
@@ -302,6 +352,7 @@ export default function ChatPage() {
   }, [getCorrectSenderName, bots, user])
 
   const fetchRemoteMessages = useCallback(async (chatId: string) => {
+    console.log('%c🌐 [远程] 开始获取远程消息', 'background: #00BCD4; color: white; padding:2px 5px; border-radius:3px;', { chatId })
     try {
       const isBotChat = chatId.startsWith('bot-') || chatId.startsWith('bot_')
       let data: any[]
@@ -331,11 +382,27 @@ export default function ChatPage() {
       }
       const localMsgs = loadChatMessages(chatId)
       if (Array.isArray(data) && data.length > 0) {
+        // 调试：检查远程消息完整结构
+        console.log('%c🌐 [远程] 获取到消息', 'background: #00BCD4; color: white; padding:2px 5px; border-radius:3px;', {
+          total: data.length,
+          all: data.map((m: Record<string, unknown>) => ({
+            id: m.id,
+            sender_id: m.sender_id,
+            senderId: m.senderId,
+            sender_name: m.sender_name,
+            senderName: m.senderName,
+            is_bot: m.is_bot,
+            isBot: m.isBot,
+            content: String(m.content || '').slice(0, 50),
+            message_type: m.message_type || m.messageType,
+            created_at: m.created_at || m.createdAt,
+          }))
+        })
         const remoteMsgs = data.map((m: Record<string, unknown>) => {
           const senderId = String(m.sender_id || m.senderId || '')
           const senderNameFromServer = String(m.sender_name || m.senderName || '')
           let finalSenderName = senderNameFromServer || getCorrectSenderName(senderId, chatId)
-          
+
           // 从groupMembers中获取头像
           let senderAvatar = String(m.sender_avatar || m.senderAvatar || '')
           if (!senderAvatar && groupMembers.has(senderId)) {
@@ -363,9 +430,19 @@ export default function ChatPage() {
               isBotMsg = true
             }
           }
-          
+          // 群聊中检测bot发送者：senderId以bot_开头，或senderId匹配某个bot的ID
+          if (!isBotMsg && senderId !== user?.id) {
+            const botId = senderId.startsWith('bot_') ? senderId.replace('bot_', '') : senderId
+            const botInfo = bots.find((b) => b.id === botId)
+            if (botInfo) {
+              finalSenderName = botInfo.name || finalSenderName || 'Bot'
+              senderAvatar = botInfo.avatar || senderAvatar
+              isBotMsg = true
+            }
+          }
+
           const resolvedType = resolveMessageType(m.message_type || m.messageType)
-          
+
           return {
             id: String(m.id || ''),
             chatId: String(m.chat_id || m.chatId || chatId),
@@ -392,28 +469,57 @@ export default function ChatPage() {
             isBot: isBotMsg,
           }
         })
+
+        // 调试：对比本地和远程消息
+        console.log('%c🔄 [合并调试]', 'background: #E91E63; color: white; padding:2px 5px; border-radius:3px;', {
+          localIds: localMsgs.map(m => ({ id: m.id, senderId: m.senderId, content: m.content.slice(0, 30), isBot: m.isBot })),
+          remoteIds: remoteMsgs.map(m => ({ id: m.id, senderId: m.senderId, content: m.content.slice(0, 30), isBot: m.isBot })),
+        })
         
         const msgMap = new Map<string, Message>()
-        
+
         for (const m of localMsgs) {
           msgMap.set(m.id, m)
         }
-        
+
+        // 辅助：去掉 bot_ 前缀，用于 senderId 匹配
+        const stripBotPrefix = (id: string) => id.startsWith('bot_') ? id.replace('bot_', '') : id
+
         for (const m of remoteMsgs) {
           if (msgMap.has(m.id)) {
             const existing = msgMap.get(m.id)!
-            // 合并：如果远程消息缺少 mediaUrl/mediaMeta 但本地有，保留本地的
+            const isRemoteWithdrawn = m.content === '[消息已撤回]' || (m as any).status === 'withdrawn'
             const merged = {
               ...m,
-              mediaUrl: m.mediaUrl || existing.mediaUrl,
-              mediaMeta: m.mediaMeta || existing.mediaMeta,
-              messageType: (m.messageType === 'text' && existing.messageType !== 'text') ? existing.messageType : m.messageType,
+              mediaUrl: isRemoteWithdrawn ? undefined : (m.mediaUrl || (existing.mediaUrl?.startsWith('blob:') ? undefined : existing.mediaUrl)),
+              mediaMeta: isRemoteWithdrawn ? undefined : (m.mediaMeta || existing.mediaMeta),
+              messageType: isRemoteWithdrawn ? 'withdrawn' as const : m.messageType,
             }
             msgMap.set(m.id, merged)
           } else {
             let replacedLocal = false
             for (const [id, localMsg] of msgMap) {
-              if (id.startsWith('local-') && localMsg.senderId === m.senderId && localMsg.content.trim() === m.content.trim()) {
+              // 只匹配临时ID（local-* 或 bot-* 前缀）
+              const isTempId = id.startsWith('local-') || id.startsWith('bot-')
+              if (!isTempId) continue
+
+              // Bot消息匹配：本地bot-*前缀的消息，匹配远程同内容+同senderId（去掉bot_前缀比较）的bot消息
+              const isLocalBot = localMsg.isBot || localMsg.senderId?.startsWith('bot_')
+              const isRemoteBot = !!m.isBot || m.senderId?.startsWith('bot_') || bots.some(b => b.id === stripBotPrefix(m.senderId))
+              if (isLocalBot && isRemoteBot &&
+                localMsg.content.trim() === m.content.trim() &&
+                stripBotPrefix(localMsg.senderId) === stripBotPrefix(m.senderId) &&
+                Math.abs(new Date(localMsg.createdAt).getTime() - new Date(m.createdAt).getTime()) < 120000) {
+                msgMap.delete(id)
+                msgMap.set(m.id, m)
+                replacedLocal = true
+                break
+              }
+
+              // local-* 前缀的普通消息匹配（原有逻辑）
+              if (id.startsWith('local-') && localMsg.senderId === m.senderId &&
+                Math.abs(new Date(localMsg.createdAt).getTime() - new Date(m.createdAt).getTime()) < 120000 &&
+                (localMsg.messageType === m.messageType || localMsg.content.trim() === m.content.trim())) {
                 msgMap.delete(id)
                 msgMap.set(m.id, m)
                 replacedLocal = true
@@ -421,22 +527,37 @@ export default function ChatPage() {
               }
             }
             if (!replacedLocal) {
-              let replacedWs = false
-              for (const [id, existingMsg] of msgMap) {
-                if (!id.startsWith('local-') && existingMsg.senderId === m.senderId && existingMsg.content.trim() === m.content.trim() && Math.abs(new Date(existingMsg.createdAt).getTime() - new Date(m.createdAt).getTime()) < 60000) {
-                  msgMap.set(id, { ...m, id: id })
-                  replacedWs = true
-                  break
-                }
-              }
-              if (!replacedWs) {
-                msgMap.set(m.id, m)
-              }
+              msgMap.set(m.id, m)
             }
           }
         }
-        
-        const sorted = Array.from(msgMap.values()).sort((a, b) => {
+
+        // 最终去重：同一发送者+同内容(去掉@mention前缀)+5秒内，保留一条
+        // 只去重后端同时存储的@mention和去@mention版本，不去重不同时间发送的同内容消息
+        const finalList = Array.from(msgMap.values())
+        const deduped: Message[] = []
+        for (const m of finalList) {
+          const contentKey = m.content.replace(/^@\S+\s*/, '').trim()
+          const mTime = new Date(m.createdAt).getTime()
+          const mSenderId = stripBotPrefix(m.senderId)
+          // 检查是否与已保留的消息重复（5秒内+同发送者+同核心内容）
+          const dupIdx = deduped.findIndex(d => {
+            const dContentKey = d.content.replace(/^@\S+\s*/, '').trim()
+            return stripBotPrefix(d.senderId) === mSenderId &&
+              dContentKey === contentKey &&
+              Math.abs(new Date(d.createdAt).getTime() - mTime) < 5000
+          })
+          if (dupIdx === -1) {
+            deduped.push(m)
+          } else {
+            // 优先保留有@mention的版本（内容更完整）
+            if (m.content.includes('@') && !deduped[dupIdx].content.includes('@')) {
+              deduped[dupIdx] = m
+            }
+          }
+        }
+
+        const sorted = deduped.sort((a, b) => {
           const timeA = new Date(a.createdAt).getTime()
           const timeB = new Date(b.createdAt).getTime()
           return timeA - timeB
@@ -444,7 +565,7 @@ export default function ChatPage() {
         
         persistAndSetMessages(chatId, sorted)
       }
-    } catch { /* keep local */ }
+    } catch (e) { console.log('%c🌐 [远程] 获取失败', 'background: #F44336; color: white; padding:2px 5px; border-radius:3px;', e) }
   }, [persistAndSetMessages, user, getCorrectSenderName, groupMembers])
 
   useEffect(() => {
@@ -1078,6 +1199,16 @@ export default function ChatPage() {
         finalIsBot = true
       }
     }
+    // 群聊中检测bot发送者：senderId以bot_开头，或senderId匹配某个bot的ID
+    if (!finalIsBot && !isSelfEcho && senderId !== user?.id) {
+      const botId = senderId.startsWith('bot_') ? senderId.replace('bot_', '') : senderId
+      const botInfo = bots.find((b) => b.id === botId)
+      if (botInfo) {
+        finalSenderName = botInfo.name || finalSenderName || 'Bot'
+        finalSenderAvatar = botInfo.avatar || finalSenderAvatar
+        finalIsBot = true
+      }
+    }
 
     const incoming: Message = {
       id: String(data.id || ''),
@@ -1210,6 +1341,24 @@ export default function ChatPage() {
         }
       }
       
+      // 最后兜底：媒体消息通过 messageType + 同发送者匹配本地临时消息
+      if (!sentInfo && incoming.messageType !== 'text' && isSelfEcho) {
+        const localMsgs = messagesRef.current
+        const candidate = localMsgs.find(m =>
+          m.id.startsWith('local-') &&
+          m.senderId === incoming.senderId &&
+          m.messageType === incoming.messageType &&
+          Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 120000
+        )
+        if (candidate) {
+          sentInfo = { localId: candidate.id, timestamp: Date.now() }
+          sentKey = `typeMatch:${incoming.messageType}:${candidate.id}`
+          console.log('%c📥 [WS] 兜底messageType匹配', 'background: #FF9800; color: white; padding:2px 5px; border-radius:3px;', {
+            matchedLocalId: candidate.id, messageType: incoming.messageType
+          })
+        }
+      }
+      
       if (sentInfo) {
         needToReplace = { sentKey, localId: sentInfo.localId }
         console.log('%c📥 [WS] 找到匹配！', 'background: #4CAF50; color: white; padding:2px 5px; border-radius:3px;', {
@@ -1231,14 +1380,16 @@ export default function ChatPage() {
           return prevMsgs
         }
 
-        // Bot 消息去重：如果已有相同发送者和内容的 Bot 消息在 30 秒内，跳过
+        // Bot 消息去重：如果已有相同发送者(去掉bot_前缀比较)和内容的 Bot 消息在 30 秒内，跳过
         if (incoming.isBot || incoming.senderId.startsWith('bot_')) {
-          const duplicateBot = prevMsgs.find(m =>
-            (m.isBot || m.senderId.startsWith('bot_')) &&
-            m.senderId === incoming.senderId &&
-            m.content.trim() === incoming.content.trim() &&
-            Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 30000
-          )
+          const incomingBotId = incoming.senderId.startsWith('bot_') ? incoming.senderId.replace('bot_', '') : incoming.senderId
+          const duplicateBot = prevMsgs.find(m => {
+            const mBotId = m.senderId.startsWith('bot_') ? m.senderId.replace('bot_', '') : m.senderId
+            return (m.isBot || m.senderId.startsWith('bot_')) &&
+              mBotId === incomingBotId &&
+              m.content.trim() === incoming.content.trim() &&
+              Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 30000
+          })
           if (duplicateBot) {
             return prevMsgs
           }
@@ -1280,13 +1431,16 @@ export default function ChatPage() {
         return
       }
 
-      // Bot 消息持久化去重：如果已有相同内容的 Bot 消息在 10 秒内，跳过
-      if (incoming.isBot) {
-        const duplicateBot = currentMsgs.find(m =>
-          m.isBot &&
-          m.content.trim() === incoming.content.trim() &&
-          Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 10000
-        )
+      // Bot 消息持久化去重：如果已有相同内容+相同bot(去掉bot_前缀比较)的消息在 10 秒内，跳过
+      if (incoming.isBot || incoming.senderId.startsWith('bot_')) {
+        const incomingBotId = incoming.senderId.startsWith('bot_') ? incoming.senderId.replace('bot_', '') : incoming.senderId
+        const duplicateBot = currentMsgs.find(m => {
+          const mBotId = m.senderId.startsWith('bot_') ? m.senderId.replace('bot_', '') : m.senderId
+          return (m.isBot || m.senderId.startsWith('bot_')) &&
+            mBotId === incomingBotId &&
+            m.content.trim() === incoming.content.trim() &&
+            Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 10000
+        })
         if (duplicateBot) {
           console.log('%c💾 [持久化] Bot消息重复，跳过', 'background: #9C27B0; color: white; padding:2px 5px; border-radius:3px;', {
             incomingId: incoming.id, content: incoming.content.trim().slice(0, 30)
@@ -1319,13 +1473,15 @@ export default function ChatPage() {
       
       // 直接添加新消息并排序（带去重）
       const alreadyExists = currentMsgs.some(m => m.id === incoming.id)
+      const incomingBotId = incoming.senderId.startsWith('bot_') ? incoming.senderId.replace('bot_', '') : incoming.senderId
       const botDuplicate = (incoming.isBot || incoming.senderId.startsWith('bot_')) &&
-        currentMsgs.some(m =>
-          (m.isBot || m.senderId.startsWith('bot_')) &&
-          m.senderId === incoming.senderId &&
-          m.content.trim() === incoming.content.trim() &&
-          Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 30000
-        )
+        currentMsgs.some(m => {
+          const mBotId = m.senderId.startsWith('bot_') ? m.senderId.replace('bot_', '') : m.senderId
+          return (m.isBot || m.senderId.startsWith('bot_')) &&
+            mBotId === incomingBotId &&
+            m.content.trim() === incoming.content.trim() &&
+            Math.abs(new Date(m.createdAt).getTime() - new Date(incoming.createdAt).getTime()) < 30000
+        })
       if (alreadyExists || botDuplicate) {
         console.log('%c💾 [持久化] 跳过重复消息', 'background: #FF9800; color: white; padding:2px 5px; border-radius:3px;', { incomingId: incoming.id })
         return
@@ -1587,7 +1743,7 @@ export default function ChatPage() {
       
       const updated = messages.map(m => 
         m.id === messageId 
-          ? { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const } 
+          ? { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const, mediaUrl: undefined, mediaMeta: undefined } 
           : m
       )
       persistAndSetMessages(selectedChatId, updated)
@@ -1611,9 +1767,9 @@ export default function ChatPage() {
   }
 
   const handleForwardMessage = (message: Message) => {
-    // 检查是否是本地临时消息
-    if (message.id.startsWith('local-')) {
-      alert('请等待消息发送完成后再转发')
+    // 检查是否还在上传中
+    if (message.uploading) {
+      alert('请等待文件上传完成后再转发')
       return
     }
     setForwardingMessage(message)
@@ -1628,8 +1784,8 @@ export default function ChatPage() {
     }
     
     // 再次检查，防止用户绕过检查
-    if (forwardingMessage.id.startsWith('local-')) {
-      alert('请等待消息发送完成后再转发')
+    if (forwardingMessage.uploading) {
+      alert('请等待文件上传完成后再转发')
       return
     }
 
@@ -1903,15 +2059,141 @@ export default function ChatPage() {
     }
   }, [selectedChatId, searchKeyword, searchStartTime, searchEndTime])
 
+  const handleOpenChatHistory = useCallback(async () => {
+    setShowMenu(false)
+    setShowChatHistory(true)
+    setHistoryKeyword('')
+    setHistoryStartTime('')
+    setHistoryEndTime('')
+    setHistoryMessageType('')
+    setHistoryResults([])
+    if (!selectedChatId) return
+    setHistoryLoadingAll(true)
+    try {
+      const isBotChat = selectedChatId.startsWith('bot-') || selectedChatId.startsWith('bot_')
+      let data: any[]
+      if (isBotChat) {
+        const botId = selectedChatId.replace(/^bot[-_]/, '')
+        data = await getBotHistory(botId)
+      } else {
+        data = await getChatHistory(selectedChatId, 500)
+      }
+      const msgs = (Array.isArray(data) ? data : []).map((m: Record<string, unknown>) => {
+        const rawSenderId = String(m.sender_id || m.senderId || '')
+        const serverSenderName = String(m.sender_name || m.senderName || '')
+        const serverAvatar = String(m.sender_avatar || m.senderAvatar || '')
+
+        // 用与聊天消息列表一致的逻辑修复发送者信息
+        let finalName = serverSenderName || getCorrectSenderName(rawSenderId, selectedChatId)
+        let finalAvatar = serverAvatar
+
+        // 自己发的消息
+        if (rawSenderId === user?.id) {
+          if (!finalName) finalName = user.nickname || user.username || '我'
+          if (!finalAvatar && user?.avatar) finalAvatar = user.avatar
+        }
+
+        // Bot 消息
+        const isThisBotMsg = isBotChat || !!m.is_bot || !!m.isBot
+        if (isThisBotMsg && rawSenderId !== user?.id) {
+          const botIdForLookup = rawSenderId || (isBotChat ? selectedChatId.replace(/^bot[-_]/, '') : '')
+          const botInfo = bots.find((b) => b.id === botIdForLookup)
+          if (botInfo) {
+            finalName = botInfo.name || finalName || 'Bot'
+            finalAvatar = botInfo.avatar || finalAvatar
+          }
+          if (!finalName) finalName = 'Bot'
+        }
+
+        // 群组成员消息
+        if (!isThisBotMsg && rawSenderId !== user?.id && groupMembers.has(rawSenderId)) {
+          const member = groupMembers.get(rawSenderId)!
+          if (!finalName) finalName = member.username
+          if (!finalAvatar) finalAvatar = member.avatar
+        }
+
+        // 私聊对方
+        if (!finalName && !isThisBotMsg && selectedChat?.type === 'private' && selectedChat.userId && rawSenderId !== user?.id) {
+          finalName = selectedChat.name
+          finalAvatar = selectedChat.avatar
+        }
+
+        return {
+          id: String(m.id || ''),
+          chatId: String(m.chat_id || m.chatId || selectedChatId),
+          senderId: rawSenderId,
+          senderName: finalName,
+          senderAvatar: finalAvatar,
+          content: String(m.content || '').trim(),
+          messageType: resolveMessageType(m.message_type || m.messageType),
+          mediaUrl: toMediaUrl(String(m.media_url || m.mediaUrl || '')),
+          mediaMeta: resolveMediaMeta(m.media_meta || m.mediaMeta),
+          createdAt: (() => {
+            const raw = m.created_at || m.createdAt
+            if (!raw) return new Date().toISOString()
+            if (typeof raw === 'string') return raw
+            if (typeof raw === 'object') {
+              const ts = raw as Record<string, unknown>
+              const seconds = ts.seconds || ts.Seconds || 0
+              const nanos = ts.nanos || ts.Nanos || 0
+              const ms = (typeof seconds === 'string' ? parseInt(seconds) : seconds as number) * 1000 + Math.floor((typeof nanos === 'number' ? nanos : 0) / 1000000)
+              return ms > 0 ? new Date(ms).toISOString() : new Date().toISOString()
+            }
+            return String(raw)
+          })(),
+          isBot: isThisBotMsg,
+        }
+      })
+      setHistoryAllMessages(msgs)
+      setHistoryResults(msgs)
+    } catch {
+      setHistoryAllMessages([])
+      setHistoryResults([])
+    } finally {
+      setHistoryLoadingAll(false)
+    }
+  }, [selectedChatId, getCorrectSenderName, user, bots, groupMembers, selectedChat])
+
+  const handleFileOpen = useCallback((url: string, filename: string) => {
+    setFileViewerUrl(url)
+    setFileViewerName(filename)
+    setFileViewerOpen(true)
+  }, [])
+
+  const handleFilterHistory = useCallback(() => {
+    let filtered = [...historyAllMessages]
+    if (historyKeyword.trim()) {
+      const kw = historyKeyword.trim().toLowerCase()
+      filtered = filtered.filter((m) => m.content.toLowerCase().includes(kw) || m.senderName.toLowerCase().includes(kw))
+    }
+    if (historyMessageType) {
+      filtered = filtered.filter((m) => m.messageType === historyMessageType)
+    }
+    if (historyStartTime) {
+      filtered = filtered.filter((m) => new Date(m.createdAt) >= new Date(historyStartTime))
+    }
+    if (historyEndTime) {
+      const end = new Date(historyEndTime)
+      end.setHours(23, 59, 59, 999)
+      filtered = filtered.filter((m) => new Date(m.createdAt) <= end)
+    }
+    setHistoryResults(filtered)
+  }, [historyAllMessages, historyKeyword, historyMessageType, historyStartTime, historyEndTime])
+
+  useEffect(() => {
+    if (showChatHistory) handleFilterHistory()
+  }, [showChatHistory, historyKeyword, historyMessageType, historyStartTime, historyEndTime, handleFilterHistory])
+
   const handleUpload = async (file: File) => {
     if (!selectedChat) return
     const chatId = selectedChat.id
     const mediaType = detectMediaType(file)
+    // 图片、视频、音频都创建 blob URL 用于本地预览
     let previewUrl = ''
-    if (mediaType === 'image') previewUrl = URL.createObjectURL(file)
+    if (mediaType === 'image' || mediaType === 'video' || mediaType === 'voice') previewUrl = URL.createObjectURL(file)
     const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    const content = mediaType === 'image' ? '' : `[${mediaType}] ${file.name}`
-    const localMsg: Message = { id: localId, chatId, senderId: user?.id || '', senderName: user?.nickname || '我', senderAvatar: user?.avatar || '', content, messageType: mediaType, mediaUrl: previewUrl || undefined, mediaMeta: file.name, createdAt: new Date().toISOString() }
+    const content = ''
+    const localMsg: Message = { id: localId, chatId, senderId: user?.id || '', senderName: user?.nickname || '我', senderAvatar: user?.avatar || '', content, messageType: mediaType, mediaUrl: previewUrl || undefined, mediaMeta: file.name, createdAt: new Date().toISOString(), uploading: true, uploadProgress: 0 }
     
     // 保存到 sentMessagesRef，用于后续去重
     const sentKey = `${chatId}:${content.trim()}:${file.name}`
@@ -1936,12 +2218,21 @@ export default function ChatPage() {
     })
     
     try {
-      const uploadResult = await uploadChatMedia(chatId, file)
+      const uploadResult = await uploadChatMedia(chatId, file, (progress) => {
+        // 更新上传进度
+        setMessages((prev) => prev.map(m => m.id === localId ? { ...m, uploadProgress: progress } : m))
+      })
       const remoteUrl = uploadResult.url || ''
       const uploadMediaMeta = uploadResult.media_meta || ''
       console.log('%c📤 [上传] 上传完成', 'background: #FF6B35; color: white; padding:2px 5px; border-radius:3px;', {
         localId, remoteUrl, sentKey, uploadMediaMeta
       })
+      // 标记上传完成（先显示 100%，延迟后移除覆盖层让动画播放完）
+      setMessages((prev) => prev.map(m => m.id === localId ? { ...m, uploading: false, uploadProgress: 100 } : m))
+      // 延迟清除进度字段，让覆盖层的消失动画有足够时间播放
+      setTimeout(() => {
+        setMessages((prev) => prev.map(m => m.id === localId ? { ...m, uploadProgress: undefined } : m))
+      }, 800)
       if (remoteUrl) {
         mediaUrlToLocalIdRef.current.set(remoteUrl, localId)
         console.log('%c📤 [上传] 保存mediaUrl映射', 'background: #FF6B35; color: white; padding:2px 5px; border-radius:3px;', {
@@ -1949,9 +2240,13 @@ export default function ChatPage() {
           allMappings: [...mediaUrlToLocalIdRef.current.entries()]
         })
         const metaToSend = uploadMediaMeta || JSON.stringify({ filename: file.name })
-        sendMediaMessage(chatId, '', remoteUrl, mediaType, metaToSend, selectedChat.type).catch(() => {})
+        sendMediaMessage(chatId, '', remoteUrl, mediaType, metaToSend, selectedChat.type)
+          .then(() => console.log('%c📤 [发送] 媒体消息发送成功', 'background: #4CAF50; color: white; padding:2px 5px; border-radius:3px;', { chatId, remoteUrl, mediaType }))
+          .catch((e) => console.log('%c📤 [发送] 媒体消息发送失败', 'background: #F44336; color: white; padding:2px 5px; border-radius:3px;', e))
       }
     } catch {
+      // 标记上传失败
+      setMessages((prev) => prev.map(m => m.id === localId ? { ...m, uploading: false, uploadProgress: 0 } : m))
       alert('上传文件失败，请重试')
     }
   }
@@ -2432,7 +2727,7 @@ export default function ChatPage() {
                     <button className="header-dropdown-item" onClick={() => { handleGenerateReplies(); setShowMenu(false) }}>
                       <MessageSquare size={16} /> 智能回复
                     </button>
-                    <button className="header-dropdown-item" onClick={() => { setShowMenu(false) }}>
+                    <button className="header-dropdown-item" onClick={handleOpenChatHistory}>
                       <FileText size={16} /> 聊天记录
                     </button>
                     {selectedChat.type === 'group' && isOwner && (
@@ -2790,15 +3085,17 @@ export default function ChatPage() {
                 )}
                 <div className="chat-window-messages">
                   {messages.map((msg, i) => (
-                    <ChatBubble
-                      key={msg.id || i}
-                      message={msg}
-                      isOwn={msg.senderId === user?.id}
-                      showAvatar={true}
-                      onEdit={handleEditMessage}
-                      onForward={handleForwardMessage}
-                      onWithdraw={handleWithdrawMessage}
-                    />
+                    <div key={msg.id || i} data-message-id={msg.id}>
+                      <ChatBubble
+                        message={msg}
+                        isOwn={msg.senderId === user?.id}
+                        showAvatar={true}
+                        onEdit={handleEditMessage}
+                        onForward={handleForwardMessage}
+                        onWithdraw={handleWithdrawMessage}
+                        onFileOpen={handleFileOpen}
+                      />
+                    </div>
                   ))}
                   {typingChatId === selectedChatId && selectedChat?.type !== 'group' && (
                     <div className="chat-typing-indicator">
@@ -3472,6 +3769,142 @@ export default function ChatPage() {
           </div>
         </div>
       </Modal>
+
+      <Modal open={showChatHistory} onClose={() => setShowChatHistory(false)} title="聊天记录" width={640}>
+        <div className="chat-history-modal">
+          <div className="chat-history-filters">
+            <div className="chat-history-search-row">
+              <Search size={16} style={{ color: 'var(--ba-text-light)', flexShrink: 0 }} />
+              <input
+                className="ba-input"
+                placeholder="搜索关键词或发送者..."
+                value={historyKeyword}
+                onChange={(e) => setHistoryKeyword(e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="chat-history-filter-row">
+              <div className="chat-history-filter-group">
+                <Filter size={14} style={{ color: 'var(--ba-text-light)' }} />
+                <select className="ba-input" value={historyMessageType} onChange={(e) => setHistoryMessageType(e.target.value)} style={{ minWidth: 100 }}>
+                  <option value="">全部类型</option>
+                  <option value="text">文本</option>
+                  <option value="image">图片</option>
+                  <option value="file">文件</option>
+                  <option value="voice">语音</option>
+                  <option value="video">视频</option>
+                  <option value="location">位置</option>
+                  <option value="system">系统</option>
+                </select>
+              </div>
+              <div className="chat-history-filter-group">
+                <Clock size={14} style={{ color: 'var(--ba-text-light)' }} />
+                <input type="date" className="ba-input" value={historyStartTime} onChange={(e) => setHistoryStartTime(e.target.value)} title="开始日期" style={{ minWidth: 120 }} />
+                <span style={{ color: 'var(--ba-text-light)' }}>~</span>
+                <input type="date" className="ba-input" value={historyEndTime} onChange={(e) => setHistoryEndTime(e.target.value)} title="结束日期" style={{ minWidth: 120 }} />
+              </div>
+            </div>
+            {(historyKeyword || historyMessageType || historyStartTime || historyEndTime) && (
+              <div className="chat-history-active-filters">
+                <span className="chat-history-result-count">
+                  {historyLoadingAll ? '加载中...' : `${historyResults.length} 条结果`}
+                </span>
+                <button className="ba-btn ba-btn-secondary" style={{ padding: '2px 10px', fontSize: 11 }} onClick={() => {
+                  setHistoryKeyword('')
+                  setHistoryMessageType('')
+                  setHistoryStartTime('')
+                  setHistoryEndTime('')
+                }}>
+                  清除筛选
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="chat-history-list">
+            {historyLoadingAll ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--ba-text-light)' }}>
+                <RefreshCw size={24} className="spin" style={{ marginBottom: 8 }} />
+                <p>加载聊天记录...</p>
+              </div>
+            ) : historyResults.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--ba-text-light)' }}>
+                <FileText size={32} style={{ marginBottom: 8, opacity: 0.5 }} />
+                <p>{historyAllMessages.length === 0 ? '暂无聊天记录' : '没有匹配的消息'}</p>
+              </div>
+            ) : (
+              historyResults.map((msg, i) => {
+                const prevMsg = i > 0 ? historyResults[i - 1] : null
+                const showDateDivider = !prevMsg || (() => {
+                  const prevDate = new Date(prevMsg.createdAt).toDateString()
+                  const curDate = new Date(msg.createdAt).toDateString()
+                  return prevDate !== curDate
+                })()
+
+                const typeIcon: Record<string, typeof FileText> = {
+                  image: Image, file: File, voice: Mic, video: Film, location: MapPin, system: MessageSquare,
+                }
+                const TypeIcon = typeIcon[msg.messageType] || null
+
+                return (
+                  <div key={msg.id || i}>
+                    {showDateDivider && (
+                      <div className="chat-history-date-divider">
+                        {new Date(msg.createdAt).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}
+                      </div>
+                    )}
+                    <div className="chat-history-item" onClick={() => { setShowChatHistory(false); setTimeout(() => scrollToMessage(msg.id), 100) }} style={{ cursor: 'pointer' }}>
+                      <div className="chat-history-item-avatar">
+                        {msg.senderAvatar ? (
+                          <img src={msg.senderAvatar} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--ba-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 600 }}>
+                            {(msg.senderName || '?').charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="chat-history-item-content">
+                        <div className="chat-history-item-header">
+                          <span className="chat-history-item-sender">{msg.senderName || '未知'}</span>
+                          <span className="chat-history-item-time">
+                            {new Date(msg.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div className="chat-history-item-body">
+                          {msg.messageType === 'image' && msg.mediaUrl ? (
+                            <img src={msg.mediaUrl} alt="" style={{ maxWidth: 200, maxHeight: 120, borderRadius: 4 }} />
+                          ) : msg.messageType === 'file' ? (
+                            <span><File size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} /> {msg.mediaMeta || msg.content}</span>
+                          ) : msg.messageType === 'voice' ? (
+                            <span><Mic size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} /> {msg.content || '语音消息'}</span>
+                          ) : msg.messageType === 'video' ? (
+                            <span><Film size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} /> {msg.content || '视频消息'}</span>
+                          ) : msg.messageType === 'location' ? (
+                            <span><MapPin size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} /> {msg.content}</span>
+                          ) : msg.messageType === 'system' ? (
+                            <span style={{ color: 'var(--ba-text-light)', fontStyle: 'italic' }}>{msg.content}</span>
+                          ) : TypeIcon ? (
+                            <span><TypeIcon size={13} style={{ color: 'var(--ba-text-light)', marginRight: 4, verticalAlign: 'middle' }} /> {msg.content}</span>
+                          ) : (
+                            <span>{msg.content}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <FileViewerModal
+        open={fileViewerOpen}
+        onClose={() => setFileViewerOpen(false)}
+        url={fileViewerUrl}
+        filename={fileViewerName}
+      />
     </div>
   )
 }

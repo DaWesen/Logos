@@ -7,7 +7,6 @@
 package bot
 
 import (
-	fmt "fmt"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -1463,6 +1462,8 @@ type StreamBotResponse struct {
 	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
 	Done          bool                   `protobuf:"varint,2,opt,name=done,proto3" json:"done,omitempty"`
 	ChatId        string                 `protobuf:"bytes,3,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Cost          float64                `protobuf:"fixed64,4,opt,name=cost,proto3" json:"cost,omitempty"`
+	Tokens        int64                  `protobuf:"varint,5,opt,name=tokens,proto3" json:"tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1516,6 +1517,20 @@ func (x *StreamBotResponse) GetChatId() string {
 		return x.ChatId
 	}
 	return ""
+}
+
+func (x *StreamBotResponse) GetCost() float64 {
+	if x != nil {
+		return x.Cost
+	}
+	return 0
+}
+
+func (x *StreamBotResponse) GetTokens() int64 {
+	if x != nil {
+		return x.Tokens
+	}
+	return 0
 }
 
 // 获取对话历史请求
@@ -3264,16 +3279,45 @@ func (x *SetUserMemoryResponse) GetData() *UserMemory {
 	return nil
 }
 
+// 删除用户记忆请求
 type DeleteUserMemoryRequest struct {
-	UserId        string `json:"user_id,omitempty"`
-	BotId         string `json:"bot_id,omitempty"`
-	Key           string `json:"key,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	BotId         string                 `protobuf:"bytes,2,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`
+	Key           string                 `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DeleteUserMemoryRequest) Reset()         { *x = DeleteUserMemoryRequest{} }
-func (x *DeleteUserMemoryRequest) String() string  { return fmt.Sprintf("%+v", x) }
-func (*DeleteUserMemoryRequest) ProtoMessage()     {}
-func (*DeleteUserMemoryRequest) ProtoReflect()     {}
+func (x *DeleteUserMemoryRequest) Reset() {
+	*x = DeleteUserMemoryRequest{}
+	mi := &file_ai_bot_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUserMemoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUserMemoryRequest) ProtoMessage() {}
+
+func (x *DeleteUserMemoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUserMemoryRequest.ProtoReflect.Descriptor instead.
+func (*DeleteUserMemoryRequest) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{42}
+}
 
 func (x *DeleteUserMemoryRequest) GetUserId() string {
 	if x != nil {
@@ -3296,15 +3340,44 @@ func (x *DeleteUserMemoryRequest) GetKey() string {
 	return ""
 }
 
+// 删除用户记忆响应
 type DeleteUserMemoryResponse struct {
-	Code          int32  `json:"code,omitempty"`
-	Message       string `json:"message,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DeleteUserMemoryResponse) Reset()         { *x = DeleteUserMemoryResponse{} }
-func (x *DeleteUserMemoryResponse) String() string  { return fmt.Sprintf("%+v", x) }
-func (*DeleteUserMemoryResponse) ProtoMessage()     {}
-func (*DeleteUserMemoryResponse) ProtoReflect()     {}
+func (x *DeleteUserMemoryResponse) Reset() {
+	*x = DeleteUserMemoryResponse{}
+	mi := &file_ai_bot_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteUserMemoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteUserMemoryResponse) ProtoMessage() {}
+
+func (x *DeleteUserMemoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_bot_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteUserMemoryResponse.ProtoReflect.Descriptor instead.
+func (*DeleteUserMemoryResponse) Descriptor() ([]byte, []int) {
+	return file_ai_bot_proto_rawDescGZIP(), []int{43}
+}
 
 func (x *DeleteUserMemoryResponse) GetCode() int32 {
 	if x != nil {
@@ -3457,11 +3530,13 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12&\n" +
 	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.BotMessageR\x04data\x12\x17\n" +
-	"\achat_id\x18\x04 \x01(\tR\x06chatId\"Z\n" +
+	"\achat_id\x18\x04 \x01(\tR\x06chatId\"\x86\x01\n" +
 	"\x11StreamBotResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x12\n" +
 	"\x04done\x18\x02 \x01(\bR\x04done\x12\x17\n" +
-	"\achat_id\x18\x03 \x01(\tR\x06chatId\"\x99\x01\n" +
+	"\achat_id\x18\x03 \x01(\tR\x06chatId\x12\x12\n" +
+	"\x04cost\x18\x04 \x01(\x01R\x04cost\x12\x16\n" +
+	"\x06tokens\x18\x05 \x01(\x03R\x06tokens\"\x99\x01\n" +
 	"\x14GetBotHistoryRequest\x12\x15\n" +
 	"\x06bot_id\x18\x01 \x01(\tR\x05botId\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x12\x14\n" +
@@ -3572,14 +3647,20 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
 	"\rconversations\x18\x03 \x03(\v2\x14.ai.bot.ConversationR\rconversations\x12\x14\n" +
-	"\x05total\x18\x04 \x01(\x05R\x05total\"\xea\x01\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xbe\x02\n" +
 	"\n" +
 	"UserMemory\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x15\n" +
 	"\x06bot_id\x18\x03 \x01(\tR\x05botId\x12\x10\n" +
 	"\x03key\x18\x04 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x05 \x01(\tR\x05value\x129\n" +
+	"\x05value\x18\x05 \x01(\tR\x05value\x12\x1a\n" +
+	"\bcategory\x18\b \x01(\tR\bcategory\x12\x16\n" +
+	"\x06source\x18\t \x01(\tR\x06source\x12\x1e\n" +
+	"\n" +
+	"confidence\x18\n" +
+	" \x01(\x01R\n" +
+	"confidence\x129\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
@@ -3590,16 +3671,24 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x15GetUserMemoryResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12.\n" +
-	"\bmemories\x18\x03 \x03(\v2\x12.ai.bot.UserMemoryR\bmemories\"n\n" +
+	"\bmemories\x18\x03 \x03(\v2\x12.ai.bot.UserMemoryR\bmemories\"\x8a\x01\n" +
 	"\x14SetUserMemoryRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
 	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x10\n" +
 	"\x03key\x18\x03 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x04 \x01(\tR\x05value\"m\n" +
+	"\x05value\x18\x04 \x01(\tR\x05value\x12\x1a\n" +
+	"\bcategory\x18\x05 \x01(\tR\bcategory\"m\n" +
 	"\x15SetUserMemoryResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12&\n" +
-	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.UserMemoryR\x04data*N\n" +
+	"\x04data\x18\x03 \x01(\v2\x12.ai.bot.UserMemoryR\x04data\"[\n" +
+	"\x17DeleteUserMemoryRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x15\n" +
+	"\x06bot_id\x18\x02 \x01(\tR\x05botId\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03key\"H\n" +
+	"\x18DeleteUserMemoryResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage*N\n" +
 	"\aBotType\x12\x18\n" +
 	"\x14BOT_TYPE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10BOT_TYPE_BUILTIN\x10\x01\x12\x13\n" +
@@ -3614,7 +3703,7 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x16BOT_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11BOT_STATUS_ACTIVE\x10\x01\x12\x17\n" +
 	"\x13BOT_STATUS_INACTIVE\x10\x02\x12\x16\n" +
-	"\x12BOT_STATUS_DELETED\x10\x032\xac\v\n" +
+	"\x12BOT_STATUS_DELETED\x10\x032\x83\f\n" +
 	"\n" +
 	"BotService\x12@\n" +
 	"\tCreateBot\x12\x18.ai.bot.CreateBotRequest\x1a\x19.ai.bot.CreateBotResponse\x12@\n" +
@@ -3630,7 +3719,8 @@ const file_ai_bot_proto_rawDesc = "" +
 	"\x11ListConversations\x12 .ai.bot.ListConversationsRequest\x1a!.ai.bot.ListConversationsResponse\x12N\n" +
 	"\x10StreamBotMessage\x12\x1d.ai.bot.SendBotMessageRequest\x1a\x19.ai.bot.StreamBotResponse0\x01\x12L\n" +
 	"\rGetUserMemory\x12\x1c.ai.bot.GetUserMemoryRequest\x1a\x1d.ai.bot.GetUserMemoryResponse\x12L\n" +
-	"\rSetUserMemory\x12\x1c.ai.bot.SetUserMemoryRequest\x1a\x1d.ai.bot.SetUserMemoryResponse\x12I\n" +
+	"\rSetUserMemory\x12\x1c.ai.bot.SetUserMemoryRequest\x1a\x1d.ai.bot.SetUserMemoryResponse\x12U\n" +
+	"\x10DeleteUserMemory\x12\x1f.ai.bot.DeleteUserMemoryRequest\x1a .ai.bot.DeleteUserMemoryResponse\x12I\n" +
 	"\fCreatePrompt\x12\x1b.ai.bot.CreatePromptRequest\x1a\x1c.ai.bot.CreatePromptResponse\x12I\n" +
 	"\fUpdatePrompt\x12\x1b.ai.bot.UpdatePromptRequest\x1a\x1c.ai.bot.UpdatePromptResponse\x12I\n" +
 	"\fDeletePrompt\x12\x1b.ai.bot.DeletePromptRequest\x1a\x1c.ai.bot.DeletePromptResponse\x12@\n" +
@@ -3650,7 +3740,7 @@ func file_ai_bot_proto_rawDescGZIP() []byte {
 }
 
 var file_ai_bot_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_ai_bot_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_ai_bot_proto_msgTypes = make([]protoimpl.MessageInfo, 52)
 var file_ai_bot_proto_goTypes = []any{
 	(BotType)(0),                       // 0: ai.bot.BotType
 	(ModelProvider)(0),                 // 1: ai.bot.ModelProvider
@@ -3697,56 +3787,58 @@ var file_ai_bot_proto_goTypes = []any{
 	(*GetUserMemoryResponse)(nil),      // 42: ai.bot.GetUserMemoryResponse
 	(*SetUserMemoryRequest)(nil),       // 43: ai.bot.SetUserMemoryRequest
 	(*SetUserMemoryResponse)(nil),      // 44: ai.bot.SetUserMemoryResponse
-	nil,                                // 45: ai.bot.Bot.ConfigEntry
-	nil,                                // 46: ai.bot.BotMessage.MetadataEntry
-	nil,                                // 47: ai.bot.Prompt.ConfigEntry
-	nil,                                // 48: ai.bot.CreateBotRequest.ConfigEntry
-	nil,                                // 49: ai.bot.UpdateBotRequest.ConfigEntry
-	nil,                                // 50: ai.bot.SendBotMessageRequest.MetadataEntry
-	nil,                                // 51: ai.bot.CreatePromptRequest.ConfigEntry
-	nil,                                // 52: ai.bot.UpdatePromptRequest.ConfigEntry
-	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
+	(*DeleteUserMemoryRequest)(nil),    // 45: ai.bot.DeleteUserMemoryRequest
+	(*DeleteUserMemoryResponse)(nil),   // 46: ai.bot.DeleteUserMemoryResponse
+	nil,                                // 47: ai.bot.Bot.ConfigEntry
+	nil,                                // 48: ai.bot.BotMessage.MetadataEntry
+	nil,                                // 49: ai.bot.Prompt.ConfigEntry
+	nil,                                // 50: ai.bot.CreateBotRequest.ConfigEntry
+	nil,                                // 51: ai.bot.UpdateBotRequest.ConfigEntry
+	nil,                                // 52: ai.bot.SendBotMessageRequest.MetadataEntry
+	nil,                                // 53: ai.bot.CreatePromptRequest.ConfigEntry
+	nil,                                // 54: ai.bot.UpdatePromptRequest.ConfigEntry
+	(*timestamppb.Timestamp)(nil),      // 55: google.protobuf.Timestamp
 }
 var file_ai_bot_proto_depIdxs = []int32{
 	0,  // 0: ai.bot.Bot.type:type_name -> ai.bot.BotType
 	1,  // 1: ai.bot.Bot.provider:type_name -> ai.bot.ModelProvider
 	2,  // 2: ai.bot.Bot.status:type_name -> ai.bot.BotStatus
-	45, // 3: ai.bot.Bot.config:type_name -> ai.bot.Bot.ConfigEntry
-	53, // 4: ai.bot.Bot.created_at:type_name -> google.protobuf.Timestamp
-	53, // 5: ai.bot.Bot.updated_at:type_name -> google.protobuf.Timestamp
-	46, // 6: ai.bot.BotMessage.metadata:type_name -> ai.bot.BotMessage.MetadataEntry
-	53, // 7: ai.bot.BotMessage.created_at:type_name -> google.protobuf.Timestamp
-	47, // 8: ai.bot.Prompt.config:type_name -> ai.bot.Prompt.ConfigEntry
-	53, // 9: ai.bot.Prompt.created_at:type_name -> google.protobuf.Timestamp
-	53, // 10: ai.bot.Prompt.updated_at:type_name -> google.protobuf.Timestamp
+	47, // 3: ai.bot.Bot.config:type_name -> ai.bot.Bot.ConfigEntry
+	55, // 4: ai.bot.Bot.created_at:type_name -> google.protobuf.Timestamp
+	55, // 5: ai.bot.Bot.updated_at:type_name -> google.protobuf.Timestamp
+	48, // 6: ai.bot.BotMessage.metadata:type_name -> ai.bot.BotMessage.MetadataEntry
+	55, // 7: ai.bot.BotMessage.created_at:type_name -> google.protobuf.Timestamp
+	49, // 8: ai.bot.Prompt.config:type_name -> ai.bot.Prompt.ConfigEntry
+	55, // 9: ai.bot.Prompt.created_at:type_name -> google.protobuf.Timestamp
+	55, // 10: ai.bot.Prompt.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 11: ai.bot.CreateBotRequest.type:type_name -> ai.bot.BotType
 	1,  // 12: ai.bot.CreateBotRequest.provider:type_name -> ai.bot.ModelProvider
-	48, // 13: ai.bot.CreateBotRequest.config:type_name -> ai.bot.CreateBotRequest.ConfigEntry
+	50, // 13: ai.bot.CreateBotRequest.config:type_name -> ai.bot.CreateBotRequest.ConfigEntry
 	3,  // 14: ai.bot.CreateBotResponse.data:type_name -> ai.bot.Bot
-	49, // 15: ai.bot.UpdateBotRequest.config:type_name -> ai.bot.UpdateBotRequest.ConfigEntry
+	51, // 15: ai.bot.UpdateBotRequest.config:type_name -> ai.bot.UpdateBotRequest.ConfigEntry
 	2,  // 16: ai.bot.UpdateBotRequest.status:type_name -> ai.bot.BotStatus
 	3,  // 17: ai.bot.UpdateBotResponse.data:type_name -> ai.bot.Bot
 	3,  // 18: ai.bot.GetBotResponse.data:type_name -> ai.bot.Bot
 	0,  // 19: ai.bot.ListBotsRequest.type:type_name -> ai.bot.BotType
 	2,  // 20: ai.bot.ListBotsRequest.status:type_name -> ai.bot.BotStatus
 	3,  // 21: ai.bot.ListBotsResponse.bots:type_name -> ai.bot.Bot
-	50, // 22: ai.bot.SendBotMessageRequest.metadata:type_name -> ai.bot.SendBotMessageRequest.MetadataEntry
+	52, // 22: ai.bot.SendBotMessageRequest.metadata:type_name -> ai.bot.SendBotMessageRequest.MetadataEntry
 	4,  // 23: ai.bot.SendBotMessageResponse.data:type_name -> ai.bot.BotMessage
-	53, // 24: ai.bot.GetBotHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
+	55, // 24: ai.bot.GetBotHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
 	4,  // 25: ai.bot.GetBotHistoryResponse.messages:type_name -> ai.bot.BotMessage
-	51, // 26: ai.bot.CreatePromptRequest.config:type_name -> ai.bot.CreatePromptRequest.ConfigEntry
+	53, // 26: ai.bot.CreatePromptRequest.config:type_name -> ai.bot.CreatePromptRequest.ConfigEntry
 	5,  // 27: ai.bot.CreatePromptResponse.data:type_name -> ai.bot.Prompt
-	52, // 28: ai.bot.UpdatePromptRequest.config:type_name -> ai.bot.UpdatePromptRequest.ConfigEntry
+	54, // 28: ai.bot.UpdatePromptRequest.config:type_name -> ai.bot.UpdatePromptRequest.ConfigEntry
 	5,  // 29: ai.bot.UpdatePromptResponse.data:type_name -> ai.bot.Prompt
 	5,  // 30: ai.bot.GetPromptResponse.data:type_name -> ai.bot.Prompt
 	5,  // 31: ai.bot.ListPromptsResponse.prompts:type_name -> ai.bot.Prompt
-	53, // 32: ai.bot.Conversation.created_at:type_name -> google.protobuf.Timestamp
-	53, // 33: ai.bot.Conversation.updated_at:type_name -> google.protobuf.Timestamp
+	55, // 32: ai.bot.Conversation.created_at:type_name -> google.protobuf.Timestamp
+	55, // 33: ai.bot.Conversation.updated_at:type_name -> google.protobuf.Timestamp
 	31, // 34: ai.bot.CreateConversationResponse.data:type_name -> ai.bot.Conversation
 	31, // 35: ai.bot.UpdateConversationResponse.data:type_name -> ai.bot.Conversation
 	31, // 36: ai.bot.ListConversationsResponse.conversations:type_name -> ai.bot.Conversation
-	53, // 37: ai.bot.UserMemory.created_at:type_name -> google.protobuf.Timestamp
-	53, // 38: ai.bot.UserMemory.updated_at:type_name -> google.protobuf.Timestamp
+	55, // 37: ai.bot.UserMemory.created_at:type_name -> google.protobuf.Timestamp
+	55, // 38: ai.bot.UserMemory.updated_at:type_name -> google.protobuf.Timestamp
 	40, // 39: ai.bot.GetUserMemoryResponse.memories:type_name -> ai.bot.UserMemory
 	40, // 40: ai.bot.SetUserMemoryResponse.data:type_name -> ai.bot.UserMemory
 	6,  // 41: ai.bot.BotService.CreateBot:input_type -> ai.bot.CreateBotRequest
@@ -3763,32 +3855,34 @@ var file_ai_bot_proto_depIdxs = []int32{
 	16, // 52: ai.bot.BotService.StreamBotMessage:input_type -> ai.bot.SendBotMessageRequest
 	41, // 53: ai.bot.BotService.GetUserMemory:input_type -> ai.bot.GetUserMemoryRequest
 	43, // 54: ai.bot.BotService.SetUserMemory:input_type -> ai.bot.SetUserMemoryRequest
-	21, // 55: ai.bot.BotService.CreatePrompt:input_type -> ai.bot.CreatePromptRequest
-	23, // 56: ai.bot.BotService.UpdatePrompt:input_type -> ai.bot.UpdatePromptRequest
-	25, // 57: ai.bot.BotService.DeletePrompt:input_type -> ai.bot.DeletePromptRequest
-	27, // 58: ai.bot.BotService.GetPrompt:input_type -> ai.bot.GetPromptRequest
-	29, // 59: ai.bot.BotService.ListPrompts:input_type -> ai.bot.ListPromptsRequest
-	7,  // 60: ai.bot.BotService.CreateBot:output_type -> ai.bot.CreateBotResponse
-	9,  // 61: ai.bot.BotService.UpdateBot:output_type -> ai.bot.UpdateBotResponse
-	11, // 62: ai.bot.BotService.DeleteBot:output_type -> ai.bot.DeleteBotResponse
-	13, // 63: ai.bot.BotService.GetBot:output_type -> ai.bot.GetBotResponse
-	15, // 64: ai.bot.BotService.ListBots:output_type -> ai.bot.ListBotsResponse
-	18, // 65: ai.bot.BotService.SendBotMessage:output_type -> ai.bot.StreamBotResponse
-	20, // 66: ai.bot.BotService.GetBotHistory:output_type -> ai.bot.GetBotHistoryResponse
-	33, // 67: ai.bot.BotService.CreateConversation:output_type -> ai.bot.CreateConversationResponse
-	35, // 68: ai.bot.BotService.UpdateConversation:output_type -> ai.bot.UpdateConversationResponse
-	37, // 69: ai.bot.BotService.DeleteConversation:output_type -> ai.bot.DeleteConversationResponse
-	39, // 70: ai.bot.BotService.ListConversations:output_type -> ai.bot.ListConversationsResponse
-	18, // 71: ai.bot.BotService.StreamBotMessage:output_type -> ai.bot.StreamBotResponse
-	42, // 72: ai.bot.BotService.GetUserMemory:output_type -> ai.bot.GetUserMemoryResponse
-	44, // 73: ai.bot.BotService.SetUserMemory:output_type -> ai.bot.SetUserMemoryResponse
-	22, // 74: ai.bot.BotService.CreatePrompt:output_type -> ai.bot.CreatePromptResponse
-	24, // 75: ai.bot.BotService.UpdatePrompt:output_type -> ai.bot.UpdatePromptResponse
-	26, // 76: ai.bot.BotService.DeletePrompt:output_type -> ai.bot.DeletePromptResponse
-	28, // 77: ai.bot.BotService.GetPrompt:output_type -> ai.bot.GetPromptResponse
-	30, // 78: ai.bot.BotService.ListPrompts:output_type -> ai.bot.ListPromptsResponse
-	60, // [60:79] is the sub-list for method output_type
-	41, // [41:60] is the sub-list for method input_type
+	45, // 55: ai.bot.BotService.DeleteUserMemory:input_type -> ai.bot.DeleteUserMemoryRequest
+	21, // 56: ai.bot.BotService.CreatePrompt:input_type -> ai.bot.CreatePromptRequest
+	23, // 57: ai.bot.BotService.UpdatePrompt:input_type -> ai.bot.UpdatePromptRequest
+	25, // 58: ai.bot.BotService.DeletePrompt:input_type -> ai.bot.DeletePromptRequest
+	27, // 59: ai.bot.BotService.GetPrompt:input_type -> ai.bot.GetPromptRequest
+	29, // 60: ai.bot.BotService.ListPrompts:input_type -> ai.bot.ListPromptsRequest
+	7,  // 61: ai.bot.BotService.CreateBot:output_type -> ai.bot.CreateBotResponse
+	9,  // 62: ai.bot.BotService.UpdateBot:output_type -> ai.bot.UpdateBotResponse
+	11, // 63: ai.bot.BotService.DeleteBot:output_type -> ai.bot.DeleteBotResponse
+	13, // 64: ai.bot.BotService.GetBot:output_type -> ai.bot.GetBotResponse
+	15, // 65: ai.bot.BotService.ListBots:output_type -> ai.bot.ListBotsResponse
+	18, // 66: ai.bot.BotService.SendBotMessage:output_type -> ai.bot.StreamBotResponse
+	20, // 67: ai.bot.BotService.GetBotHistory:output_type -> ai.bot.GetBotHistoryResponse
+	33, // 68: ai.bot.BotService.CreateConversation:output_type -> ai.bot.CreateConversationResponse
+	35, // 69: ai.bot.BotService.UpdateConversation:output_type -> ai.bot.UpdateConversationResponse
+	37, // 70: ai.bot.BotService.DeleteConversation:output_type -> ai.bot.DeleteConversationResponse
+	39, // 71: ai.bot.BotService.ListConversations:output_type -> ai.bot.ListConversationsResponse
+	18, // 72: ai.bot.BotService.StreamBotMessage:output_type -> ai.bot.StreamBotResponse
+	42, // 73: ai.bot.BotService.GetUserMemory:output_type -> ai.bot.GetUserMemoryResponse
+	44, // 74: ai.bot.BotService.SetUserMemory:output_type -> ai.bot.SetUserMemoryResponse
+	46, // 75: ai.bot.BotService.DeleteUserMemory:output_type -> ai.bot.DeleteUserMemoryResponse
+	22, // 76: ai.bot.BotService.CreatePrompt:output_type -> ai.bot.CreatePromptResponse
+	24, // 77: ai.bot.BotService.UpdatePrompt:output_type -> ai.bot.UpdatePromptResponse
+	26, // 78: ai.bot.BotService.DeletePrompt:output_type -> ai.bot.DeletePromptResponse
+	28, // 79: ai.bot.BotService.GetPrompt:output_type -> ai.bot.GetPromptResponse
+	30, // 80: ai.bot.BotService.ListPrompts:output_type -> ai.bot.ListPromptsResponse
+	61, // [61:81] is the sub-list for method output_type
+	41, // [41:61] is the sub-list for method input_type
 	41, // [41:41] is the sub-list for extension type_name
 	41, // [41:41] is the sub-list for extension extendee
 	0,  // [0:41] is the sub-list for field type_name
@@ -3807,7 +3901,7 @@ func file_ai_bot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_bot_proto_rawDesc), len(file_ai_bot_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   50,
+			NumMessages:   52,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

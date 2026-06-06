@@ -33,6 +33,9 @@ type BillingRepository interface {
 
 	// 事务
 	WithTransaction(ctx context.Context, fn func(txRepo BillingRepository) error) error
+
+	// 暴露底层 DB（用于 outbox 写入等需要同事务的场景）
+	DB() *gorm.DB
 }
 
 // billingRepositoryImpl 实现
@@ -210,4 +213,8 @@ func (r *billingRepositoryImpl) WithTransaction(ctx context.Context, fn func(txR
 		txRepo := &billingRepositoryImpl{db: tx}
 		return fn(txRepo)
 	})
+}
+
+func (r *billingRepositoryImpl) DB() *gorm.DB {
+	return r.db
 }

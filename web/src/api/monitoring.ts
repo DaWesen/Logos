@@ -162,3 +162,42 @@ export async function listServiceStatus(): Promise<ServiceStatus[]> {
     return []
   }
 }
+
+export interface BenchConfig {
+  url: string
+  users: number
+  duration: number
+  rps: number
+  scenario: string
+}
+
+export interface BenchResult {
+  total: number
+  success: number
+  failed: number
+  timeout: number
+  successRate: number
+  qps: number
+  avgLatency: number
+  minLatency: number
+  maxLatency: number
+  p50: number
+  p90: number
+  p95: number
+  p99: number
+  statusCodes: Record<number, number>
+  errors: Record<string, number>
+  running: boolean
+  elapsed: number
+}
+
+export const BENCH_SCENARIOS = [
+  { value: 'health', label: '健康检查' },
+  { value: 'login', label: '用户登录' },
+  { value: 'get_user', label: '获取用户' },
+  { value: 'chat_history', label: '聊天历史' },
+  { value: 'send_message', label: '发送消息' },
+  { value: 'bot_list', label: 'Bot列表' },
+  { value: 'contacts', label: '联系人' },
+  { value: 'mixed', label: '混合场景' },
+]

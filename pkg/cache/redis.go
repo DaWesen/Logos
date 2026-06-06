@@ -392,7 +392,7 @@ func (c *RedisCache) PipelineExec(ctx context.Context, cmds []struct {
 		case "ZRANGE":
 			results = append(results, pipe.ZRange(ctx, safeStringConvert(cmd.Args[0]), safeInt64Convert(cmd.Args[1]), safeInt64Convert(cmd.Args[2])))
 		case "PEXPIRE":
-			results = append(results, pipe.Expire(ctx, safeStringConvert(cmd.Args[0]), time.Duration(safeInt64Convert(cmd.Args[1]))*time.Microsecond))
+			results = append(results, pipe.Expire(ctx, safeStringConvert(cmd.Args[0]), time.Duration(safeInt64Convert(cmd.Args[1]))*time.Millisecond))
 		default:
 			results = append(results, nil)
 		}

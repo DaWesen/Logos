@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -50,11 +51,20 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 	}
 	defer src.Close()
 
-	fileData, err := io.ReadAll(src)
+	tmpFile, err := os.CreateTemp("", "logos-upload-*")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时文件失败"})
 		return
 	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := io.Copy(tmpFile, src); err != nil {
+		tmpFile.Close()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
+		return
+	}
+	tmpFile.Close()
 
 	fileURL := c.PostForm("url")
 	if fileURL == "" {
@@ -63,7 +73,7 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 
 	collectionID := c.PostForm("collection_id")
 
-	doc, err := h.processService.ProcessFile(c.Request.Context(), file.Filename, fileData, fileURL, collectionID)
+	doc, err := h.processService.ProcessFileFromPath(c.Request.Context(), file.Filename, tmpPath, file.Size, fileURL, collectionID)
 	if err != nil {
 		logger.Error("处理文件失败", logger.StringField("filename", file.Filename), logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理文件失败"})

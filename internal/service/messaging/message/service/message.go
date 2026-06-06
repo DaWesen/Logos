@@ -12,6 +12,9 @@ import (
 	"Logos/internal/service/messaging/message/model"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
+
+	"gorm.io/gorm"
 )
 
 type QuestionService interface {
@@ -43,14 +46,14 @@ type MessageService interface {
 type messageServiceImpl struct {
 	repo            dao.MessageRepository
 	questionService QuestionService
-	kafkaProducer   *mq.Producer
+	outboxRepo      outbox.OutboxRepository
 }
 
-func NewMessageService(repo dao.MessageRepository, questionService QuestionService) MessageService {
+func NewMessageService(repo dao.MessageRepository, questionService QuestionService, outboxRepo outbox.OutboxRepository) MessageService {
 	return &messageServiceImpl{
 		repo:            repo,
 		questionService: questionService,
-		kafkaProducer:   mq.NewProducer(),
+		outboxRepo:      outboxRepo,
 	}
 }
 
@@ -76,11 +79,16 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 		CreatedAt:     time.Now(),
 	}
 
-	if err := s.repo.SaveMessage(ctx, msg); err != nil {
-		return nil, fmt.Errorf("failed: %w", err)
-	}
+	err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
+		if err := txRepo.SaveMessage(ctx, msg); err != nil {
+			return fmt.Errorf("failed: %w", err)
+		}
 
-	s.sendToKafka(ctx, msg)
+		return s.saveMessageEventToOutbox(ctx, txRepo.DB(), msg)
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	if topic == 4 && s.questionService != nil {
 		go func() {
@@ -91,12 +99,7 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 	return msg, nil
 }
 
-func (s *messageServiceImpl) sendToKafka(ctx context.Context, msg *model.Message) {
-	if s.kafkaProducer == nil {
-		logger.Warn("kafka operation")
-		return
-	}
-
+func (s *messageServiceImpl) saveMessageEventToOutbox(ctx context.Context, txDB *gorm.DB, msg *model.Message) error {
 	event := map[string]interface{}{
 		"message_id":     msg.ID,
 		"topic":          msg.Topic,
@@ -107,28 +110,12 @@ func (s *messageServiceImpl) sendToKafka(ctx context.Context, msg *model.Message
 		"timestamp":      msg.Timestamp,
 	}
 
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		logger.Error("kafka operation",
-			logger.ErrorField(err))
-		return
-	}
-
 	topicName := msg.Topic
 	if topicName == "" || topicName == "unknown" {
 		topicName = mq.TopicSystemEvent
 	}
 
-	if err := s.kafkaProducer.Send(ctx, topicName, msg.ID, eventData); err != nil {
-		logger.Error("kafka operation",
-			logger.StringField("kafka_topic", topicName),
-			logger.ErrorField(err))
-		return
-	}
-
-	logger.Info("kafka operation",
-		logger.StringField("kafka_topic", topicName),
-		logger.StringField("message_id", msg.ID))
+	return s.outboxRepo.SaveWithTx(ctx, txDB, topicName, msg.ID, event)
 }
 
 func (s *messageServiceImpl) BatchSendMessage(ctx context.Context, msgs []struct {
@@ -265,19 +252,17 @@ func (s *messageServiceImpl) CreateTopic(topic int32) error {
 	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))))
 
-	if s.kafkaProducer != nil {
-		ctx := context.Background()
-		topicName := dao.TopicString(int(topic))
-		if err := s.kafkaProducer.Send(ctx, topicName, "system-topic-create", []byte(fmt.Sprintf(`{"action":"create_topic","topic":"%s","timestamp":"%s"}`, topicName, time.Now().Format(time.RFC3339)))); err != nil {
-			logger.Warn("kafka operation",
-				logger.ErrorField(err))
-		} else {
-			logger.Info("kafka operation",
-				logger.StringField("topic", topicName))
-		}
-	}
+	ctx := context.Background()
+	topicName := dao.TopicString(int(topic))
 
-	return nil
+	return s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
+		event := map[string]interface{}{
+			"action":    "create_topic",
+			"topic":     topicName,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), topicName, "system-topic-create", event)
+	})
 }
 
 func (s *messageServiceImpl) DeleteTopic(topic int32) error {
@@ -287,20 +272,25 @@ func (s *messageServiceImpl) DeleteTopic(topic int32) error {
 
 	ctx := context.Background()
 
-	if err := s.repo.DeleteMessagesByTopic(ctx, topicStr); err != nil {
-		logger.Error("删除主题消息失败", logger.ErrorField(err))
-		return fmt.Errorf("删除主题消息失败: %w", err)
-	}
-
-	if err := s.repo.DeleteSubscriptionsByTopic(ctx, topicStr); err != nil {
-		logger.Warn("删除主题订阅失败", logger.ErrorField(err))
-	}
-
-	if s.kafkaProducer != nil {
-		notificationData := []byte(fmt.Sprintf(`{"action":"delete_topic","topic":"%s","timestamp":"%s"}`, topicStr, time.Now().Format(time.RFC3339)))
-		if err := s.kafkaProducer.Send(ctx, mq.TopicSystemEvent, "system-topic-delete", notificationData); err != nil {
-			logger.Warn("发送主题删除事件到Kafka失败", logger.ErrorField(err))
+	err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
+		if err := txRepo.DeleteMessagesByTopic(ctx, topicStr); err != nil {
+			return fmt.Errorf("删除主题消息失败: %w", err)
 		}
+
+		if err := txRepo.DeleteSubscriptionsByTopic(ctx, topicStr); err != nil {
+			logger.Warn("删除主题订阅失败", logger.ErrorField(err))
+		}
+
+		event := map[string]interface{}{
+			"action":    "delete_topic",
+			"topic":     topicStr,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), mq.TopicSystemEvent, "system-topic-delete", event)
+	})
+	if err != nil {
+		logger.Error("删除主题消息失败", logger.ErrorField(err))
+		return err
 	}
 
 	logger.Info("主题已删除", logger.StringField("topic", topicStr))

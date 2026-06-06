@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"Logos/internal/service/ai/bot/model"
+	"Logos/pkg/logger"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -53,6 +54,7 @@ type BotRepository interface {
 	DeleteUserMemoryByID(ctx context.Context, id string) error
 
 	WithTransaction(ctx context.Context, fn func(txRepo BotRepository) error) error
+	DB() *gorm.DB
 }
 
 // botRepository Bot 数据仓库实现
@@ -299,6 +301,9 @@ func (r *botRepository) GetUserMemoryByKey(ctx context.Context, userID, botID, k
 	var memory model.UserMemory
 	err := r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", userID, botID, key).First(&memory).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &memory, nil
@@ -318,23 +323,25 @@ func (r *botRepository) GetUserMemoriesByUser(ctx context.Context, userID, botID
 }
 
 func (r *botRepository) SetUserMemory(ctx context.Context, memory *model.UserMemory) error {
-	var existing model.UserMemory
-	err := r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", memory.UserID, memory.BotID, memory.Key).First(&existing).Error
-	if err == nil {
-		existing.Value = memory.Value
-		return r.db.WithContext(ctx).Save(&existing).Error
+	if memory.ID != "" {
+		// 已有ID，更新记录（service层已通过GetUserMemoryByKey确认存在）
+		return r.db.WithContext(ctx).Save(memory).Error
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	if memory.ID == "" {
-		memory.ID = uuid.NewString()
-	}
+	// 新记录，直接创建
+	memory.ID = uuid.NewString()
 	return r.db.WithContext(ctx).Create(memory).Error
 }
 
 func (r *botRepository) DeleteUserMemory(ctx context.Context, userID, botID, key string) error {
-	return r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", userID, botID, key).Delete(&model.UserMemory{}).Error
+	result := r.db.WithContext(ctx).Where("user_id = ? AND bot_id = ? AND key = ?", userID, botID, key).Delete(&model.UserMemory{})
+	logger.Info("DeleteUserMemory执行",
+		logger.StringField("user_id", userID),
+		logger.StringField("bot_id", botID),
+		logger.StringField("key", key),
+		logger.Int64Field("rows_affected", result.RowsAffected),
+		logger.ErrorField(result.Error),
+	)
+	return result.Error
 }
 
 func (r *botRepository) DeleteUserMemoryByID(ctx context.Context, id string) error {
@@ -346,4 +353,8 @@ func (r *botRepository) WithTransaction(ctx context.Context, fn func(txRepo BotR
 		txRepo := NewBotRepository(tx)
 		return fn(txRepo)
 	})
+}
+
+func (r *botRepository) DB() *gorm.DB {
+	return r.db
 }

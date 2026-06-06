@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: docker.1ms.run/library/postgres:latest
           ports:
             - containerPort: 5432
           env:

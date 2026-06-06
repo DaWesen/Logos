@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -124,7 +125,29 @@ func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileD
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
-	go s.processDocumentAsync(doc.ID, fileData, filename)
+	go s.processDocumentAsync(doc.ID, bytes.NewReader(fileData), int64(len(fileData)), filename)
+
+	return doc, nil
+}
+
+func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename string, filePath string, fileSize int64, fileURL string, collectionID string) (*model.Document, error) {
+	doc := &model.Document{
+		ID:                 generateID(),
+		VectorCollectionID: collectionID,
+		FileName:           filename,
+		FileType:           filepath.Ext(filename),
+		FileURL:            fileURL,
+		FileSize:           fileSize,
+		Status:             model.DocumentStatusPending,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	if err := s.repo.CreateDocument(ctx, doc); err != nil {
+		return nil, fmt.Errorf("创建文档记录失败: %w", err)
+	}
+
+	go s.processDocumentAsyncFromPath(doc.ID, filePath, fileSize, filename)
 
 	return doc, nil
 }
@@ -175,7 +198,7 @@ func (s *ProcessService) processURLAsync(docID string, rawURL string) {
 	contentType := resp.Header.Get("Content-Type")
 	filename := determineFilename(rawURL, contentType)
 
-	s.processDocumentAsync(docID, fileData, filename)
+	s.processDocumentAsync(docID, bytes.NewReader(fileData), int64(len(fileData)), filename)
 }
 
 func determineFilename(rawURL string, contentType string) string {
@@ -207,7 +230,17 @@ func determineFilename(rawURL string, contentType string) string {
 	return "url_content.crawl"
 }
 
-func (s *ProcessService) processDocumentAsync(docID string, fileData []byte, filename string) {
+func (s *ProcessService) processDocumentAsyncFromPath(docID string, filePath string, fileSize int64, filename string) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		s.markFailed(context.Background(), docID, fmt.Sprintf("打开文件失败: %v", err))
+		return
+	}
+	defer f.Close()
+	s.processDocumentAsync(docID, f, fileSize, filename)
+}
+
+func (s *ProcessService) processDocumentAsync(docID string, reader io.Reader, fileSize int64, filename string) {
 	ctx := context.Background()
 
 	doc, err := s.repo.GetDocument(ctx, docID)
@@ -240,7 +273,6 @@ func (s *ProcessService) processDocumentAsync(docID string, fileData []byte, fil
 		}
 	}
 
-	reader := bytes.NewReader(fileData)
 	content, metadata, err := s.parseFile(ctx, reader, filename, doc.FileType)
 	if err != nil {
 		s.markFailed(ctx, docID, fmt.Sprintf("解析文档失败: %v", err))
@@ -257,18 +289,30 @@ func (s *ProcessService) processDocumentAsync(docID string, fileData []byte, fil
 	chunks := s.splitContentIntoChunks(doc, content, metadata)
 	logger.Info("文档分块完成", logger.StringField("doc_id", docID), logger.IntField("chunk_count", len(chunks)))
 
-	err = s.repo.WithTransaction(ctx, func(txRepo dao.ProcessRepository) error {
-		for _, chunk := range chunks {
-			if err := txRepo.CreateChunk(ctx, chunk); err != nil {
-				return err
-			}
+	batchSize := 100
+	for batchStart := 0; batchStart < len(chunks); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(chunks) {
+			batchEnd = len(chunks)
 		}
-		return nil
-	})
+		batch := chunks[batchStart:batchEnd]
 
-	if err != nil {
-		s.markFailed(ctx, docID, fmt.Sprintf("保存分块失败: %v", err))
-		return
+		err = s.repo.WithTransaction(ctx, func(txRepo dao.ProcessRepository) error {
+			for _, chunk := range batch {
+				if err := txRepo.CreateChunk(ctx, chunk); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			s.markFailed(ctx, docID, fmt.Sprintf("保存分块失败: %v", err))
+			return
+		}
+		logger.Info("分块批次保存完成",
+			logger.StringField("doc_id", docID),
+			logger.IntField("batch_start", batchStart),
+			logger.IntField("batch_end", batchEnd))
 	}
 
 	logger.Info("开始并行处理",
@@ -637,31 +681,55 @@ func (s *ProcessService) processVectorization(ctx context.Context, doc *model.Do
 		return nil
 	}
 
+	concurrency := 10
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	failedCount := 0
+
 	for i, chunk := range chunks {
-		metadata := map[string]string{
-			"document_id": chunk.DocumentID,
-			"chunk_id":    chunk.ID,
-			"chunk_type":  chunk.ChunkType,
-		}
+		wg.Add(1)
+		sem <- struct{}{}
 
-		vectorCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		vector, err := s.vectorService.Vectorize(vectorCtx, chunk.Content, doc.VectorCollectionID, metadata)
-		cancel()
+		go func(idx int, c *model.DocumentChunk) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		if err != nil {
-			logger.Warn("单个chunk向量化失败", logger.StringField("chunk_id", chunk.ID), logger.ErrorField(err))
-			continue
-		}
-
-		if vector != nil {
-			id := vector.GetID()
-			chunks[i].VectorID = &id
-			// 保存到数据库
-			chunk.VectorID = &id
-			if updateErr := s.repo.UpdateChunk(ctx, chunk); updateErr != nil {
-				logger.Warn("保存chunk向量ID失败", logger.StringField("chunk_id", chunk.ID), logger.ErrorField(updateErr))
+			metadata := map[string]string{
+				"document_id": c.DocumentID,
+				"chunk_id":    c.ID,
+				"chunk_type":  c.ChunkType,
 			}
-		}
+
+			vectorCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			vector, err := s.vectorService.Vectorize(vectorCtx, c.Content, doc.VectorCollectionID, metadata)
+			cancel()
+
+			if err != nil {
+				logger.Warn("单个chunk向量化失败", logger.StringField("chunk_id", c.ID), logger.ErrorField(err))
+				mu.Lock()
+				failedCount++
+				mu.Unlock()
+				return
+			}
+
+			if vector != nil {
+				id := vector.GetID()
+				c.VectorID = &id
+				if updateErr := s.repo.UpdateChunk(ctx, c); updateErr != nil {
+					logger.Warn("保存chunk向量ID失败", logger.StringField("chunk_id", c.ID), logger.ErrorField(updateErr))
+				}
+			}
+		}(i, chunk)
+	}
+
+	wg.Wait()
+
+	if failedCount > 0 {
+		logger.Warn("向量化部分失败",
+			logger.StringField("doc_id", doc.ID),
+			logger.IntField("failed_count", failedCount),
+			logger.IntField("total_count", len(chunks)))
 	}
 
 	return nil

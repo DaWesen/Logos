@@ -296,14 +296,25 @@ func (h *FileUploadHandler) ProxyMinioFile(c *gin.Context) {
 	}
 	objectKey = strings.TrimPrefix(objectKey, "/")
 
-	url, err := h.minioManager.GetFileURL(h.bucket, objectKey, oneDayInSeconds)
+	fileURL, err := h.minioManager.GetFileURL(h.bucket, objectKey, oneDayInSeconds)
 	if err != nil {
 		logger.Error("Failed to get file URL for proxy", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to get file"})
 		return
 	}
 
-	resp, err := http.Get(url)
+	// 构建请求，转发 Range 头以支持音视频拖动进度条
+	req, err := http.NewRequest("GET", fileURL, nil)
+	if err != nil {
+		logger.Error("Failed to create request", logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to create request"})
+		return
+	}
+	if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logger.Error("Failed to fetch file from minio", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to fetch file"})
@@ -318,5 +329,15 @@ func (h *FileUploadHandler) ProxyMinioFile(c *gin.Context) {
 	if strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "charset") {
 		contentType += "; charset=utf-8"
 	}
-	c.DataFromReader(resp.StatusCode, resp.ContentLength, contentType, resp.Body, nil)
+
+	// 转发 Range 相关响应头
+	headers := map[string]string{
+		"Accept-Ranges":  "bytes",
+		"Content-Length": resp.Header.Get("Content-Length"),
+	}
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		headers["Content-Range"] = cr
+	}
+
+	c.DataFromReader(resp.StatusCode, resp.ContentLength, contentType, resp.Body, headers)
 }

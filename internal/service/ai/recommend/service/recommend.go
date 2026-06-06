@@ -87,15 +87,119 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 		return nil, 0, err
 	}
 
-	if len(items) == 0 {
-		logger.Info("数据库没有推荐数据，返回默认推荐")
-		items = s.generateDefaultRecommendations(recommendType, limit)
-		total = int64(len(items))
+	if len(items) > 0 {
+		s.cacheRecommendations(ctx, userID, recommendType, items, total)
+		return items, total, nil
 	}
 
-	s.cacheRecommendations(ctx, userID, recommendType, items, total)
+	logger.Info("数据库没有推荐数据，基于多源检索生成推荐")
+	items = s.generateSmartRecommendations(ctx, userID, recommendType, limit)
+	total = int64(len(items))
+
+	if len(items) > 0 {
+		s.cacheRecommendations(ctx, userID, recommendType, items, total)
+	}
 
 	return items, total, nil
+}
+
+func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context, userID int64, recommendType string, limit int) []*model.RecommendationItem {
+	var items []*model.RecommendationItem
+	now := time.Now().Unix()
+	seen := make(map[string]bool)
+
+	if s.vectorService != nil {
+		query := recommendType
+		if query == "" {
+			query = "knowledge"
+		}
+		similarIDs, err := s.vectorService.SearchSimilar(ctx, query, limit)
+		if err != nil {
+			logger.Warn("向量搜索生成推荐失败", logger.ErrorField(err))
+		} else {
+			for i, id := range similarIDs {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				score := 0.9 - float64(i)*0.05
+				if score < 0.5 {
+					score = 0.5
+				}
+				items = append(items, &model.RecommendationItem{
+					ID:          uuid.New().String(),
+					Type:        "vector",
+					Title:       fmt.Sprintf("相关内容 #%d", i+1),
+					Description: fmt.Sprintf("基于向量相似度推荐的内容（相似度: %.0f%%）", score*100),
+					Score:       score,
+					EntityID:    id,
+					CreatedAt:   now,
+				})
+			}
+		}
+	}
+
+	if s.knowledgeService != nil {
+		query := recommendType
+		if query == "" {
+			query = "entity"
+		}
+		entityIDs, err := s.knowledgeService.SearchEntities(ctx, query)
+		if err != nil {
+			logger.Warn("知识图谱生成推荐失败", logger.ErrorField(err))
+		} else {
+			for i, id := range entityIDs {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				score := 0.85 - float64(i)*0.05
+				if score < 0.4 {
+					score = 0.4
+				}
+				items = append(items, &model.RecommendationItem{
+					ID:          uuid.New().String(),
+					Type:        "entity",
+					Title:       fmt.Sprintf("知识实体 #%d", i+1),
+					Description: fmt.Sprintf("基于知识图谱关联推荐的实体（相关度: %.0f%%）", score*100),
+					Score:       score,
+					EntityID:    id,
+					CreatedAt:   now,
+				})
+			}
+		}
+	}
+
+	if s.einoClient != nil && len(items) > 0 {
+		s.enrichWithEino(ctx, items)
+	}
+
+	if len(items) > limit {
+		items = items[:limit]
+	}
+
+	return items
+}
+
+func (s *recommendServiceImpl) enrichWithEino(ctx context.Context, items []*model.RecommendationItem) {
+	for _, item := range items {
+		if item.Title != "" && !startsWith(item.Title, "相关内容") && !startsWith(item.Title, "知识实体") {
+			continue
+		}
+		prompt := fmt.Sprintf("请为以下推荐内容生成一个简洁的中文标题（不超过20字），不要加引号：\n描述：%s\n实体ID：%s", item.Description, item.EntityID)
+		result, err := s.einoClient.Chat(ctx, []string{prompt})
+		if err != nil {
+			logger.Warn("Eino生成标题失败", logger.ErrorField(err))
+			continue
+		}
+		if result != "" {
+			item.Title = result
+		}
+	}
+}
+
+func startsWith(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 func (s *recommendServiceImpl) cacheRecommendations(ctx context.Context, userID int64, recommendType string, items []*model.RecommendationItem, total int64) {
@@ -138,21 +242,25 @@ func (s *recommendServiceImpl) GetRelatedRecommendations(ctx context.Context, en
 		limit = 10
 	}
 
+	var vectorIDs []string
 	if s.vectorService != nil {
 		similarResults, err := s.vectorService.SearchSimilar(ctx, entityID, limit)
 		if err != nil {
 			logger.Warn("向量搜索失败", logger.ErrorField(err))
-		} else if len(similarResults) > 0 {
+		} else {
+			vectorIDs = similarResults
 			logger.Info("从向量搜索获取相关推荐",
 				logger.IntField("count", len(similarResults)))
 		}
 	}
 
+	var knowledgeIDs []string
 	if s.knowledgeService != nil {
 		entities, err := s.knowledgeService.SearchEntities(ctx, entityID)
 		if err != nil {
 			logger.Warn("知识图谱搜索失败", logger.ErrorField(err))
-		} else if len(entities) > 0 {
+		} else {
+			knowledgeIDs = entities
 			logger.Info("从知识图谱获取相关实体",
 				logger.IntField("count", len(entities)))
 		}
@@ -164,9 +272,61 @@ func (s *recommendServiceImpl) GetRelatedRecommendations(ctx context.Context, en
 		return nil, 0, err
 	}
 
-	if len(items) == 0 {
-		logger.Info("数据库没有相关推荐数据，返回默认相关推荐")
-		items = s.generateDefaultRecommendations(recommendType, limit)
+	now := time.Now().Unix()
+	seen := make(map[string]bool)
+	for _, item := range items {
+		if item.EntityID != "" {
+			seen[item.EntityID] = true
+		}
+	}
+
+	for i, id := range vectorIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		score := 0.9 - float64(i)*0.05
+		if score < 0.5 {
+			score = 0.5
+		}
+		items = append(items, &model.RecommendationItem{
+			ID:          uuid.New().String(),
+			Type:        "vector",
+			Title:       fmt.Sprintf("向量相似内容 #%d", i+1),
+			Description: fmt.Sprintf("基于向量相似度推荐（相似度: %.0f%%）", score*100),
+			Score:       score,
+			EntityID:    id,
+			CreatedAt:   now,
+		})
+	}
+
+	for i, id := range knowledgeIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		score := 0.85 - float64(i)*0.05
+		if score < 0.4 {
+			score = 0.4
+		}
+		items = append(items, &model.RecommendationItem{
+			ID:          uuid.New().String(),
+			Type:        "entity",
+			Title:       fmt.Sprintf("知识图谱关联 #%d", i+1),
+			Description: fmt.Sprintf("基于知识图谱关联推荐（相关度: %.0f%%）", score*100),
+			Score:       score,
+			EntityID:    id,
+			CreatedAt:   now,
+		})
+	}
+
+	if s.einoClient != nil && len(items) > 0 {
+		s.enrichWithEino(ctx, items)
+	}
+
+	total = int64(len(items))
+	if len(items) > limit {
+		items = items[:limit]
 		total = int64(len(items))
 	}
 
@@ -190,17 +350,30 @@ func (s *recommendServiceImpl) SubmitFeedback(ctx context.Context, itemID string
 		timestamp = time.Now().Unix()
 	}
 
+	itemType := "unknown"
+	title := itemID
+	dbItems, _, err := s.recommendRepo.GetRecommendations(ctx, userID, "", 100)
+	if err == nil {
+		for _, item := range dbItems {
+			if item.ID == itemID {
+				itemType = item.Type
+				title = item.Title
+				break
+			}
+		}
+	}
+
 	history := &model.RecommendationHistory{
 		ID:        uuid.New().String(),
 		ItemID:    itemID,
-		ItemType:  "default",
-		Title:     "推荐项",
+		ItemType:  itemType,
+		Title:     title,
 		Action:    action,
 		UserID:    userID,
 		Timestamp: timestamp,
 	}
 
-	err := s.recommendRepo.SaveHistory(ctx, history)
+	err = s.recommendRepo.SaveHistory(ctx, history)
 	if err != nil {
 		logger.Error("保存推荐历史失败", logger.ErrorField(err))
 		return err
@@ -260,61 +433,4 @@ func (s *recommendServiceImpl) BatchGetRecommendations(ctx context.Context, user
 	}
 
 	return result, nil
-}
-
-func (s *recommendServiceImpl) generateDefaultRecommendations(_ string, limit int) []*model.RecommendationItem {
-	now := time.Now().Unix()
-	items := []*model.RecommendationItem{
-		{
-			ID:          uuid.New().String(),
-			Type:        "entity",
-			Title:       "知识图谱初探",
-			Description: "了解知识图谱的基本概念与应用",
-			Score:       0.9,
-			EntityID:    "kg_001",
-			CreatedAt:   now,
-		},
-		{
-			ID:          uuid.New().String(),
-			Type:        "entity",
-			Title:       "向量搜索入门",
-			Description: "探索向量搜索在AI推荐中的应用",
-			Score:       0.85,
-			EntityID:    "vector_001",
-			CreatedAt:   now,
-		},
-		{
-			ID:          uuid.New().String(),
-			Type:        "relation",
-			Title:       "实体关系发现",
-			Description: "识别知识图谱中实体之间的隐藏关系",
-			Score:       0.8,
-			EntityID:    "relation_001",
-			CreatedAt:   now,
-		},
-		{
-			ID:          uuid.New().String(),
-			Type:        "entity",
-			Title:       "AI推荐算法",
-			Description: "了解个性化推荐算法的原理与实现",
-			Score:       0.75,
-			EntityID:    "ai_001",
-			CreatedAt:   now,
-		},
-		{
-			ID:          uuid.New().String(),
-			Type:        "document",
-			Title:       "系统使用指南",
-			Description: "Noah平台的详细使用指南",
-			Score:       0.7,
-			EntityID:    "doc_001",
-			CreatedAt:   now,
-		},
-	}
-
-	if limit > len(items) {
-		limit = len(items)
-	}
-
-	return items[:limit]
 }

@@ -39,6 +39,7 @@ type KnowledgeRepository interface {
 	GetEntityPaths(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) ([]*model.EntityPath, error)
 
 	WithTransaction(ctx context.Context, fn func(txRepo KnowledgeRepository) error) error
+	DB() *gorm.DB
 }
 
 type knowledgeRepository struct {
@@ -730,4 +731,8 @@ func (r *knowledgeRepository) WithTransaction(ctx context.Context, fn func(txRep
 		txRepo := NewKnowledgeRepository(tx, r.neo4jManager)
 		return fn(txRepo)
 	})
+}
+
+func (r *knowledgeRepository) DB() *gorm.DB {
+	return r.db
 }

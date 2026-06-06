@@ -2,12 +2,14 @@ package pgsql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"Logos/pkg/logger"
 
+	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -43,12 +45,19 @@ func (l *gormLogAdapter) Trace(ctx context.Context, begin time.Time, fc func() (
 	sqlStr = strings.TrimSpace(sqlStr)
 
 	if err != nil {
-		logger.Error("SQL执行失败",
-			logger.StringField("sql", sqlStr),
-			logger.StringField("latency", elapsed.String()),
-			logger.Int64Field("rows", rows),
-			logger.ErrorField(err),
-		)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.Debug("SQL查询无记录",
+				logger.StringField("sql", sqlStr),
+				logger.StringField("latency", elapsed.String()),
+			)
+		} else {
+			logger.Error("SQL执行失败",
+				logger.StringField("sql", sqlStr),
+				logger.StringField("latency", elapsed.String()),
+				logger.Int64Field("rows", rows),
+				logger.ErrorField(err),
+			)
+		}
 		return
 	}
 

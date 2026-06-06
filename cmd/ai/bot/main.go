@@ -20,6 +20,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/bot"
 
 	"google.golang.org/grpc"
@@ -269,6 +270,10 @@ func main() {
 		log.Fatalf("Failed to auto migrate: %v", err)
 	}
 
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
+	}
+
 	if err := bot.Init(); err != nil {
 		log.Printf("Failed to init bot module: %v", err)
 	}
@@ -279,9 +284,10 @@ func main() {
 	var billingService service.BillingService
 	billingClient, err := client.NewBillingClientFromConfig(cfg)
 	if err != nil {
-		log.Printf("Failed to init billing client: %v", err)
+		log.Printf("⚠️ Failed to init billing client: %v (billing will be disabled)", err)
 	} else {
 		billingService = billingClient
+		log.Printf("✅ Billing client initialized successfully")
 	}
 
 	var vectorService service.VectorService
@@ -324,7 +330,14 @@ func main() {
 	}
 
 	repo := dao.NewBotRepository(db)
-	botService := service.NewBotService(repo, agentManager, einoManager, billingService, vectorService, searchService, producer, mcpClient, cfg, knowledgeService, graphSearchSvc)
+	outboxRepo := outbox.NewOutboxRepository()
+	botService := service.NewBotService(repo, agentManager, einoManager, billingService, vectorService, searchService, outboxRepo, mcpClient, cfg, knowledgeService, graphSearchSvc)
+
+	if producer != nil {
+		relay := outbox.NewRelay(db, producer)
+		relay.Start()
+		defer relay.Stop()
+	}
 
 	memoryMgr := botMemory.GetMemoryManager(repo, einoManager, agentManager)
 	go func() {

@@ -251,12 +251,12 @@ func (s *MonitoringServiceImpl) GetServiceStatus(ctx context.Context, req *pb.Ge
 		resp.StatusMessage = "{\"data\":null}"
 	} else {
 		data, _ := json.Marshal(map[string]any{
-			"serviceName":   ss.ServiceName,
-			"status":        ss.Status,
-			"lastCheckTime": ss.LastCheckTime,
-			"errorMessage":  ss.ErrorMessage,
-			"metadata":      ss.Metadata,
-			"updatedAt":     ss.UpdatedAt,
+			"service_name":    ss.ServiceName,
+			"status":         ss.Status,
+			"last_check_time": ss.LastCheckTime,
+			"error_message":  ss.ErrorMessage,
+			"metadata":       ss.Metadata,
+			"updatedAt":      ss.UpdatedAt,
 		})
 		resp.StatusMessage = "{\"data\":" + string(data) + "}"
 	}
@@ -277,12 +277,12 @@ func (s *MonitoringServiceImpl) ListServiceStatus(ctx context.Context, req *pb.E
 	items := make([]map[string]any, 0, len(list))
 	for _, ss := range list {
 		items = append(items, map[string]any{
-			"serviceName":   ss.ServiceName,
-			"status":        ss.Status,
-			"lastCheckTime": ss.LastCheckTime,
-			"errorMessage":  ss.ErrorMessage,
-			"metadata":      ss.Metadata,
-			"updatedAt":     ss.UpdatedAt,
+			"service_name":    ss.ServiceName,
+			"status":         ss.Status,
+			"last_check_time": ss.LastCheckTime,
+			"error_message":  ss.ErrorMessage,
+			"metadata":       ss.Metadata,
+			"updatedAt":      ss.UpdatedAt,
 		})
 	}
 	data, _ := json.Marshal(items)

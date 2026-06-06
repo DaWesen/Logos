@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"Logos/internal/service/ai/vector/model"
@@ -8,7 +10,6 @@ import (
 	"Logos/pkg/logger"
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/vector"
-	"context"
 )
 
 // VectorServiceImpl implements the VectorService interface.
@@ -184,7 +185,16 @@ func (s *VectorServiceImpl) DeleteCollection(ctx context.Context, req *pb.Delete
 	return buildSuccessBaseResp(), nil
 }
 
-func (s *VectorServiceImpl) ListVectors(ctx context.Context, req *pb.ListVectorsReq) (*pb.ListVectorsResp, error) {
+func (s *VectorServiceImpl) ListVectors(ctx context.Context, req *pb.ListVectorsReq) (resp *pb.ListVectorsResp, err error) {
+	// 防止 panic 导致整个服务崩溃
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("ListVectors panic recovered", logger.AnyField("panic", r))
+			resp = &pb.ListVectorsResp{BaseResp: buildErrorBaseResp(fmt.Sprintf("internal error: %v", r))}
+			err = nil
+		}
+	}()
+
 	logger.Info("列出向量预览请求",
 		logger.StringField("collection_id", req.CollectionId),
 		logger.IntField("page", int(req.Page)),

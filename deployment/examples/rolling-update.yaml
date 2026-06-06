@@ -1,0 +1,77 @@
+# Logos - K8s 滚动更新配置
+# 使用方式：kubectl apply -f rolling-update.yaml
+#
+# 滚动更新策略：
+# - maxSurge: 最多同时创建多少个新 Pod
+# - maxUnavailable: 最多同时不可用多少个 Pod
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: logos
+  labels:
+    app: gateway
+    domain: platform
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # 最多同时创建 1 个新 Pod
+      maxUnavailable: 1  # 最多同时不可用 1 个 Pod
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        domain: platform
+    spec:
+      containers:
+        - name: gateway
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./gateway"]
+          ports:
+            - containerPort: 8888
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          # 存活探针 - 检查 Pod 是否还活着
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8888
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          # 就绪探针 - 检查 Pod 是否可以接收流量
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          # 启动探针 - 给应用启动时间
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8888
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config

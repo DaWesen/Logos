@@ -11,7 +11,9 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
+	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/extraction"
 	"context"
 	"log"
@@ -31,6 +33,10 @@ func main() {
 
 	if err := model.AutoMigrate(db); err != nil {
 		log.Fatalf("Failed to auto migrate: %v", err)
+	}
+
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
 	}
 
 	var einoClient *eino.EinoManager
@@ -59,11 +65,17 @@ func main() {
 		logger.Info("Vector服务客户端已连接")
 	}
 
-	extractionService := service.NewExtractionService(repo, einoClient, knowledgeService, vectorService)
+	outboxRepo := outbox.NewOutboxRepository()
+
+	extractionService := service.NewExtractionService(repo, einoClient, knowledgeService, vectorService, outboxRepo)
 
 	if err := extractionService.StartKafkaConsumer(context.Background()); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
 	}
+
+	producer := mq.NewProducer()
+	relay := outbox.NewRelay(db, producer)
+	relay.Start()
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("extraction")
 	defer shutdown(context.Background())

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: elasticsearch
-          image: elasticsearch:8.19.5
+          image: docker.m.daocloud.io/elasticsearch:8.19.5
           ports:
             - containerPort: 9200
             - containerPort: 9300

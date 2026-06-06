@@ -10,7 +10,9 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
+	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/message"
 	"context"
 	"log"
@@ -32,7 +34,13 @@ func main() {
 		log.Fatalf("Failed to auto migrate: %v", err)
 	}
 
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
+	}
+
 	repo := dao.NewMessageRepository(db)
+	outboxRepo := outbox.NewOutboxRepository()
+	producer := mq.NewProducer()
 
 	var questionService service.QuestionService
 	questionRawClient, questionErr := client.NewQuestionClientFromConfig(cfg)
@@ -43,7 +51,11 @@ func main() {
 		logger.Info("Question服务客户端已连接")
 	}
 
-	messageService := service.NewMessageService(repo, questionService)
+	messageService := service.NewMessageService(repo, questionService, outboxRepo)
+
+	relay := outbox.NewRelay(db, producer)
+	relay.Start()
+	defer relay.Stop()
 
 	if err := messageService.StartKafkaConsumer(context.Background()); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))

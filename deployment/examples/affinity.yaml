@@ -1,0 +1,99 @@
+# Logos - 节点亲和/反亲和配置
+# 使用方式：kubectl apply -f affinity.yaml
+#
+# 包含：
+# - 节点亲和（调度到特定标签的节点）
+# - Pod 亲和/反亲和（控制 Pod 间的调度关系）
+# - 拓扑域约束（高可用多可用区部署）
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: logos
+  labels:
+    app: gateway
+    domain: platform
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        domain: platform
+    spec:
+      affinity:
+        # 节点亲和：优先调度到有 SSD 的节点
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: disktype
+                operator: In
+                values:
+                - ssd
+        
+        # Pod 反亲和：尽量把多个网关 Pod 分布在不同节点上
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - gateway
+            topologyKey: "kubernetes.io/hostname"  # 按主机名分布
+        
+        # Pod 亲和：网关尽量和 Redis 靠近
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis
+              topologyKey: "kubernetes.io/hostname"
+      
+      # 拓扑域约束（多可用区高可用）
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: gateway
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/region
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: gateway
+      
+      containers:
+        - name: gateway
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./gateway"]
+          ports:
+            - containerPort: 8888
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config

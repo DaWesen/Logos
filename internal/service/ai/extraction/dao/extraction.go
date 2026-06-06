@@ -21,6 +21,9 @@ type ExtractionRepository interface {
 	CreateResult(ctx context.Context, result *model.ExtractionResult) error
 	GetResult(ctx context.Context, id string) (*model.ExtractionResult, error)
 	ListResultsByTaskID(ctx context.Context, taskID string) ([]*model.ExtractionResult, error)
+
+	WithTransaction(ctx context.Context, fn func(txRepo ExtractionRepository) error) error
+	DB() *gorm.DB
 }
 
 type extractionRepository struct {
@@ -166,4 +169,15 @@ func (r *extractionRepository) ListResultsByTaskID(ctx context.Context, taskID s
 		return nil, dbResult.Error
 	}
 	return results, nil
+}
+
+func (r *extractionRepository) WithTransaction(ctx context.Context, fn func(txRepo ExtractionRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txRepo := &extractionRepository{db: tx}
+		return fn(txRepo)
+	})
+}
+
+func (r *extractionRepository) DB() *gorm.DB {
+	return r.db
 }

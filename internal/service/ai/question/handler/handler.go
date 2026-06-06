@@ -1,15 +1,15 @@
-
 package handler
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"Logos/internal/service/ai/question/model"
 	"Logos/internal/service/ai/question/service"
-	pb "Logos/proto_gen/question"
-	pbCommon "Logos/proto_gen/common"
 	"Logos/pkg/logger"
+	pbCommon "Logos/proto_gen/common"
+	pb "Logos/proto_gen/question"
 )
 
 type QAServiceImpl struct {
@@ -133,11 +133,17 @@ func (s *QAServiceImpl) SubmitFeedback(ctx context.Context, req *pb.FeedbackReq)
 
 // GetRecommendedQuestions implements the QAServiceImpl interface.
 func (s *QAServiceImpl) GetRecommendedQuestions(ctx context.Context, req *pb.GetRecommendedQuestionsReq) (*pbCommon.BaseResp, error) {
-	_, err := s.QAService.GetRecommendedQuestions(ctx, req.UserId)
+	questions, err := s.QAService.GetRecommendedQuestions(ctx, req.UserId)
 	if err != nil {
 		logger.Error("Failed to get recommended questions", logger.ErrorField(err))
 		return buildErrorBaseResp(err.Error()), nil
 	}
 
-	return buildSuccessBaseResp(), nil
+	data, _ := json.Marshal(map[string]any{
+		"questions": questions,
+	})
+	return &pbCommon.BaseResp{
+		StatusCode:    200,
+		StatusMessage: string(data),
+	}, nil
 }

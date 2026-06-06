@@ -1,0 +1,111 @@
+# Bot 服务 v1 版本（稳定版）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-v1
+  namespace: logos
+  labels:
+    app: bot
+    domain: ai
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bot
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: bot
+        version: v1
+        domain: ai
+    spec:
+      containers:
+        - name: bot
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./bot"]
+          ports:
+            - containerPort: 9020
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9020
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+# Bot 服务 v2 版本（金丝雀版本）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot-v2
+  namespace: logos
+  labels:
+    app: bot
+    domain: ai
+    version: v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bot
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: bot
+        version: v2
+        domain: ai
+    spec:
+      containers:
+        - name: bot
+          image: logos:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./bot"]
+          ports:
+            - containerPort: 9020
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+          readinessProbe:
+            tcpSocket:
+              port: 9020
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: config
+          configMap:
+            name: logos-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bot-svc
+  namespace: logos
+spec:
+  selector:
+    app: bot
+  ports:
+    - port: 9020
+      targetPort: 9020

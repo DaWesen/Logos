@@ -113,7 +113,19 @@ type VectorPreview struct {
 	Content string
 }
 
-func (m *MilvusManager) QueryVectors(ctx context.Context, collectionName string, offset, limit int) ([]*VectorPreview, int64, error) {
+func (m *MilvusManager) QueryVectors(ctx context.Context, collectionName string, offset, limit int) (result []*VectorPreview, total int64, err error) {
+	// 防止 Milvus SDK 内部 panic
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("QueryVectors panic recovered", logger.AnyField("panic", r))
+			err = fmt.Errorf("milvus internal error: %v", r)
+		}
+	}()
+
+	if m == nil || m.client == nil {
+		return nil, 0, fmt.Errorf("milvus client not initialized")
+	}
+
 	logger.Info("查询Milvus向量",
 		logger.StringField("collection", collectionName),
 		logger.IntField("offset", offset),
@@ -159,14 +171,14 @@ func (m *MilvusManager) QueryVectors(ctx context.Context, collectionName string,
 		}
 	}
 
-	var total int64
+	var totalCount int64
 
 	stats, statsErr := m.client.GetCollectionStats(ctx, milvusclient.NewGetCollectionStatsOption(collectionName))
 	if statsErr == nil {
 		if rowCountStr, ok := stats["row_count"]; ok {
-			if parsed, parseErr := fmt.Sscanf(rowCountStr, "%d", &total); parseErr != nil || parsed != 1 {
+			if parsed, parseErr := fmt.Sscanf(rowCountStr, "%d", &totalCount); parseErr != nil || parsed != 1 {
 				logger.Warn("解析row_count失败", logger.StringField("value", rowCountStr))
-				total = int64(resultSet.ResultCount)
+				totalCount = int64(resultSet.ResultCount)
 			}
 		}
 	}
@@ -174,11 +186,11 @@ func (m *MilvusManager) QueryVectors(ctx context.Context, collectionName string,
 	logger.Info("QueryVectors结果",
 		logger.StringField("collection", collectionName),
 		logger.IntField("result_count", resultSet.ResultCount),
-		logger.Int64Field("total_from_stats", total))
+		logger.Int64Field("total_from_stats", totalCount))
 
 	vectors := make([]*VectorPreview, 0)
 	if resultSet.ResultCount == 0 {
-		return vectors, total, nil
+		return vectors, totalCount, nil
 	}
 
 	idCol := resultSet.GetColumn("id")
@@ -222,7 +234,7 @@ func (m *MilvusManager) QueryVectors(ctx context.Context, collectionName string,
 		logger.StringField("collection", collectionName),
 		logger.IntField("count", len(vectors)))
 
-	return vectors, total, nil
+	return vectors, totalCount, nil
 }
 
 func (m *MilvusManager) DropCollection(ctx context.Context, collectionName string) error {
@@ -447,7 +459,18 @@ func (m *MilvusManager) CreateIndex(ctx context.Context, collectionName string, 
 	return nil
 }
 
-func (m *MilvusManager) LoadCollection(ctx context.Context, collectionName string, replicaNum int) error {
+func (m *MilvusManager) LoadCollection(ctx context.Context, collectionName string, replicaNum int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("LoadCollection panic recovered", logger.AnyField("panic", r))
+			err = fmt.Errorf("milvus internal error: %v", r)
+		}
+	}()
+
+	if m == nil || m.client == nil {
+		return fmt.Errorf("milvus client not initialized")
+	}
+
 	logger.Info("加载Milvus集合到内存",
 		logger.StringField("collection", collectionName))
 

@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/logger"
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
-	"Logos/internal/service/platform/gateway/model"
 
 	pb "Logos/proto_gen/bot"
 
@@ -337,6 +339,12 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 	key := c.Query("key")
 	userID, _ := c.Get("user_id")
 
+	logger.Info("收到删除记忆请求",
+		logger.StringField("user_id", fmt.Sprintf("%v", userID)),
+		logger.StringField("bot_id", botID),
+		logger.StringField("key", key),
+	)
+
 	req := &pb.DeleteUserMemoryRequest{
 		UserId: userID.(string),
 		BotId:  botID,
@@ -345,9 +353,16 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 
 	resp, err := h.BotClient.DeleteUserMemory(context.Background(), req)
 	if err != nil {
+		logger.Error("删除记忆gRPC调用失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
+
+	logger.Info("删除记忆响应",
+		logger.IntField("code", int(resp.Code)),
+		logger.StringField("message", resp.Message),
+	)
+
 	statusCode := 200
 	if resp.Code != 0 {
 		statusCode = int(resp.Code)

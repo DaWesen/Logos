@@ -7,6 +7,7 @@ import (
 	"Logos/internal/service/platform/gateway/middleware"
 	"Logos/internal/service/platform/gateway/websocket"
 	"Logos/pkg/cache"
+	"Logos/pkg/client"
 	"Logos/pkg/logger"
 	"Logos/pkg/storage"
 	"os"
@@ -14,7 +15,32 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var (
+	httpRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gateway_http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method", "path", "status"},
+	)
+	httpRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "gateway_http_request_duration_seconds",
+			Help:    "HTTP request duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "path"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpRequestsTotal)
+	prometheus.MustRegister(httpRequestDuration)
+}
 
 func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	cfg := config.GetConfig()
@@ -25,17 +51,20 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
+	r.Use(promMiddleware())
+	r.Use(middleware.MetricsReporterMiddleware())
 
 	redisCache := cache.NewRedisCache()
 	r.Use(middleware.RedisRateLimit(redisCache))
-	r.Use(middleware.IPBasedRateLimit(redisCache, 200, time.Minute))
-	r.Use(middleware.BurstProtection(redisCache, 1000, 5*time.Minute))
+	r.Use(middleware.IPBasedRateLimit(redisCache, 600000, time.Minute))
+	r.Use(middleware.BurstProtection(redisCache, 100000, 5*time.Minute))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "logos-gateway"})
 	})
 
-	// 添加一个简单的测试端点
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
 	r.GET("/test", func(c *gin.Context) {
 		logger.Info("Test endpoint called")
 		c.JSON(200, gin.H{"message": "Gateway is working!"})
@@ -80,6 +109,14 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		logger.Error("Failed to init monitoring client", logger.ErrorField(err))
 	} else {
 		logger.Info("MonitoringClient initialized successfully")
+		middleware.MonitoringClient = monitoringClient
+		// 初始化指标上报器（使用包装客户端）
+		monitoringWrapper, wrapErr := client.NewMonitoringClientFromConfig(cfg)
+		if wrapErr != nil {
+			logger.Error("Failed to init monitoring wrapper client", logger.ErrorField(wrapErr))
+		} else {
+			middleware.InitMetricsReporter(monitoringWrapper)
+		}
 	}
 
 	// 初始化 bot client
@@ -524,4 +561,22 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	}
 
 	return r
+}
+
+func promMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.FullPath()
+		if path == "" || path == "/metrics" {
+			c.Next()
+			return
+		}
+		c.Next()
+
+		status := strconv.Itoa(c.Writer.Status())
+		duration := time.Since(start).Seconds()
+
+		httpRequestsTotal.WithLabelValues(c.Request.Method, path, status).Inc()
+		httpRequestDuration.WithLabelValues(c.Request.Method, path).Observe(duration)
+	}
 }

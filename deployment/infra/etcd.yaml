@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: etcd
-          image: bitnami/etcd:latest
+          image: docker.1panel.live/bitnami/etcd:latest
           ports:
             - containerPort: 2379
             - containerPort: 2380

@@ -1,4 +1,3 @@
-
 package service
 
 import (
@@ -232,14 +231,93 @@ func (s *qaServiceImpl) GetRecommendedQuestions(ctx context.Context, userID int6
 	logger.Info("Getting recommended questions",
 		logger.Int64Field("user_id", userID))
 
-	recommendations := []string{
-		"What is knowledge graph?",
-		"How to use vector search?",
-		"What can AI assistant do?",
-		"How accurate is the answer?",
+	var questions []string
+
+	if s.einoClient != nil && s.einoClient.HasChatModel() {
+		history, _, err := s.qaRepo.ListQARecords(ctx, userID, 1, 10)
+		if err != nil {
+			logger.Warn("Failed to get user history for recommendations", logger.ErrorField(err))
+		}
+
+		prompt := "请生成4个用户可能感兴趣的中文问题，每个问题一行，不要加序号和引号。"
+		if len(history) > 0 {
+			prompt += "\n\n用户最近提问过：\n"
+			for i, h := range history {
+				if i >= 5 {
+					break
+				}
+				prompt += "- " + h.Question + "\n"
+			}
+			prompt += "\n请基于用户兴趣生成相关的延伸问题。"
+		}
+
+		result, err := s.einoClient.Chat(ctx, []string{prompt})
+		if err != nil {
+			logger.Warn("Eino生成推荐问题失败", logger.ErrorField(err))
+		} else if result != "" {
+			for _, line := range splitLines(result) {
+				line = trimSpaces(line)
+				if line != "" {
+					questions = append(questions, line)
+				}
+			}
+		}
 	}
 
-	return recommendations, nil
+	if len(questions) < 4 {
+		questions = append(questions, s.getDefaultQuestions(4-len(questions))...)
+	}
+
+	if len(questions) > 8 {
+		questions = questions[:8]
+	}
+
+	return questions, nil
+}
+
+func (s *qaServiceImpl) getDefaultQuestions(count int) []string {
+	defaults := []string{
+		"知识图谱是什么？如何构建知识图谱？",
+		"向量搜索的原理是什么？",
+		"AI助手能帮我做什么？",
+		"如何提高问答系统的准确率？",
+		"如何管理我的知识库文档？",
+		"RAG技术的工作流程是怎样的？",
+	}
+	if count > len(defaults) {
+		count = len(defaults)
+	}
+	return defaults[:count]
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			line := s[start:i]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			lines = append(lines, line)
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		lines = append(lines, s[start:])
+	}
+	return lines
+}
+
+func trimSpaces(s string) string {
+	start, end := 0, len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
 }
 
 func (s *qaServiceImpl) checkQuestionRateLimit(ctx context.Context, userID int64) error {

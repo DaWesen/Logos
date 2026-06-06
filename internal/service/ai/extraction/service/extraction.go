@@ -17,8 +17,10 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
 
 	"github.com/cloudwego/eino/schema"
+	"gorm.io/gorm"
 )
 
 type KnowledgeService interface {
@@ -65,16 +67,16 @@ type extractionServiceImpl struct {
 	einoClient       *eino.EinoManager
 	knowledgeService KnowledgeService
 	vectorService    VectorService
-	kafkaProducer    *mq.Producer
+	outboxRepo       outbox.OutboxRepository
 }
 
-func NewExtractionService(repo dao.ExtractionRepository, einoClient *eino.EinoManager, knowledgeService KnowledgeService, vectorService VectorService) ExtractionService {
+func NewExtractionService(repo dao.ExtractionRepository, einoClient *eino.EinoManager, knowledgeService KnowledgeService, vectorService VectorService, outboxRepo outbox.OutboxRepository) ExtractionService {
 	return &extractionServiceImpl{
 		repo:             repo,
 		einoClient:       einoClient,
 		knowledgeService: knowledgeService,
 		vectorService:    vectorService,
-		kafkaProducer:    mq.NewProducer(),
+		outboxRepo:       outboxRepo,
 	}
 }
 
@@ -213,24 +215,34 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		logger.Error("抽取任务执行失败",
 			logger.StringField("task_id", taskID),
 			logger.ErrorField(extractErr))
+		s.repo.CreateResult(ctx, result)
 	} else {
 		logger.Info("抽取任务执行成功",
 			logger.StringField("task_id", taskID))
 
-		s.sendExtractionCompleteEvent(ctx, task, result)
+		err := s.repo.WithTransaction(ctx, func(txRepo dao.ExtractionRepository) error {
+			if err := txRepo.UpdateTask(ctx, task); err != nil {
+				return err
+			}
+			if err := txRepo.CreateResult(ctx, result); err != nil {
+				return err
+			}
+			if err := s.saveExtractionEventToOutbox(ctx, txRepo.DB(), task, result); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Error("事务提交失败",
+				logger.StringField("task_id", taskID),
+				logger.ErrorField(err))
+		}
 	}
-
-	s.repo.CreateResult(ctx, result)
 
 	return result, extractErr
 }
 
-func (s *extractionServiceImpl) sendExtractionCompleteEvent(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) {
-	if s.kafkaProducer == nil {
-		logger.Warn("Kafka生产者未初始化，跳过事件发送")
-		return
-	}
-
+func (s *extractionServiceImpl) saveExtractionEventToOutbox(ctx context.Context, tx *gorm.DB, task *model.ExtractionTask, result *model.ExtractionResult) error {
 	event := map[string]interface{}{
 		"task_id":      task.ID,
 		"task_type":    task.Type,
@@ -246,32 +258,27 @@ func (s *extractionServiceImpl) sendExtractionCompleteEvent(ctx context.Context,
 		"completed_at": time.Now().Format(time.RFC3339),
 	}
 
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		logger.Error("序列化抽取完成事件失败",
+	if err := s.outboxRepo.SaveWithTx(ctx, tx, "knowledge_extraction", task.ID, event); err != nil {
+		logger.Error("保存知识抽取事件到Outbox失败",
 			logger.ErrorField(err))
-		return
+		return err
 	}
 
-	if err := s.kafkaProducer.Send(ctx, mq.TopicKnowledgeExtraction, task.ID, eventData); err != nil {
-		logger.Error("发送知识抽取完成事件到Kafka失败",
-			logger.ErrorField(err))
-		return
-	}
-
-	logger.Info("已发送抽取完成事件到Kafka",
-		logger.StringField("topic", mq.TopicKnowledgeExtraction),
+	logger.Info("已保存知识抽取事件到Outbox",
+		logger.StringField("topic", "knowledge_extraction"),
 		logger.StringField("task_id", task.ID))
 
-	if err := s.kafkaProducer.Send(ctx, mq.TopicVectorProcessing, task.ID, eventData); err != nil {
-		logger.Error("发送向量化处理事件到Kafka失败",
+	if err := s.outboxRepo.SaveWithTx(ctx, tx, "vector_processing", task.ID, event); err != nil {
+		logger.Error("保存向量化处理事件到Outbox失败",
 			logger.ErrorField(err))
-		return
+		return err
 	}
 
-	logger.Info("已发送向量化处理事件到Kafka",
-		logger.StringField("topic", mq.TopicVectorProcessing),
+	logger.Info("已保存向量化处理事件到Outbox",
+		logger.StringField("topic", "vector_processing"),
 		logger.StringField("task_id", task.ID))
+
+	return nil
 }
 
 func (s *extractionServiceImpl) CancelTask(ctx context.Context, taskID string) error {

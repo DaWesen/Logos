@@ -13,6 +13,9 @@ import (
 	"Logos/internal/service/ai/collection/model"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
+
+	"gorm.io/gorm"
 )
 
 type KnowledgeService interface {
@@ -48,15 +51,15 @@ type collectionServiceImpl struct {
 	repo              dao.CollectionRepository
 	knowledgeService  KnowledgeService
 	extractionService ExtractionService
-	kafkaProducer     *mq.Producer
+	outboxRepo        outbox.OutboxRepository
 }
 
-func NewCollectionService(repo dao.CollectionRepository, knowledgeService KnowledgeService, extractionService ExtractionService) CollectionService {
+func NewCollectionService(repo dao.CollectionRepository, knowledgeService KnowledgeService, extractionService ExtractionService, outboxRepo outbox.OutboxRepository) CollectionService {
 	return &collectionServiceImpl{
 		repo:              repo,
 		knowledgeService:  knowledgeService,
 		extractionService: extractionService,
-		kafkaProducer:     mq.NewProducer(),
+		outboxRepo:        outboxRepo,
 	}
 }
 
@@ -247,22 +250,32 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 			logger.StringField("task_id", taskID),
 			logger.Int64Field("collected", result.CollectedCount),
 			logger.Int64Field("processed", result.ProcessedCount))
-
-		s.sendCollectionCompleteEvent(ctx, task, result)
 	}
 
-	s.repo.CreateResult(ctx, result)
-	s.repo.UpdateTask(ctx, task)
+	err = s.repo.WithTransaction(ctx, func(txRepo dao.CollectionRepository) error {
+		if err := txRepo.CreateResult(ctx, result); err != nil {
+			return err
+		}
+		if err := txRepo.UpdateTask(ctx, task); err != nil {
+			return err
+		}
+		if result.Status == "SUCCESS" {
+			if err := s.saveCollectionEventToOutbox(ctx, txRepo.DB(), task, result); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		logger.Error("保存采集结果事务失败",
+			logger.StringField("task_id", taskID),
+			logger.ErrorField(err))
+	}
 
 	return result, collectErr
 }
 
-func (s *collectionServiceImpl) sendCollectionCompleteEvent(ctx context.Context, task *model.CollectionTask, result *model.CollectionResult) {
-	if s.kafkaProducer == nil {
-		logger.Warn("Kafka生产者未初始化，跳过事件发送")
-		return
-	}
-
+func (s *collectionServiceImpl) saveCollectionEventToOutbox(ctx context.Context, txDB *gorm.DB, task *model.CollectionTask, result *model.CollectionResult) error {
 	event := map[string]interface{}{
 		"task_id":              task.ID,
 		"data_source_id":       task.DataSourceID,
@@ -275,22 +288,16 @@ func (s *collectionServiceImpl) sendCollectionCompleteEvent(ctx context.Context,
 		"format":               task.Format,
 	}
 
-	eventData, err := json.Marshal(event)
-	if err != nil {
-		logger.Error("序列化采集完成事件失败",
+	if err := s.outboxRepo.SaveWithTx(ctx, txDB, "data_collection", task.ID, event); err != nil {
+		logger.Error("保存采集完成事件到outbox失败",
 			logger.ErrorField(err))
-		return
+		return err
 	}
 
-	if err := s.kafkaProducer.Send(ctx, mq.TopicDataCollection, task.ID, eventData); err != nil {
-		logger.Error("发送数据采集完成事件到Kafka失败",
-			logger.ErrorField(err))
-		return
-	}
-
-	logger.Info("已发送采集完成事件到Kafka，将触发后续抽取流程",
-		logger.StringField("topic", mq.TopicDataCollection),
+	logger.Info("已保存采集完成事件到outbox",
+		logger.StringField("topic", "data_collection"),
 		logger.StringField("task_id", task.ID))
+	return nil
 }
 
 func (s *collectionServiceImpl) doCollect(ctx context.Context, task *model.CollectionTask, ds *model.DataSource, result *model.CollectionResult) error {

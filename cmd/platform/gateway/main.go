@@ -3,6 +3,7 @@ package main
 import (
 	"Logos/config"
 	"Logos/internal/service/messaging/types"
+	"Logos/internal/service/platform/gateway/middleware"
 	"Logos/internal/service/platform/gateway/router"
 	"Logos/internal/service/platform/gateway/tcp"
 	"Logos/internal/service/platform/gateway/websocket"
@@ -34,6 +35,22 @@ func main() {
 	} else {
 		wsHandler.SetUserClient(userClient)
 		logger.Info("User服务客户端已连接")
+	}
+
+	monitoringClient, monitoringErr := client.NewMonitoringClientFromConfig(cfg)
+	if monitoringErr != nil {
+		logger.Warn("连接Monitoring服务失败，指标上报不可用", logger.ErrorField(monitoringErr))
+	} else {
+		middleware.InitMetricsReporter(monitoringClient)
+		logger.Info("Monitoring服务客户端已连接，指标上报已启动")
+		go func() {
+			time.Sleep(2 * time.Second)
+			if err := monitoringClient.UpdateServiceStatus(context.Background(), "logos.gateway", "UP", nil, map[string]string{
+				"port": fmt.Sprintf("%d", cfg.Ports.Gateway),
+			}); err != nil {
+				logger.Warn("上报Gateway状态失败", logger.ErrorField(err))
+			}
+		}()
 	}
 
 	r := router.SetupRouter(wsHandler)
@@ -98,6 +115,14 @@ func main() {
 
 	log.Println("Shutting down gateway...")
 	cancel()
+
+	middleware.StopMetricsReporter()
+	if monitoringClient != nil {
+		shutdownCtx, shutdownCancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = monitoringClient.UpdateServiceStatus(shutdownCtx, "logos.gateway", "DOWN", nil, nil)
+		shutdownCancel2()
+		_ = monitoringClient.Close()
+	}
 
 	// 创建一个带超时的context用于关闭操作
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)

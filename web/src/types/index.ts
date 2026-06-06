@@ -23,6 +23,8 @@ export interface Message {
   isBot?: boolean
   translatedContent?: string
   isRead?: boolean
+  uploading?: boolean
+  uploadProgress?: number
 }
 
 export interface Chat {

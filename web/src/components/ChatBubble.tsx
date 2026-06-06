@@ -14,6 +14,7 @@ interface Props {
   onEdit?: (message: Message) => void
   onForward?: (message: Message) => void
   onWithdraw?: (messageId: string) => void
+  onFileOpen?: (url: string, filename: string) => void
 }
 
 // 显示头像的首字母
@@ -24,7 +25,7 @@ const getAvatarChar = (name?: string, isOwn?: boolean) => {
   return name.charAt(0).toUpperCase()
 }
 
-export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, onForward, onWithdraw }: Props) {
+export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, onForward, onWithdraw, onFileOpen }: Props) {
   const [translated, setTranslated] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -157,23 +158,47 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, 
         )}
         <div className={`chat-bubble ${isOwn ? 'own-bubble' : 'other-bubble'} ${message.isBot ? 'bot-bubble' : ''}`}>
           {message.messageType === 'image' && mediaUrl && (
-            <div className="chat-bubble-image">
-              <img src={mediaUrl} alt="" loading="lazy" onClick={() => window.open(mediaUrl, '_blank')} style={{ cursor: 'pointer' }} />
+            <div className="chat-bubble-image" style={{ position: 'relative' }}>
+              <img src={mediaUrl} alt="" loading="lazy" onClick={() => onFileOpen ? onFileOpen(mediaUrl, mediaMeta || 'image') : window.open(mediaUrl, '_blank')} style={{ cursor: 'pointer' }} />
+              {(message.uploading || (message.uploadProgress !== undefined && message.uploadProgress < 100)) &&
+                <div className="chat-bubble-upload-overlay" style={{ clipPath: `inset(0 ${100 - (message.uploadProgress || 0)}% 0 0)` }} />}
             </div>
           )}
           {message.messageType === 'video' && mediaUrl && (
-            <div className="chat-bubble-video">
-              <video src={mediaUrl} controls style={{ maxWidth: '100%', borderRadius: 8 }} />
+            <div className="chat-bubble-video" style={{ position: 'relative' }}>
+              <video src={mediaUrl} controls={!(message.uploading || (message.uploadProgress !== undefined && message.uploadProgress < 100))} style={{ maxWidth: '100%', borderRadius: 8 }} />
+              {(message.uploading || (message.uploadProgress !== undefined && message.uploadProgress < 100)) &&
+                <div className="chat-bubble-upload-overlay" style={{ clipPath: `inset(0 ${100 - (message.uploadProgress || 0)}% 0 0)` }}><span className="chat-bubble-upload-text">{message.uploadProgress || 0}%</span></div>}
+            </div>
+          )}
+          {message.messageType === 'video' && !mediaUrl && (
+            <div className="chat-bubble-file" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--ba-card-hover)', borderRadius: 8 }}>
+              <FileText size={20} style={{ color: 'var(--ba-blue)', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mediaMeta || '视频'}</div>
+                <div style={{ fontSize: 11, color: 'var(--ba-text-light)' }}>加载中...</div>
+              </div>
             </div>
           )}
           {message.messageType === 'voice' && mediaUrl && (
-            <div className="chat-bubble-voice">
+            <div className="chat-bubble-voice" style={{ position: 'relative' }}>
               <audio src={mediaUrl} controls />
+              {(message.uploading || (message.uploadProgress !== undefined && message.uploadProgress < 100)) &&
+                <div className="chat-bubble-upload-overlay" style={{ clipPath: `inset(0 ${100 - (message.uploadProgress || 0)}% 0 0)` }}><span className="chat-bubble-upload-text">{message.uploadProgress || 0}%</span></div>}
+            </div>
+          )}
+          {message.messageType === 'voice' && !mediaUrl && (
+            <div className="chat-bubble-file" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--ba-card-hover)', borderRadius: 8 }}>
+              <FileText size={20} style={{ color: 'var(--ba-blue)', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mediaMeta || '语音'}</div>
+                <div style={{ fontSize: 11, color: 'var(--ba-text-light)' }}>加载中...</div>
+              </div>
             </div>
           )}
           {message.messageType === 'file' && (
             <div className="chat-bubble-file" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--ba-card-hover)', borderRadius: 8, cursor: 'pointer' }}
-              onClick={() => { if (mediaUrl) window.open(mediaUrl, '_blank') }}>
+              onClick={() => { if (mediaUrl) onFileOpen ? onFileOpen(mediaUrl, mediaMeta || '文件') : window.open(mediaUrl, '_blank') }}>
               <FileText size={20} style={{ color: 'var(--ba-blue)', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mediaMeta || '文件'}</div>
@@ -184,7 +209,7 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, 
               <Download size={16} style={{ color: 'var(--ba-text-light)' }} />
             </div>
           )}
-          {(message.messageType === 'text' || (!mediaUrl && message.messageType !== 'system' && message.messageType !== 'withdrawn')) && (
+          {(message.messageType === 'text' || (!mediaUrl && message.messageType !== 'system' && message.messageType !== 'withdrawn' && message.messageType !== 'video' && message.messageType !== 'voice' && message.messageType !== 'image')) && (
             <div className="chat-bubble-content">
               {message.isBot ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 
 	"Logos/config"
 	pb "Logos/proto_gen/question"
@@ -36,6 +37,37 @@ func (c *QuestionClient) AskQuestion(ctx context.Context, content string, userID
 		return "", err
 	}
 	return resp.GetAnswer(), nil
+}
+
+func (c *QuestionClient) GetHistory(ctx context.Context, userID int64, page, pageSize int32) (*pb.HistoryResp, error) {
+	return c.client.GetHistory(ctx, &pb.HistoryReq{
+		UserId:   userID,
+		Page:     page,
+		PageSize: pageSize,
+	})
+}
+
+func (c *QuestionClient) SubmitFeedback(ctx context.Context, questionID string, feedback string, rating *int32) error {
+	_, err := c.client.SubmitFeedback(ctx, &pb.FeedbackReq{
+		QuestionId: questionID,
+		Feedback:   feedback,
+		Rating:     rating,
+	})
+	return err
+}
+
+func (c *QuestionClient) GetRecommendedQuestions(ctx context.Context, userID int64) ([]string, error) {
+	resp, err := c.client.GetRecommendedQuestions(ctx, &pb.GetRecommendedQuestionsReq{
+		UserId: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var questions []string
+	if resp != nil && resp.StatusMessage != "" {
+		_ = json.Unmarshal([]byte(resp.StatusMessage), &questions)
+	}
+	return questions, nil
 }
 
 func (c *QuestionClient) Close() error {

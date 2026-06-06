@@ -812,6 +812,7 @@ func float64ToFloat32(vec []float64) []float32 {
 
 func (r *vectorRepository) ListVectors(ctx context.Context, collectionID string, page, pageSize int) ([]*model.VectorPreviewItem, int64, error) {
 	if r.milvus == nil {
+		logger.Error("ListVectors: milvus manager is nil")
 		return nil, 0, r.milvusUnavailableError("ListVectors")
 	}
 
@@ -825,6 +826,12 @@ func (r *vectorRepository) ListVectors(ctx context.Context, collectionID string,
 	offset := (page - 1) * pageSize
 
 	collectionName := "vector_" + collectionID
+
+	logger.Info("ListVectors DAO: calling QueryVectors",
+		logger.StringField("collection_id", collectionID),
+		logger.StringField("collection_name", collectionName),
+		logger.IntField("offset", offset),
+		logger.IntField("pageSize", pageSize))
 
 	previews, total, err := r.milvus.QueryVectors(ctx, collectionName, offset, pageSize)
 	if err != nil {

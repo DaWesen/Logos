@@ -165,6 +165,31 @@
   font-size: 14px;
 }
 
+.transaction-tokens {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ba-cyan);
+  background: rgba(96, 165, 250, 0.08);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.transaction-model {
+  font-size: 11px;
+  color: var(--ba-text-light);
+  background: var(--ba-bg);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.transaction-price {
+  font-size: 11px;
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.08);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
 .transaction-right {
   display: flex;
   flex-direction: column;
@@ -217,4 +242,40 @@
 .usage-info li {
   margin: 6px 0;
   color: var(--ba-text-light);
+}
+
+.pricing-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.pricing-table th,
+.pricing-table td {
+  padding: 8px 12px;
+  text-align: center;
+  border-bottom: 1px solid var(--ba-border);
+}
+
+.pricing-table th {
+  color: var(--ba-text);
+  font-weight: 600;
+  background: var(--ba-bg);
+}
+
+.pricing-table th:first-child,
+.pricing-table td:first-child {
+  text-align: left;
+  color: var(--ba-text-light);
+}
+
+.pricing-table td:nth-child(2) {
+  color: var(--ba-success);
+  font-weight: 600;
+}
+
+.pricing-table td:nth-child(3) {
+  color: #f59e0b;
+  font-weight: 600;
 }

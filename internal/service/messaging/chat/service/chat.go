@@ -216,9 +216,10 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 
 		// 1️⃣ 先获取接收者列表并直接发布 outgoing 消息！不等待任何其他操作！
 		var recipientIDs []string
-		if event.ChatType == types.ChatTypePrivate {
+		switch event.ChatType {
+		case types.ChatTypePrivate:
 			recipientIDs = s.getPrivateChatRecipient(event.ChatID, event.SenderID)
-		} else if event.ChatType == types.ChatTypeGroup {
+		case types.ChatTypeGroup:
 			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, event.ChatID)
 		}
 		if len(recipientIDs) == 0 && event.ChatType == types.ChatTypePrivate {
@@ -287,6 +288,8 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 				MentionUserIDs: model.StringArray(event.MentionUserIDs),
 			}
 
+			logger.Info("HandleMessageEvent: saving message", logger.StringField("msg_id", msgID), logger.StringField("media_url", event.MediaURL), logger.IntField("type", int(event.MessageType)))
+
 			if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
 				logger.Error("创建消息失败", logger.ErrorField(err))
 				return
@@ -354,7 +357,6 @@ func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs 
 	}
 
 	for _, rawID := range botIDs {
-		rawID := rawID
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
@@ -877,9 +879,10 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 	if s.eventBus != nil {
 		var recipientIDs []string
 		chatType := types.ChatType(msg.ChatType)
-		if chatType == types.ChatTypePrivate {
+		switch chatType {
+		case types.ChatTypePrivate:
 			recipientIDs = s.getPrivateChatRecipient(msg.ChatID, msg.SenderID)
-		} else if chatType == types.ChatTypeGroup {
+		case types.ChatTypeGroup:
 			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
 		}
 		if len(recipientIDs) == 0 {
@@ -1932,13 +1935,14 @@ func (s *ChatServiceImpl) DeleteChat(chatID string, userID string, chatType mode
 		logger.StringField("user_id", userID),
 		logger.IntField("chat_type", int(chatType)))
 
-	if chatType == model.ChatTypePrivate {
+	switch chatType {
+	case model.ChatTypePrivate:
 		// 私聊：删除当前用户的会话参与记录
 		if err := s.repo.DeleteConversationForUser(s.ctx, chatID, userID); err != nil {
 			logger.Error("删除私聊会话失败", logger.ErrorField(err))
 			return err
 		}
-	} else if chatType == model.ChatTypeGroup {
+	case model.ChatTypeGroup:
 		// 群聊：退出群组
 		if err := s.LeaveGroup(chatID, userID); err != nil {
 			logger.Error("退出群组失败", logger.ErrorField(err))

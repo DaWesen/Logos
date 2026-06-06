@@ -27,6 +27,7 @@ type UserRepository interface {
 	Count(ctx context.Context) (int64, error)
 	GetStats(ctx context.Context, userID int64) (*model.UserStats, error)
 	WithTransaction(ctx context.Context, fn func(txRepo UserRepository) error) error
+	DB() *gorm.DB
 }
 
 type userRepositoryImpl struct {
@@ -197,4 +198,8 @@ func (r *userRepositoryImpl) WithTransaction(ctx context.Context, fn func(txRepo
 		txRepo := &userRepositoryImpl{db: tx}
 		return fn(txRepo)
 	})
+}
+
+func (r *userRepositoryImpl) DB() *gorm.DB {
+	return r.db
 }

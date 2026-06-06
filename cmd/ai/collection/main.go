@@ -12,6 +12,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/collection"
 	"context"
 	"log"
@@ -33,6 +34,10 @@ func main() {
 		log.Fatalf("Failed to auto migrate: %v", err)
 	}
 
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
+	}
+
 	var kafkaManager *mq.KafkaManager
 	kafkaManager, err = mq.NewKafkaManager(cfg.Kafka.Brokers)
 	if err != nil {
@@ -43,6 +48,8 @@ func main() {
 	}
 
 	repo := dao.NewCollectionRepository(db)
+
+	outboxRepo := outbox.NewOutboxRepository()
 
 	var knowledgeService service.KnowledgeService
 	knowledgeRawClient, knowledgeErr := client.NewKnowledgeClientFromConfig(cfg)
@@ -62,10 +69,17 @@ func main() {
 		logger.Info("Extraction服务客户端已连接")
 	}
 
-	collectionService := service.NewCollectionService(repo, knowledgeService, extractionService)
+	collectionService := service.NewCollectionService(repo, knowledgeService, extractionService, outboxRepo)
 
 	if err := collectionService.StartKafkaConsumer(context.Background()); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
+	}
+
+	producer := mq.NewProducer()
+	if producer != nil {
+		relay := outbox.NewRelay(db, producer)
+		relay.Start()
+		defer relay.Stop()
 	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("collection")

@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"Logos/config"
@@ -14,6 +14,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
+	"Logos/pkg/outbox"
 	pb "Logos/proto_gen/user"
 	"context"
 	"log"
@@ -35,9 +36,14 @@ func main() {
 		log.Fatalf("Failed to auto migrate: %v", err)
 	}
 
+	if err := outbox.AutoMigrate(db); err != nil {
+		log.Fatalf("Failed to auto migrate outbox: %v", err)
+	}
+
 	jwtManager := jwt.NewJWTManager()
 	cacheInstance := cache.NewRedisCache()
 	producer := mq.NewProducer()
+	outboxRepo := outbox.NewOutboxRepository()
 
 	esClient, err := es.InitElasticsearch()
 	var esManager *es.ESManager
@@ -47,7 +53,13 @@ func main() {
 
 	repo := dao.NewUserRepository(db)
 
-	userService := service.NewUserService(repo, jwtManager, cacheInstance, producer, esManager)
+	userService := service.NewUserService(repo, jwtManager, cacheInstance, outboxRepo, esManager)
+
+	if producer != nil {
+		relay := outbox.NewRelay(db, producer)
+		relay.Start()
+		defer relay.Stop()
+	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("user")
 	defer shutdown(context.Background())

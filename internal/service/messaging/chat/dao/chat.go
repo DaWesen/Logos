@@ -126,6 +126,14 @@ func MigrateExpandSenderID(db *gorm.DB) {
 }
 
 func (r *chatRepositoryImpl) CreateMessage(ctx context.Context, msg *model.Message) error {
+	var existing model.Message
+	err := r.db.WithContext(ctx).Select("id").First(&existing, "id = ?", msg.ID).Error
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	return r.db.WithContext(ctx).Create(msg).Error
 }
 
@@ -201,8 +209,11 @@ func (r *chatRepositoryImpl) WithdrawMessage(ctx context.Context, msgID string) 
 	return r.db.WithContext(ctx).Model(&model.Message{}).
 		Where("id = ?", msgID).
 		Updates(map[string]interface{}{
-			"status":  model.MessageStatusWithdrawn.String(),
-			"content": "[消息已撤回]",
+			"status":       model.MessageStatusWithdrawn.String(),
+			"content":      "[消息已撤回]",
+			"message_type": int(model.MessageTypeText),
+			"media_url":    "",
+			"media_meta":   nil,
 		}).Error
 }
 

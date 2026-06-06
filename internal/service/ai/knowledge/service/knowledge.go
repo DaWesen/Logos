@@ -12,7 +12,9 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/es"
 	"Logos/pkg/logger"
-	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
+
+	"gorm.io/gorm"
 )
 
 var (
@@ -47,18 +49,18 @@ type KnowledgeService interface {
 }
 
 type knowledgeServiceImpl struct {
-	repo      dao.KnowledgeRepository
-	cache     cache.Cache
-	producer  *mq.Producer
-	esManager *es.ESManager
+	repo       dao.KnowledgeRepository
+	cache      cache.Cache
+	outboxRepo outbox.OutboxRepository
+	esManager  *es.ESManager
 }
 
-func NewKnowledgeService(repo dao.KnowledgeRepository, cache cache.Cache, producer *mq.Producer, esManager *es.ESManager) KnowledgeService {
+func NewKnowledgeService(repo dao.KnowledgeRepository, cache cache.Cache, outboxRepo outbox.OutboxRepository, esManager *es.ESManager) KnowledgeService {
 	return &knowledgeServiceImpl{
-		repo:      repo,
-		cache:     cache,
-		producer:  producer,
-		esManager: esManager,
+		repo:       repo,
+		cache:      cache,
+		outboxRepo: outboxRepo,
+		esManager:  esManager,
 	}
 }
 
@@ -81,14 +83,18 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name, 
 		entity.Description = description
 	}
 
-	if err := s.repo.CreateEntity(ctx, entity); err != nil {
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.KnowledgeRepository) error {
+		if err := txRepo.CreateEntity(ctx, entity); err != nil {
+			return err
+		}
+		return s.saveEntityEventToOutbox(ctx, txRepo.DB(), "create", entity)
+	}); err != nil {
 		logger.Error("创建实体失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
 
 	s.cacheEntity(ctx, entity)
 	s.indexEntityToES(ctx, entity)
-	s.sendEntityEvent(ctx, "create", entity)
 
 	logger.Info("添加实体成功",
 		logger.StringField("id", entity.ID),
@@ -158,14 +164,18 @@ func (s *knowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, entityTyp
 		entity.Description = description
 	}
 
-	if err := s.repo.CreateEntity(ctx, entity); err != nil {
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.KnowledgeRepository) error {
+		if err := txRepo.CreateEntity(ctx, entity); err != nil {
+			return err
+		}
+		return s.saveEntityEventToOutbox(ctx, txRepo.DB(), "create", entity)
+	}); err != nil {
 		logger.Error("创建实体失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
 
 	s.cacheEntity(ctx, entity)
 	s.indexEntityToES(ctx, entity)
-	s.sendEntityEvent(ctx, "create", entity)
 
 	logger.Info("创建新实体",
 		logger.StringField("id", entity.ID),
@@ -207,13 +217,17 @@ func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType,
 	}
 	entity.UpdatedAt = time.Now()
 
-	if err := s.repo.UpdateEntity(ctx, entity); err != nil {
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.KnowledgeRepository) error {
+		if err := txRepo.UpdateEntity(ctx, entity); err != nil {
+			return err
+		}
+		return s.saveEntityEventToOutbox(ctx, txRepo.DB(), "update", entity)
+	}); err != nil {
 		logger.Error("更新实体失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
 
 	s.cacheEntity(ctx, entity)
-	s.sendEntityEvent(ctx, "update", entity)
 
 	logger.Info("更新实体成功", logger.StringField("id", id))
 	return entity, nil
@@ -222,7 +236,16 @@ func (s *knowledgeServiceImpl) UpdateEntity(ctx context.Context, id, entityType,
 func (s *knowledgeServiceImpl) DeleteEntity(ctx context.Context, id string) error {
 	logger.Info("删除实体请求", logger.StringField("id", id))
 
-	if err := s.repo.DeleteEntity(ctx, id); err != nil {
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.KnowledgeRepository) error {
+		if err := txRepo.DeleteEntity(ctx, id); err != nil {
+			return err
+		}
+		event := map[string]interface{}{
+			"action":   "delete",
+			"entityId": id,
+		}
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), "knowledge_events", id, event)
+	}); err != nil {
 		logger.Error("删除实体失败", logger.ErrorField(err))
 		return ErrInternalServer
 	}
@@ -231,19 +254,6 @@ func (s *knowledgeServiceImpl) DeleteEntity(ctx context.Context, id string) erro
 	if s.cache != nil {
 		if err := s.cache.Delete(ctx, cacheKey); err != nil {
 			logger.Warn("删除实体缓存失败",
-				logger.StringField("id", id),
-				logger.ErrorField(err))
-		}
-	}
-
-	if s.producer != nil {
-		event := map[string]interface{}{
-			"action":   "delete",
-			"entityId": id,
-		}
-		eventJSON, _ := json.Marshal(event)
-		if err := s.producer.SendKnowledgeEvent(ctx, id, eventJSON); err != nil {
-			logger.Warn("发送知识变更事件失败",
 				logger.StringField("id", id),
 				logger.ErrorField(err))
 		}
@@ -483,7 +493,7 @@ func (s *knowledgeServiceImpl) GetEntityPaths(ctx context.Context, sourceID, tar
 
 func (s *knowledgeServiceImpl) WithTransaction(ctx context.Context, fn func(txService KnowledgeService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.KnowledgeRepository) error {
-		txService := NewKnowledgeService(txRepo, s.cache, s.producer, s.esManager)
+		txService := NewKnowledgeService(txRepo, s.cache, s.outboxRepo, s.esManager)
 		return fn(txService)
 	})
 }
@@ -711,18 +721,10 @@ func (s *knowledgeServiceImpl) indexEntityToES(ctx context.Context, entity *mode
 	}
 }
 
-func (s *knowledgeServiceImpl) sendEntityEvent(ctx context.Context, action string, entity *model.Entity) {
-	if s.producer == nil {
-		return
-	}
+func (s *knowledgeServiceImpl) saveEntityEventToOutbox(ctx context.Context, db *gorm.DB, action string, entity *model.Entity) error {
 	event := map[string]interface{}{
 		"action": action,
 		"entity": entity,
 	}
-	eventJSON, _ := json.Marshal(event)
-	if err := s.producer.SendKnowledgeEvent(ctx, entity.ID, eventJSON); err != nil {
-		logger.Warn("发送知识变更事件失败",
-			logger.StringField("id", entity.ID),
-			logger.ErrorField(err))
-	}
+	return s.outboxRepo.SaveWithTx(ctx, db, "knowledge_events", entity.ID, event)
 }

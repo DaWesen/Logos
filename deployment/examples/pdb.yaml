@@ -1,0 +1,45 @@
+# Logos - Pod 中断预算（PDB）配置
+# 使用方式：kubectl apply -f pdb.yaml
+#
+# PDB 确保在节点维护、集群升级等情况下，服务始终保持足够的可用副本
+# - 最少可用副本数：minAvailable
+# - 最多不可用副本数：maxUnavailable（二选一）
+
+---
+# Gateway 服务 PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway-pdb
+  namespace: logos
+spec:
+  minAvailable: 1  # 始终至少保持 1 个可用副本
+  selector:
+    matchLabels:
+      app: gateway
+
+---
+# Bot 服务 PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: bot-pdb
+  namespace: logos
+spec:
+  maxUnavailable: 1  # 最多同时有 1 个 Pod 不可用
+  selector:
+    matchLabels:
+      app: bot
+
+---
+# 核心服务 PDB（所有核心服务一起）
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: core-services-pdb
+  namespace: logos
+spec:
+  minAvailable: 50%  # 核心服务至少 50% 可用
+  selector:
+    matchLabels:
+      domain: platform
