@@ -11,8 +11,8 @@ import (
 type MCPRepository interface {
 	CreateTool(ctx context.Context, tool *model.Tool) error
 	GetTool(ctx context.Context, id string) (*model.Tool, error)
-	GetToolByName(ctx context.Context, name string) (*model.Tool, error)
-	ListTools(ctx context.Context, toolType *int, enabledOnly bool, page, pageSize int) ([]*model.Tool, int64, error)
+	GetToolByName(ctx context.Context, name string, userID string) (*model.Tool, error)
+	ListTools(ctx context.Context, toolType *int, enabledOnly bool, userID string, page, pageSize int) ([]*model.Tool, int64, error)
 	UpdateTool(ctx context.Context, tool *model.Tool) error
 	DeleteTool(ctx context.Context, id string) error
 	CreateCallLog(ctx context.Context, log *model.ToolCallLog) error
@@ -42,9 +42,13 @@ func (r *mcpRepository) GetTool(ctx context.Context, id string) (*model.Tool, er
 	return &tool, nil
 }
 
-func (r *mcpRepository) GetToolByName(ctx context.Context, name string) (*model.Tool, error) {
+func (r *mcpRepository) GetToolByName(ctx context.Context, name string, userID string) (*model.Tool, error) {
 	var tool model.Tool
-	err := r.db.WithContext(ctx).Where("name = ?", name).First(&tool).Error
+	query := r.db.WithContext(ctx).Where("name = ?", name)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	err := query.First(&tool).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -54,7 +58,7 @@ func (r *mcpRepository) GetToolByName(ctx context.Context, name string) (*model.
 	return &tool, nil
 }
 
-func (r *mcpRepository) ListTools(ctx context.Context, toolType *int, enabledOnly bool, page, pageSize int) ([]*model.Tool, int64, error) {
+func (r *mcpRepository) ListTools(ctx context.Context, toolType *int, enabledOnly bool, userID string, page, pageSize int) ([]*model.Tool, int64, error) {
 	var tools []*model.Tool
 	var total int64
 	query := r.db.WithContext(ctx).Model(&model.Tool{})
@@ -63,6 +67,9 @@ func (r *mcpRepository) ListTools(ctx context.Context, toolType *int, enabledOnl
 	}
 	if enabledOnly {
 		query = query.Where("enabled = ?", true)
+	}
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -87,8 +94,8 @@ func (r *mcpRepository) CreateCallLog(ctx context.Context, log *model.ToolCallLo
 type MCPServiceRepository interface {
 	CreateService(ctx context.Context, svc *model.MCPService) error
 	GetService(ctx context.Context, id string) (*model.MCPService, error)
-	GetServiceByName(ctx context.Context, name string) (*model.MCPService, error)
-	ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error)
+	GetServiceByName(ctx context.Context, name string, userID string) (*model.MCPService, error)
+	ListServices(ctx context.Context, enabledOnly bool, userID string, page, pageSize int) ([]*model.MCPService, int64, error)
 	UpdateService(ctx context.Context, svc *model.MCPService) error
 	DeleteService(ctx context.Context, id string) error
 }
@@ -117,9 +124,13 @@ func (r *mcpServiceRepository) GetService(ctx context.Context, id string) (*mode
 	return &svc, nil
 }
 
-func (r *mcpServiceRepository) GetServiceByName(ctx context.Context, name string) (*model.MCPService, error) {
+func (r *mcpServiceRepository) GetServiceByName(ctx context.Context, name string, userID string) (*model.MCPService, error) {
 	var svc model.MCPService
-	err := r.db.WithContext(ctx).Where("name = ?", name).First(&svc).Error
+	query := r.db.WithContext(ctx).Where("name = ?", name)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	err := query.First(&svc).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -129,12 +140,15 @@ func (r *mcpServiceRepository) GetServiceByName(ctx context.Context, name string
 	return &svc, nil
 }
 
-func (r *mcpServiceRepository) ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error) {
+func (r *mcpServiceRepository) ListServices(ctx context.Context, enabledOnly bool, userID string, page, pageSize int) ([]*model.MCPService, int64, error) {
 	var services []*model.MCPService
 	var total int64
 	query := r.db.WithContext(ctx).Model(&model.MCPService{})
 	if enabledOnly {
 		query = query.Where("enabled = ?", true)
+	}
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

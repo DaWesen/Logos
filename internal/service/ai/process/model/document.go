@@ -21,6 +21,7 @@ type Document struct {
 	Metadata           JSONMap        `gorm:"type:jsonb;comment:元数据" json:"metadata"`
 	ErrorMsg           *string        `gorm:"type:text;comment:错误信息" json:"errorMsg"`
 	ProcessedAt        *time.Time     `gorm:"comment:处理时间" json:"processedAt"`
+	UserID             string         `gorm:"index;size:64;comment:所属用户ID" json:"user_id"`
 	CreatedAt          time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
 	UpdatedAt          time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
 	DeletedAt          gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`

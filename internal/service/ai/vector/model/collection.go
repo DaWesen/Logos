@@ -25,6 +25,7 @@ type VectorCollectionRecord struct {
 	EmbeddingModel   string         `gorm:"size:255;comment:嵌入模型名称" json:"embedding_model"`
 	EmbeddingBaseURL string         `gorm:"size:512;comment:嵌入模型API基础URL" json:"embedding_base_url"`
 	EmbeddingApiKey  string         `gorm:"size:255;comment:嵌入模型API密钥" json:"embedding_api_key"`
+	UserID           string         `gorm:"index;size:64;comment:所属用户ID" json:"user_id"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`

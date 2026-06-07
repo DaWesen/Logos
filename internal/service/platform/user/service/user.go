@@ -400,7 +400,19 @@ func (s *userServiceImpl) UpdateAvatar(ctx context.Context, userID int64, avatar
 	logger.Info("更新头像请求",
 		logger.Int64Field("user_id", userID))
 
-	return s.repo.UpdateAvatar(ctx, userID, avatar)
+	if err := s.repo.UpdateAvatar(ctx, userID, avatar); err != nil {
+		return err
+	}
+
+	// 清除缓存，确保后续查询能获取到新头像
+	if s.cache != nil {
+		userKey := cache.GenerateUserKey(userID)
+		s.cache.Delete(ctx, userKey)
+		logger.Info("更新头像后删除用户缓存",
+			logger.Int64Field("user_id", userID))
+	}
+
+	return nil
 }
 
 func (s *userServiceImpl) CheckUsername(ctx context.Context, username string) (bool, error) {

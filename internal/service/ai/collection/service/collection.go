@@ -11,6 +11,7 @@ import (
 
 	"Logos/internal/service/ai/collection/dao"
 	"Logos/internal/service/ai/collection/model"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/outbox"
@@ -63,6 +64,14 @@ func NewCollectionService(repo dao.CollectionRepository, knowledgeService Knowle
 	}
 }
 
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
+
 func (s *collectionServiceImpl) AddDataSource(ctx context.Context, name string, dsType int32, url string, config map[string]string, description *string) (*model.DataSource, error) {
 	logger.Info("添加数据源",
 		logger.StringField("name", name),
@@ -75,6 +84,7 @@ func (s *collectionServiceImpl) AddDataSource(ctx context.Context, name string, 
 		URL:         url,
 		Config:      dao.MarshalConfig(config),
 		Description: description,
+		UserID:      getUserIDFromContext(ctx),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -126,11 +136,11 @@ func (s *collectionServiceImpl) DeleteDataSource(ctx context.Context, id string)
 }
 
 func (s *collectionServiceImpl) GetDataSource(ctx context.Context, id string) (*model.DataSource, error) {
-	return s.repo.GetDataSource(ctx, id)
+	return s.repo.GetDataSourceWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
 }
 
 func (s *collectionServiceImpl) ListDataSources(ctx context.Context) ([]*model.DataSource, error) {
-	return s.repo.ListDataSources(ctx)
+	return s.repo.ListDataSources(ctx, getUserIDFromContext(ctx))
 }
 
 func (s *collectionServiceImpl) CreateTask(ctx context.Context, dataSourceID string, name string, format int32, schedule *string) (*model.CollectionTask, error) {
@@ -153,6 +163,7 @@ func (s *collectionServiceImpl) CreateTask(ctx context.Context, dataSourceID str
 		Format:       int(format),
 		Status:       "PENDING",
 		Schedule:     schedule,
+		UserID:       getUserIDFromContext(ctx),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -197,11 +208,11 @@ func (s *collectionServiceImpl) DeleteTask(ctx context.Context, taskID string) e
 }
 
 func (s *collectionServiceImpl) GetTask(ctx context.Context, id string) (*model.CollectionTask, error) {
-	return s.repo.GetTask(ctx, id)
+	return s.repo.GetTaskWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
 }
 
 func (s *collectionServiceImpl) ListTasks(ctx context.Context) ([]*model.CollectionTask, error) {
-	return s.repo.ListTasks(ctx)
+	return s.repo.ListTasks(ctx, getUserIDFromContext(ctx))
 }
 
 func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) (*model.CollectionResult, error) {

@@ -2,6 +2,27 @@
 # Docker Compose 编排文件
 # 架构: Platform / Messaging / AI 三大领域
 
+x-service-discovery: &service-discovery
+  LOGOS_USER_HOST: user-service
+  LOGOS_CONTACT_HOST: contact-service
+  LOGOS_CHAT_HOST: chat-service
+  LOGOS_BOT_HOST: bot-service
+  LOGOS_MODERATION_HOST: moderation-service
+  LOGOS_SUMMARY_HOST: summary-service
+  LOGOS_MCP_HOST: mcp-service
+  LOGOS_PROCESS_HOST: process-service
+  LOGOS_VECTOR_HOST: vector-service
+  LOGOS_KNOWLEDGE_HOST: knowledge-service
+  LOGOS_SEARCH_HOST: search-service
+  LOGOS_EXTRACTION_HOST: extraction-service
+  LOGOS_COLLECTION_HOST: collection-service
+  LOGOS_QUESTION_HOST: question-service
+  LOGOS_RECOMMEND_HOST: recommend-service
+  LOGOS_MESSAGE_HOST: message-service
+  LOGOS_IM_HOST: im-service
+  LOGOS_BILLING_HOST: billing-service
+  LOGOS_MONITORING_HOST: monitoring-service
+
 services:
   # ==================== 基础设施层 ====================
 
@@ -287,6 +308,24 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       PROCESS_SERVICE_HOST: process-service
+      LOGOS_USER_HOST: user-service
+      LOGOS_KNOWLEDGE_HOST: knowledge-service
+      LOGOS_SEARCH_HOST: search-service
+      LOGOS_VECTOR_HOST: vector-service
+      LOGOS_QUESTION_HOST: question-service
+      LOGOS_RECOMMEND_HOST: recommend-service
+      LOGOS_EXTRACTION_HOST: extraction-service
+      LOGOS_COLLECTION_HOST: collection-service
+      LOGOS_MESSAGE_HOST: message-service
+      LOGOS_MONITORING_HOST: monitoring-service
+      LOGOS_BOT_HOST: bot-service
+      LOGOS_BILLING_HOST: billing-service
+      LOGOS_IM_HOST: im-service
+      LOGOS_CHAT_HOST: chat-service
+      LOGOS_CONTACT_HOST: contact-service
+      LOGOS_SUMMARY_HOST: summary-service
+      LOGOS_MCP_HOST: mcp-service
+      LOGOS_MODERATION_HOST: moderation-service
     ports:
       - "8888:8888"
     depends_on:
@@ -303,6 +342,7 @@ services:
     container_name: logos-user
     command: ["./user"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: user-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -327,6 +367,7 @@ services:
     container_name: logos-monitoring
     command: ["./monitoring"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: monitoring-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -351,6 +392,7 @@ services:
     container_name: logos-billing
     command: ["./billing"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: billing-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -378,6 +420,7 @@ services:
     container_name: logos-im
     command: ["./im"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: im-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -401,6 +444,7 @@ services:
     container_name: logos-chat
     command: ["./chat"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: chat-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -426,6 +470,7 @@ services:
     container_name: logos-contact
     command: ["./contact"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: contact-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -450,6 +495,7 @@ services:
     container_name: logos-message
     command: ["./message"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: message-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -477,6 +523,7 @@ services:
     container_name: logos-knowledge
     command: ["./knowledge"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: knowledge-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
@@ -506,6 +553,7 @@ services:
     container_name: logos-search
     command: ["./search"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: search-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
@@ -523,12 +571,25 @@ services:
     container_name: logos-vector
     command: ["./vector"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: vector-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: logos
+      POSTGRES_PASSWORD: logos123456
+      POSTGRES_DB: logos
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
       MILVUS_ADDRESS: milvus:19530
+      ARK_API_KEY: your-ark-api-key
+      ARK_MODEL: ep-20240806150409-xxxxx
+      EMBEDDING_MODEL: embedding-3
     depends_on:
       - etcd
+      - postgres
+      - redis
       - milvus
     networks:
       - logos-network
@@ -540,6 +601,7 @@ services:
     container_name: logos-question
     command: ["./question"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: question-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -568,6 +630,7 @@ services:
     container_name: logos-recommend
     command: ["./recommend"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: recommend-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -592,6 +655,7 @@ services:
     container_name: logos-extraction
     command: ["./extraction"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: extraction-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -618,6 +682,7 @@ services:
     container_name: logos-collection
     command: ["./collection"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: collection-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
@@ -642,6 +707,7 @@ services:
     container_name: logos-bot
     command: ["./bot"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: bot-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092
@@ -668,6 +734,7 @@ services:
     container_name: logos-process
     command: ["./process"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: process-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -697,6 +764,7 @@ services:
     container_name: logos-summary
     command: ["./summary"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: summary-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -721,6 +789,7 @@ services:
     container_name: logos-mcp
     command: ["./mcp"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: mcp-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres
@@ -743,6 +812,7 @@ services:
     container_name: logos-moderation
     command: ["./moderation"]
     environment:
+      <<: *service-discovery
       SERVICE_HOST: moderation-service
       ETCD_ENDPOINTS: etcd:2379
       POSTGRES_HOST: postgres

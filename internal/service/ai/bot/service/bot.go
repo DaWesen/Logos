@@ -1256,6 +1256,14 @@ func (s *botServiceImpl) buildExternalMCPTools(ctx context.Context) []tool.BaseT
 	var svcInfos []*botTools.ExternalMCPServiceInfo
 	for _, svc := range services {
 		mergedHeaders := mergeAuthConfigToHeaders(svc.Headers, svc.AuthConfig)
+		logger.Info("外部MCP服务信息",
+			logger.StringField("service_id", svc.ID),
+			logger.StringField("name", svc.Name),
+			logger.StringField("url", svc.URL),
+			logger.StringField("transport", svc.TransportType),
+			logger.AnyField("headers", svc.Headers),
+			logger.AnyField("auth_config", svc.AuthConfig),
+			logger.AnyField("merged_headers", mergedHeaders))
 		s.mcpClientMgr.GetOrCreateConnection(svc.ID, svc.URL, svc.TransportType, mergedHeaders)
 		svcInfos = append(svcInfos, &botTools.ExternalMCPServiceInfo{
 			ID:      svc.ID,

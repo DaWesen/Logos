@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 	"Logos/config"
 	"Logos/internal/service/platform/gateway/websocket"
+	"Logos/pkg/auth"
 	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
 	"Logos/pkg/logger"
@@ -74,21 +77,35 @@ type Handler struct {
 	Cfg               *config.Config
 }
 
-type clientDef struct {
-	host    string
-	port    int
-	svcName string
-}
-
 func directDial(host string, port int) (*grpc.ClientConn, error) {
 	return grpcserver.NewDirectClientConn(host, port)
+}
+
+// withUserID 从 gin.Context 提取 user_id 并附加到 gRPC metadata，用于下游服务识别用户
+func (h *Handler) withUserID(c *gin.Context) context.Context {
+	ctx := context.Background()
+	if userID, exists := c.Get("user_id"); exists {
+		if uid, ok := userID.(string); ok {
+			ctx = auth.AttachUserToContext(ctx, uid, "")
+		}
+	}
+	return ctx
 }
 
 func etcdDial(endpoints []string, svcName string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	return grpcserver.NewGRPCClientConnWithGovernance(endpoints, svcName, buildGovernanceConfig(config.GetConfig()), opts...)
 }
 
+func resolveHost(svcName, defaultHost string) string {
+	envKey := strings.ToUpper(strings.ReplaceAll(svcName, ".", "_")) + "_HOST"
+	if v := os.Getenv(envKey); v != "" {
+		return v
+	}
+	return defaultHost
+}
+
 func tryDial(cfg *config.Config, host string, port int, svcName string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	host = resolveHost(svcName, host)
 	logger.Info("Trying to dial service",
 		logger.StringField("host", host),
 		logger.IntField("port", port),

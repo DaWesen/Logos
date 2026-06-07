@@ -8,6 +8,7 @@ import (
 
 	"Logos/internal/service/ai/vector/dao"
 	"Logos/internal/service/ai/vector/model"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 )
 
@@ -50,6 +51,14 @@ func NewVectorService(repo dao.VectorRepository) VectorService {
 	}
 }
 
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
+
 func (s *vectorServiceImpl) CreateCollection(ctx context.Context, req *model.VectorCollection) (*model.VectorCollection, error) {
 	logger.Info("创建向量集合请求",
 		logger.StringField("name", req.Name),
@@ -65,6 +74,7 @@ func (s *vectorServiceImpl) CreateCollection(ctx context.Context, req *model.Vec
 	if req.ID == "" {
 		req.ID = fmt.Sprintf("col_%d", time.Now().UnixNano())
 	}
+	req.UserID = getUserIDFromContext(ctx)
 	req.CreatedAt = time.Now()
 	req.UpdatedAt = time.Now()
 	req.Size = 0
@@ -91,7 +101,7 @@ func (s *vectorServiceImpl) UpdateCollection(ctx context.Context, req *model.Vec
 		return nil, errors.New("集合ID不能为空")
 	}
 
-	existing, err := s.repo.GetCollection(ctx, req.ID)
+	existing, err := s.repo.GetCollection(ctx, req.ID, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("查询向量集合失败",
 			logger.StringField("id", req.ID),
@@ -154,7 +164,7 @@ func (s *vectorServiceImpl) DeleteCollection(ctx context.Context, id string) err
 		return errors.New("集合ID不能为空")
 	}
 
-	if err := s.repo.DeleteCollection(ctx, id); err != nil {
+	if err := s.repo.DeleteCollection(ctx, id, getUserIDFromContext(ctx)); err != nil {
 		logger.Error("删除向量集合失败",
 			logger.StringField("id", id),
 			logger.ErrorField(err))
@@ -201,7 +211,7 @@ func (s *vectorServiceImpl) GetCollection(ctx context.Context, id string) (*mode
 		return nil, errors.New("集合ID不能为空")
 	}
 
-	collection, err := s.repo.GetCollection(ctx, id)
+	collection, err := s.repo.GetCollection(ctx, id, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("获取向量集合失败",
 			logger.StringField("id", id),
@@ -221,7 +231,7 @@ func (s *vectorServiceImpl) GetCollection(ctx context.Context, id string) (*mode
 func (s *vectorServiceImpl) ListCollections(ctx context.Context) ([]*model.VectorCollection, error) {
 	logger.Info("列出向量集合请求")
 
-	collections, err := s.repo.ListCollections(ctx)
+	collections, err := s.repo.ListCollections(ctx, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("列出向量集合失败",
 			logger.ErrorField(err))

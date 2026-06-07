@@ -212,7 +212,6 @@ type Eino struct {
 	EmbeddingModel string `mapstructure:"embedding_model"`
 }
 
-// LoadConfig 从文件加载配置
 func LoadConfig(path string) (*Config, error) {
 	viper.AddConfigPath(path)
 	viper.SetConfigName("config")

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"Logos/internal/service/ai/collection/service"
+	"Logos/pkg/auth"
 	pb "Logos/proto_gen/collection"
 	pbCommon "Logos/proto_gen/common"
 )
@@ -13,6 +14,14 @@ import (
 type DataCollectionServiceImpl struct {
 	pb.UnimplementedDataCollectionServiceServer
 	CollectionService service.CollectionService
+}
+
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
 }
 
 // AddDataSource implements the DataCollectionServiceImpl interface.

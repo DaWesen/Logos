@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -22,7 +21,7 @@ func (h *Handler) AddDataSource(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.CollectionClient.AddDataSource(context.Background(), &req)
+	resp, err := h.CollectionClient.AddDataSource(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -39,7 +38,7 @@ func (h *Handler) ListDataSources(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.ListDataSources(context.Background(), &pb.EmptyReq{})
+	resp, err := h.CollectionClient.ListDataSources(h.withUserID(c), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -57,7 +56,7 @@ func (h *Handler) GetDataSource(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.GetDataSource(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.CollectionClient.GetDataSource(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -80,7 +79,7 @@ func (h *Handler) UpdateDataSource(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.CollectionClient.UpdateDataSource(context.Background(), &req)
+	resp, err := h.CollectionClient.UpdateDataSource(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -99,7 +98,7 @@ func (h *Handler) DeleteDataSource(c *gin.Context) {
 	}
 	var req pb.DeleteDataSourceReq
 	req.Id = c.Param("id")
-	resp, err := h.CollectionClient.DeleteDataSource(context.Background(), &req)
+	resp, err := h.CollectionClient.DeleteDataSource(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -121,7 +120,7 @@ func (h *Handler) CreateCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.CollectionClient.CreateTask(context.Background(), &req)
+	resp, err := h.CollectionClient.CreateTask(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -138,7 +137,7 @@ func (h *Handler) ListCollectionTasks(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.ListTasks(context.Background(), &pb.EmptyReq{})
+	resp, err := h.CollectionClient.ListTasks(h.withUserID(c), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -156,7 +155,7 @@ func (h *Handler) GetCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.GetTask(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.CollectionClient.GetTask(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -179,7 +178,7 @@ func (h *Handler) UpdateCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.CollectionClient.UpdateTask(context.Background(), &req)
+	resp, err := h.CollectionClient.UpdateTask(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -197,7 +196,7 @@ func (h *Handler) DeleteCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.DeleteTask(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.CollectionClient.DeleteTask(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -216,7 +215,7 @@ func (h *Handler) ExecuteCollectionTask(c *gin.Context) {
 		return
 	}
 	req := &pb.ExecuteTaskReq{TaskId: taskID}
-	resp, err := h.CollectionClient.ExecuteTask(context.Background(), req)
+	resp, err := h.CollectionClient.ExecuteTask(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -234,7 +233,7 @@ func (h *Handler) StopCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.StopTask(context.Background(), &pb.StopByTaskIdReq{TaskId: taskID})
+	resp, err := h.CollectionClient.StopTask(h.withUserID(c), &pb.StopByTaskIdReq{TaskId: taskID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -252,7 +251,7 @@ func (h *Handler) GetCollectionResults(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.ListCollectionResults(context.Background(), &pb.GetByTaskIdReq{TaskId: taskID})
+	resp, err := h.CollectionClient.ListCollectionResults(h.withUserID(c), &pb.GetByTaskIdReq{TaskId: taskID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -270,7 +269,7 @@ func (h *Handler) GetCollectionResult(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "采集服务暂不可用"))
 		return
 	}
-	resp, err := h.CollectionClient.GetCollectionResult(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.CollectionClient.GetCollectionResult(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

@@ -3,6 +3,7 @@ package vector
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,16 @@ var (
 	milvusInstance *MilvusManager
 	milvusOnce     sync.Once
 )
+
+func isCollectionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "collection not found") ||
+		strings.Contains(errStr, "can't find collection") ||
+		strings.Contains(errStr, "CollectionNotFound")
+}
 
 func InitMilvus() (*MilvusManager, error) {
 	var err error

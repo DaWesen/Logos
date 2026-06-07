@@ -6,11 +6,20 @@ import (
 
 	"Logos/internal/service/ai/mcp/model"
 	"Logos/internal/service/ai/mcp/service"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 	pb "Logos/proto_gen/mcp"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
 
 type MCPServiceImpl struct {
 	pb.UnimplementedMCPServiceServer
@@ -50,7 +59,7 @@ func (s *MCPServiceImpl) RegisterTool(ctx context.Context, req *pb.RegisterToolR
 		})
 	}
 
-	tool, err := s.MCPService.RegisterTool(ctx, req.Name, req.Description, int(req.Type), params, req.Config)
+	tool, err := s.MCPService.RegisterTool(ctx, req.Name, req.Description, int(req.Type), params, req.Config, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("注册工具失败", logger.ErrorField(err))
 		resp.Code = 1
@@ -82,7 +91,7 @@ func (s *MCPServiceImpl) ListTools(ctx context.Context, req *pb.ListToolsRequest
 		pageSize = 20
 	}
 
-	tools, total, err := s.MCPService.ListTools(ctx, toolType, req.EnabledOnly, page, pageSize)
+	tools, total, err := s.MCPService.ListTools(ctx, toolType, req.EnabledOnly, getUserIDFromContext(ctx), page, pageSize)
 	if err != nil {
 		logger.Error("获取工具列表失败", logger.ErrorField(err))
 		resp.Code = 1
@@ -189,7 +198,7 @@ func convertModelToolToProtoTool(tool *model.Tool) *pb.Tool {
 func (s *MCPServiceImpl) CreateMCPService(ctx context.Context, req *pb.CreateMCPServiceRequest) (*pb.CreateMCPServiceResponse, error) {
 	resp := &pb.CreateMCPServiceResponse{}
 
-	svc, err := s.MCPServiceSvc.CreateService(ctx, req.Name, req.Description, req.TransportType, req.Url, req.Headers, req.AuthConfig, req.AdvancedConfig, req.Enabled)
+	svc, err := s.MCPServiceSvc.CreateService(ctx, req.Name, req.Description, req.TransportType, req.Url, req.Headers, req.AuthConfig, req.AdvancedConfig, req.Enabled, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("创建MCP服务失败", logger.ErrorField(err))
 		resp.Code = 1
@@ -237,7 +246,7 @@ func (s *MCPServiceImpl) ListMCPServices(ctx context.Context, req *pb.ListMCPSer
 		pageSize = 20
 	}
 
-	services, total, err := s.MCPServiceSvc.ListServices(ctx, req.EnabledOnly, page, pageSize)
+	services, total, err := s.MCPServiceSvc.ListServices(ctx, req.EnabledOnly, getUserIDFromContext(ctx), page, pageSize)
 	if err != nil {
 		logger.Error("获取MCP服务列表失败", logger.ErrorField(err))
 		resp.Code = 1
@@ -249,7 +258,14 @@ func (s *MCPServiceImpl) ListMCPServices(ctx context.Context, req *pb.ListMCPSer
 	resp.Message = "success"
 	resp.Total = int32(total)
 	for _, svc := range services {
-		resp.Services = append(resp.Services, convertModelMCPServiceToProto(svc))
+		protoSvc := convertModelMCPServiceToProto(svc)
+		logger.Info("ListMCPServices返回服务",
+			logger.StringField("id", protoSvc.Id),
+			logger.StringField("name", protoSvc.Name),
+			logger.StringField("url", protoSvc.Url),
+			logger.AnyField("headers", protoSvc.Headers),
+			logger.AnyField("auth_config", protoSvc.AuthConfig))
+		resp.Services = append(resp.Services, protoSvc)
 	}
 	return resp, nil
 }

@@ -25,9 +25,9 @@ func logTiming(step string, start time.Time, fields ...zapcore.Field) {
 type VectorRepository interface {
 	CreateCollection(ctx context.Context, collection *model.VectorCollection) error
 	UpdateCollection(ctx context.Context, collection *model.VectorCollection) error
-	DeleteCollection(ctx context.Context, id string) error
-	GetCollection(ctx context.Context, id string) (*model.VectorCollection, error)
-	ListCollections(ctx context.Context) ([]*model.VectorCollection, error)
+	DeleteCollection(ctx context.Context, id string, userID string) error
+	GetCollection(ctx context.Context, id string, userID string) (*model.VectorCollection, error)
+	ListCollections(ctx context.Context, userID string) ([]*model.VectorCollection, error)
 
 	Vectorize(ctx context.Context, text string, collectionID string, metadata map[string]string) (*model.Vector, error)
 	BatchVectorize(ctx context.Context, texts []string, collectionID string, metadataList []map[string]string) ([]*model.Vector, error)
@@ -188,10 +188,20 @@ func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *mod
 	return nil
 }
 
-func (r *vectorRepository) DeleteCollection(ctx context.Context, id string) error {
+func (r *vectorRepository) DeleteCollection(ctx context.Context, id string, userID string) error {
 	if r.milvus == nil {
 		return r.milvusUnavailableError("DeleteCollection")
 	}
+
+	// 校验所有权
+	if userID != "" && r.db != nil {
+		var count int64
+		r.db.WithContext(ctx).Model(&model.VectorCollectionRecord{}).Where("id = ? AND user_id = ?", id, userID).Count(&count)
+		if count == 0 {
+			return fmt.Errorf("集合不存在或无权操作")
+		}
+	}
+
 	logger.Info("删除向量集合",
 		logger.StringField("id", id))
 
@@ -205,7 +215,11 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string) erro
 	}
 
 	if r.db != nil {
-		if delErr := r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.VectorCollectionRecord{}).Error; delErr != nil {
+		delQuery := r.db.WithContext(ctx).Where("id = ?", id)
+		if userID != "" {
+			delQuery = delQuery.Where("user_id = ?", userID)
+		}
+		if delErr := delQuery.Delete(&model.VectorCollectionRecord{}).Error; delErr != nil {
 			logger.Warn("删除集合数据库记录失败", logger.StringField("id", id), logger.ErrorField(delErr))
 		}
 	}
@@ -216,10 +230,14 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string) erro
 	return nil
 }
 
-func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model.VectorCollection, error) {
+func (r *vectorRepository) GetCollection(ctx context.Context, id string, userID string) (*model.VectorCollection, error) {
 	if r.db != nil {
 		var rec model.VectorCollectionRecord
-		if err := r.db.WithContext(ctx).Where("id = ?", id).First(&rec).Error; err == nil {
+		query := r.db.WithContext(ctx).Where("id = ?", id)
+		if userID != "" {
+			query = query.Where("user_id = ?", userID)
+		}
+		if err := query.First(&rec).Error; err == nil {
 			coll := recordToModel(&rec)
 			collectionName := "vector_" + id
 			if r.milvus != nil {
@@ -257,10 +275,15 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string) (*model
 	return collection, nil
 }
 
-func (r *vectorRepository) ListCollections(ctx context.Context) ([]*model.VectorCollection, error) {
+func (r *vectorRepository) ListCollections(ctx context.Context, userID string) ([]*model.VectorCollection, error) {
 	if r.db != nil {
 		var records []model.VectorCollectionRecord
-		if err := r.db.WithContext(ctx).Find(&records).Error; err == nil && len(records) > 0 {
+		query := r.db.WithContext(ctx).Model(&model.VectorCollectionRecord{})
+		if userID != "" {
+			query = query.Where("user_id = ?", userID)
+		}
+		err := query.Find(&records).Error
+		if err == nil {
 			var collections []*model.VectorCollection
 			for i := range records {
 				coll := recordToModel(&records[i])
@@ -276,15 +299,17 @@ func (r *vectorRepository) ListCollections(ctx context.Context) ([]*model.Vector
 				}
 				collections = append(collections, coll)
 			}
-			logger.Info("列出向量集合完成", logger.IntField("count", len(collections)))
+			logger.Info("列出向量集合完成", logger.IntField("count", len(collections)), logger.StringField("user_id", userID))
 			return collections, nil
 		}
+		// DB查询出错，记录日志后继续尝试Milvus
+		logger.Warn("数据库查询集合列表失败，尝试Milvus回退", logger.ErrorField(err))
 	}
 	if r.milvus == nil {
 		logger.Warn("Milvus未连接，返回空集合列表")
 		return []*model.VectorCollection{}, nil
 	}
-	logger.Info("列出所有向量集合")
+	logger.Info("列出所有向量集合(Milvus回退)")
 	collectionNames, err := r.milvus.ListCollections(ctx)
 	if err != nil {
 		logger.Error("列出Milvus集合失败", logger.ErrorField(err))
@@ -334,7 +359,7 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 
 	var embeddings []float32
 
-	collection, _ := r.GetCollection(ctx, collectionID)
+	collection, _ := r.GetCollection(ctx, collectionID, "")
 	if collection == nil {
 		return nil, fmt.Errorf("集合 %s 不存在，请先创建集合", collectionID)
 	}
@@ -458,7 +483,7 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 	var allEmbeddings [][]float32
 	var contents []string
 
-	collection, _ := r.GetCollection(ctx, collectionID)
+	collection, _ := r.GetCollection(ctx, collectionID, "")
 	if collection == nil {
 		return nil, fmt.Errorf("集合 %s 不存在，请先创建集合", collectionID)
 	}
@@ -647,7 +672,7 @@ func (r *vectorRepository) TextSearch(ctx context.Context, collectionID string, 
 	var embeddings []float32
 
 	t0 := time.Now()
-	collection, _ := r.GetCollection(ctx, collectionID)
+	collection, _ := r.GetCollection(ctx, collectionID, "")
 	logTiming("GetCollection", t0, logger.StringField("collection_id", collectionID))
 
 	var useCustomEmbedder embedding.Embedder = nil
@@ -885,6 +910,7 @@ func recordToModel(rec *model.VectorCollectionRecord) *model.VectorCollection {
 			BaseURL: rec.EmbeddingBaseURL,
 			APIKey:  rec.EmbeddingApiKey,
 		},
+		UserID:    rec.UserID,
 		CreatedAt: rec.CreatedAt,
 		UpdatedAt: rec.UpdatedAt,
 	}
@@ -910,6 +936,7 @@ func collectionToRecord(coll *model.VectorCollection) *model.VectorCollectionRec
 		EmbeddingModel:   coll.Embedding.Model,
 		EmbeddingBaseURL: coll.Embedding.BaseURL,
 		EmbeddingApiKey:  coll.Embedding.APIKey,
+		UserID:           coll.UserID,
 		CreatedAt:        coll.CreatedAt,
 		UpdatedAt:        coll.UpdatedAt,
 	}

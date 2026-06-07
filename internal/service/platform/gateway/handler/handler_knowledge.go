@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -22,7 +21,7 @@ func (h *Handler) AddEntity(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.KnowledgeClient.AddEntity(context.Background(), &req)
+	resp, err := h.KnowledgeClient.AddEntity(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -44,7 +43,7 @@ func (h *Handler) UpdateEntity(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.KnowledgeClient.UpdateEntity(context.Background(), &req)
+	resp, err := h.KnowledgeClient.UpdateEntity(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -63,7 +62,7 @@ func (h *Handler) DeleteEntity(c *gin.Context) {
 	}
 	id := c.Param("id")
 	req := &pb.DeleteEntityReq{Id: id}
-	resp, err := h.KnowledgeClient.DeleteEntity(context.Background(), req)
+	resp, err := h.KnowledgeClient.DeleteEntity(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -81,7 +80,7 @@ func (h *Handler) GetEntity(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	resp, err := h.KnowledgeClient.GetEntity(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.KnowledgeClient.GetEntity(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -114,7 +113,7 @@ func (h *Handler) QueryEntities(c *gin.Context) {
 		req.Name = &name
 	}
 
-	resp, err := h.KnowledgeClient.QueryEntities(context.Background(), req)
+	resp, err := h.KnowledgeClient.QueryEntities(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -146,7 +145,7 @@ func (h *Handler) SearchEntities(c *gin.Context) {
 		req.Type = &entityType
 	}
 
-	resp, err := h.KnowledgeClient.SearchEntities(context.Background(), req)
+	resp, err := h.KnowledgeClient.SearchEntities(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -168,7 +167,7 @@ func (h *Handler) AddRelation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.KnowledgeClient.AddRelation(context.Background(), &req)
+	resp, err := h.KnowledgeClient.AddRelation(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -190,7 +189,7 @@ func (h *Handler) UpdateRelation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.KnowledgeClient.UpdateRelation(context.Background(), &req)
+	resp, err := h.KnowledgeClient.UpdateRelation(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -209,7 +208,7 @@ func (h *Handler) DeleteRelation(c *gin.Context) {
 	}
 	id := c.Param("id")
 	req := &pb.DeleteRelationReq{Id: id}
-	resp, err := h.KnowledgeClient.DeleteRelation(context.Background(), req)
+	resp, err := h.KnowledgeClient.DeleteRelation(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -227,7 +226,7 @@ func (h *Handler) GetRelation(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	resp, err := h.KnowledgeClient.GetRelation(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.KnowledgeClient.GetRelation(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -263,7 +262,7 @@ func (h *Handler) QueryRelations(c *gin.Context) {
 		req.TargetId = &targetId
 	}
 
-	resp, err := h.KnowledgeClient.QueryRelations(context.Background(), req)
+	resp, err := h.KnowledgeClient.QueryRelations(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -283,7 +282,7 @@ func (h *Handler) GetGraphStats(c *gin.Context) {
 	req := &pb.EmptyReq{
 		CollectionId: c.Query("collectionId"),
 	}
-	resp, err := h.KnowledgeClient.GetGraphStats(context.Background(), req)
+	resp, err := h.KnowledgeClient.GetGraphStats(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -313,7 +312,7 @@ func (h *Handler) GetRelatedEntities(c *gin.Context) {
 		req.RelationType = &relationType
 	}
 
-	resp, err := h.KnowledgeClient.GetRelatedEntities(context.Background(), req)
+	resp, err := h.KnowledgeClient.GetRelatedEntities(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -335,7 +334,7 @@ func (h *Handler) ImportData(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.KnowledgeClient.ImportData(context.Background(), &req)
+	resp, err := h.KnowledgeClient.ImportData(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -362,7 +361,7 @@ func (h *Handler) GetSubgraph(c *gin.Context) {
 		CollectionId: collectionID,
 	}
 
-	resp, err := h.KnowledgeClient.GetSubgraph(context.Background(), req)
+	resp, err := h.KnowledgeClient.GetSubgraph(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -398,7 +397,7 @@ func (h *Handler) ClearEntities(c *gin.Context) {
 			CollectionId: collectionID,
 		}
 
-		resp, err := h.KnowledgeClient.QueryEntities(context.Background(), req)
+		resp, err := h.KnowledgeClient.QueryEntities(h.withUserID(c), req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 			return
@@ -413,7 +412,7 @@ func (h *Handler) ClearEntities(c *gin.Context) {
 		}
 
 		for _, entity := range resp.Entities {
-			delResp, delErr := h.KnowledgeClient.DeleteEntity(context.Background(), &pb.DeleteEntityReq{Id: entity.Id})
+			delResp, delErr := h.KnowledgeClient.DeleteEntity(h.withUserID(c), &pb.DeleteEntityReq{Id: entity.Id})
 			if delErr != nil {
 				continue
 			}
@@ -452,7 +451,7 @@ func (h *Handler) GetEntityPaths(c *gin.Context) {
 		CollectionId: collectionID,
 	}
 
-	resp, err := h.KnowledgeClient.GetEntityPaths(context.Background(), req)
+	resp, err := h.KnowledgeClient.GetEntityPaths(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

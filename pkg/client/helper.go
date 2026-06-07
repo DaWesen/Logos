@@ -2,6 +2,8 @@ package client
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"Logos/config"
@@ -11,6 +13,15 @@ import (
 
 	"google.golang.org/grpc"
 )
+
+func resolveServiceHost(serviceName string) string {
+	shortName := strings.TrimPrefix(serviceName, "logos.")
+	upperName := strings.ToUpper(shortName)
+	if h := os.Getenv("LOGOS_" + upperName + "_HOST"); h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
 
 func buildGovCfg(cfg *config.Config) *governance.Config {
 	clientTimeout, err := cfg.GetGRPCClientTimeout()
@@ -74,14 +85,17 @@ func getServicePort(cfg *config.Config, serviceName string) int {
 }
 
 func tryDialWithFallback(cfg *config.Config, serviceName string, port int) (*grpc.ClientConn, error) {
+	host := resolveServiceHost(serviceName)
 	logger.Info("尝试连接服务",
 		logger.StringField("service", serviceName),
+		logger.StringField("host", host),
 		logger.IntField("port", port))
 
-	conn, err := grpcserver.NewDirectClientConn("127.0.0.1", port)
+	conn, err := grpcserver.NewDirectClientConn(host, port)
 	if err == nil {
 		logger.Info("直连服务成功",
 			logger.StringField("service", serviceName),
+			logger.StringField("host", host),
 			logger.IntField("port", port))
 		return conn, nil
 	}

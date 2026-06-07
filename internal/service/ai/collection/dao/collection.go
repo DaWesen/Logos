@@ -15,15 +15,17 @@ import (
 type CollectionRepository interface {
 	AddDataSource(ctx context.Context, ds *model.DataSource) error
 	GetDataSource(ctx context.Context, id string) (*model.DataSource, error)
+	GetDataSourceWithOwnerCheck(ctx context.Context, id string, userID string) (*model.DataSource, error)
 	UpdateDataSource(ctx context.Context, ds *model.DataSource) error
 	DeleteDataSource(ctx context.Context, id string) error
-	ListDataSources(ctx context.Context) ([]*model.DataSource, error)
+	ListDataSources(ctx context.Context, userID string) ([]*model.DataSource, error)
 
 	CreateTask(ctx context.Context, task *model.CollectionTask) error
 	GetTask(ctx context.Context, id string) (*model.CollectionTask, error)
+	GetTaskWithOwnerCheck(ctx context.Context, id string, userID string) (*model.CollectionTask, error)
 	UpdateTask(ctx context.Context, task *model.CollectionTask) error
 	DeleteTask(ctx context.Context, id string) error
-	ListTasks(ctx context.Context) ([]*model.CollectionTask, error)
+	ListTasks(ctx context.Context, userID string) ([]*model.CollectionTask, error)
 
 	CreateResult(ctx context.Context, result *model.CollectionResult) error
 	GetResult(ctx context.Context, id string) (*model.CollectionResult, error)
@@ -68,6 +70,22 @@ func (r *collectionRepository) GetDataSource(ctx context.Context, id string) (*m
 	return &ds, nil
 }
 
+func (r *collectionRepository) GetDataSourceWithOwnerCheck(ctx context.Context, id string, userID string) (*model.DataSource, error) {
+	var ds model.DataSource
+	query := r.db.WithContext(ctx).Where("id = ?", id)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	result := query.First(&ds)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, result.Error
+	}
+	return &ds, nil
+}
+
 func (r *collectionRepository) UpdateDataSource(ctx context.Context, ds *model.DataSource) error {
 	logger.Info("更新数据源",
 		logger.StringField("id", ds.ID))
@@ -84,9 +102,13 @@ func (r *collectionRepository) DeleteDataSource(ctx context.Context, id string) 
 	return r.db.WithContext(ctx).Delete(&model.DataSource{}, "id = ?", id).Error
 }
 
-func (r *collectionRepository) ListDataSources(ctx context.Context) ([]*model.DataSource, error) {
+func (r *collectionRepository) ListDataSources(ctx context.Context, userID string) ([]*model.DataSource, error) {
 	var list []*model.DataSource
-	result := r.db.WithContext(ctx).Order("created_at desc").Find(&list)
+	query := r.db.WithContext(ctx)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	result := query.Order("created_at desc").Find(&list)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -112,6 +134,22 @@ func (r *collectionRepository) GetTask(ctx context.Context, id string) (*model.C
 	return &t, nil
 }
 
+func (r *collectionRepository) GetTaskWithOwnerCheck(ctx context.Context, id string, userID string) (*model.CollectionTask, error) {
+	var t model.CollectionTask
+	query := r.db.WithContext(ctx).Where("id = ?", id)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	result := query.First(&t)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, result.Error
+	}
+	return &t, nil
+}
+
 func (r *collectionRepository) UpdateTask(ctx context.Context, task *model.CollectionTask) error {
 	logger.Info("更新采集任务",
 		logger.StringField("id", task.ID))
@@ -126,9 +164,13 @@ func (r *collectionRepository) DeleteTask(ctx context.Context, id string) error 
 	return r.db.WithContext(ctx).Delete(&model.CollectionTask{}, "id = ?", id).Error
 }
 
-func (r *collectionRepository) ListTasks(ctx context.Context) ([]*model.CollectionTask, error) {
+func (r *collectionRepository) ListTasks(ctx context.Context, userID string) ([]*model.CollectionTask, error) {
 	var list []*model.CollectionTask
-	result := r.db.WithContext(ctx).Order("created_at desc").Find(&list)
+	query := r.db.WithContext(ctx)
+	if userID != "" {
+		query = query.Where("user_id = ?", userID)
+	}
+	result := query.Order("created_at desc").Find(&list)
 	if result.Error != nil {
 		return nil, result.Error
 	}

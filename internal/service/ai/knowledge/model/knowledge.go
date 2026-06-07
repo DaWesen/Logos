@@ -16,6 +16,7 @@ type Entity struct {
 	Color        string         `gorm:"size:7;comment:显示颜色" json:"color,omitempty"`
 	Properties   JSONMap        `gorm:"type:jsonb;comment:实体属性" json:"properties"`
 	Description  *string        `gorm:"type:text;comment:实体描述" json:"description,omitempty"`
+	UserID       string         `gorm:"index;size:64;comment:所属用户ID" json:"userId"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime;index;comment:创建时间" json:"createdAt"`
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
 	DeletedAt    gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`
@@ -29,6 +30,7 @@ type Relation struct {
 	CollectionID string         `gorm:"index;size:36;comment:所属集合ID" json:"collectionId"`
 	Properties   JSONMap        `gorm:"type:jsonb;comment:关系属性" json:"properties"`
 	Description  *string        `gorm:"type:text;comment:关系描述" json:"description,omitempty"`
+	UserID       string         `gorm:"index;size:64;comment:所属用户ID" json:"userId"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime;index;comment:创建时间" json:"createdAt"`
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
 	DeletedAt    gorm.DeletedAt `gorm:"index;comment:删除时间" json:"-"`

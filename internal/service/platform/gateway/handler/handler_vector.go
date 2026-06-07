@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -45,7 +44,7 @@ func (h *Handler) CreateCollection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.CreateCollection(context.Background(), &req)
+	resp, err := h.VectorClient.CreateCollection(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -59,7 +58,7 @@ func (h *Handler) ListCollections(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
-	resp, err := h.VectorClient.ListCollections(context.Background(), &pb.EmptyReq{})
+	resp, err := h.VectorClient.ListCollections(h.withUserID(c), &pb.EmptyReq{})
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -74,7 +73,7 @@ func (h *Handler) GetCollection(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "vector service unavailable"))
 		return
 	}
-	resp, err := h.VectorClient.GetCollection(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.VectorClient.GetCollection(h.withUserID(c), &pb.GetByIdReq{Id: id})
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -93,7 +92,7 @@ func (h *Handler) UpdateCollection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.UpdateCollection(context.Background(), &req)
+	resp, err := h.VectorClient.UpdateCollection(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -109,7 +108,7 @@ func (h *Handler) DeleteCollection(c *gin.Context) {
 	}
 	var req pb.DeleteCollectionReq
 	req.Id = c.Param("id")
-	resp, err := h.VectorClient.DeleteCollection(context.Background(), &req)
+	resp, err := h.VectorClient.DeleteCollection(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -131,7 +130,7 @@ func (h *Handler) Vectorize(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.Vectorize(context.Background(), &req)
+	resp, err := h.VectorClient.Vectorize(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -150,7 +149,7 @@ func (h *Handler) BatchVectorize(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.BatchVectorize(context.Background(), &req)
+	resp, err := h.VectorClient.BatchVectorize(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -169,7 +168,7 @@ func (h *Handler) VectorSearchByCollection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.Search(context.Background(), &req)
+	resp, err := h.VectorClient.Search(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -188,7 +187,7 @@ func (h *Handler) TextSearchByCollection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.TextSearch(context.Background(), &req)
+	resp, err := h.VectorClient.TextSearch(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -207,7 +206,7 @@ func (h *Handler) DeleteVector(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.DeleteVector(context.Background(), &req)
+	resp, err := h.VectorClient.DeleteVector(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return
@@ -263,7 +262,7 @@ func (h *Handler) ListVectors(c *gin.Context) {
 		logger.IntField("page", int(page)),
 		logger.IntField("page_size", int(pageSize)))
 
-	resp, err := h.VectorClient.ListVectors(context.Background(), &pb.ListVectorsReq{
+	resp, err := h.VectorClient.ListVectors(h.withUserID(c), &pb.ListVectorsReq{
 		CollectionId: collectionID,
 		Page:         page,
 		PageSize:     pageSize,
@@ -314,7 +313,7 @@ func (h *Handler) BatchDeleteVector(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.VectorClient.BatchDeleteVector(context.Background(), &req)
+	resp, err := h.VectorClient.BatchDeleteVector(h.withUserID(c), &req)
 	if err != nil || resp == nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(fmt.Sprintf("vector service error: %v", err)))
 		return

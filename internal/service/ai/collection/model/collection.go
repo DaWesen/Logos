@@ -13,6 +13,7 @@ type DataSource struct {
 	URL         string    `gorm:"size:512;comment:连接地址"`
 	Config      string    `gorm:"type:text;comment:配置JSON"`
 	Description *string   `gorm:"type:text;comment:描述"`
+	UserID      string    `gorm:"index;size:64;comment:所属用户ID" json:"user_id"`
 	CreatedAt   time.Time `gorm:"autoCreateTime;comment:创建时间"`
 	UpdatedAt   time.Time `gorm:"autoUpdateTime;comment:更新时间"`
 }
@@ -39,6 +40,7 @@ type CollectionTask struct {
 	Schedule     *string    `gorm:"size:64;comment:Cron表达式"`
 	LastRunTime  *time.Time `gorm:"comment:上次执行时间"`
 	NextRunTime  *time.Time `gorm:"comment:下次执行时间"`
+	UserID       string     `gorm:"index;size:64;comment:所属用户ID" json:"user_id"`
 	CreatedAt    time.Time  `gorm:"autoCreateTime;comment:创建时间"`
 	UpdatedAt    time.Time  `gorm:"autoUpdateTime;comment:更新时间"`
 }

@@ -630,16 +630,16 @@ func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []str
 	if len(parts) == 3 && parts[0] == "private" {
 		switch senderID {
 		case parts[1]:
-			return []string{parts[2], senderID} // 返回对方和自己
+			return []string{parts[2]} // 只返回对方
 		case parts[2]:
-			return []string{parts[1], senderID} // 返回对方和自己
+			return []string{parts[1]} // 只返回对方
 		}
 	} else if len(parts) == 2 {
 		switch senderID {
 		case parts[0]:
-			return []string{parts[1], senderID} // 返回对方和自己
+			return []string{parts[1]} // 只返回对方
 		case parts[1]:
-			return []string{parts[0], senderID} // 返回对方和自己
+			return []string{parts[0]} // 只返回对方
 		}
 	}
 

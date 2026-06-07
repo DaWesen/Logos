@@ -7,6 +7,7 @@ import (
 
 	"Logos/internal/service/ai/vector/model"
 	"Logos/internal/service/ai/vector/service"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/vector"
@@ -16,6 +17,14 @@ import (
 type VectorServiceImpl struct {
 	pb.UnimplementedVectorServiceServer
 	VectorService service.VectorService
+}
+
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
 }
 
 func buildSuccessBaseResp() *pbCommon.BaseResp {
@@ -119,6 +128,7 @@ func (s *VectorServiceImpl) CreateCollection(ctx context.Context, req *pb.Create
 			BaseURL: req.EmbeddingBaseUrl,
 			APIKey:  req.EmbeddingApiKey,
 		},
+		UserID: getUserIDFromContext(ctx),
 	}
 
 	createdCollection, err := s.VectorService.CreateCollection(ctx, collection)

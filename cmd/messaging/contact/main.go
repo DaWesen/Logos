@@ -49,7 +49,6 @@ func main() {
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.contact",
 		Port:        cfg.Ports.Contact,
-		Host:        "127.0.0.1",
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 		Governance:  governance.DefaultConfig(),
 	}, func(s *grpc.Server) {

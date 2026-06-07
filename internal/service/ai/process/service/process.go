@@ -20,6 +20,7 @@ import (
 	"Logos/internal/service/ai/process/dao"
 	"Logos/internal/service/ai/process/model"
 	"Logos/internal/service/ai/process/parser"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 
 	"github.com/google/uuid"
@@ -117,11 +118,12 @@ func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileD
 		FileURL:            fileURL,
 		FileSize:           int64(len(fileData)),
 		Status:             model.DocumentStatusPending,
+		UserID:             getUserIDFromContext(ctx),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
@@ -139,11 +141,12 @@ func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename strin
 		FileURL:            fileURL,
 		FileSize:           fileSize,
 		Status:             model.DocumentStatusPending,
+		UserID:             getUserIDFromContext(ctx),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
@@ -160,11 +163,12 @@ func (s *ProcessService) ProcessURL(ctx context.Context, url string, collectionI
 		FileType:           filepath.Ext(url),
 		FileURL:            url,
 		Status:             model.DocumentStatusPending,
+		UserID:             getUserIDFromContext(ctx),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
@@ -393,11 +397,11 @@ func (s *ProcessService) parseFile(ctx context.Context, reader io.Reader, filena
 }
 
 func (s *ProcessService) ListDocuments(ctx context.Context, status *int, page, pageSize int) ([]*model.Document, int64, error) {
-	return s.repo.ListDocuments(ctx, status, page, pageSize)
+	return s.repo.ListDocuments(ctx, getUserIDFromContext(ctx), status, page, pageSize)
 }
 
 func (s *ProcessService) ListDocumentDTOs(ctx context.Context, status *int, page, pageSize int) ([]*model.DocumentDTO, int64, error) {
-	docs, total, err := s.repo.ListDocuments(ctx, status, page, pageSize)
+	docs, total, err := s.repo.ListDocuments(ctx, getUserIDFromContext(ctx), status, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -422,11 +426,11 @@ func (s *ProcessService) ListDocumentDTOs(ctx context.Context, status *int, page
 }
 
 func (s *ProcessService) GetDocument(ctx context.Context, id string) (*model.Document, error) {
-	return s.repo.GetDocument(ctx, id)
+	return s.repo.GetDocumentWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
 }
 
 func (s *ProcessService) GetDocumentDTO(ctx context.Context, id string) (*model.DocumentDTO, error) {
-	doc, err := s.repo.GetDocument(ctx, id)
+	doc, err := s.repo.GetDocumentWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -447,7 +451,7 @@ func (s *ProcessService) GetChunks(ctx context.Context, docID string) ([]*model.
 }
 
 func (s *ProcessService) DeleteDocument(ctx context.Context, id string) error {
-	return s.repo.DeleteDocument(ctx, id)
+	return s.repo.DeleteDocument(ctx, id, getUserIDFromContext(ctx))
 }
 
 func (s *ProcessService) ProcessDocument(ctx context.Context, id string) error {
@@ -853,4 +857,12 @@ func getStringFromMap(m map[string]interface{}, key string) string {
 
 func generateID() string {
 	return uuid.New().String()
+}
+
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
 }

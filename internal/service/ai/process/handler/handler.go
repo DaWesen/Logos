@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,9 +9,11 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc/metadata"
 
 	"Logos/internal/service/ai/process/model"
 	"Logos/internal/service/ai/process/service"
+	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 )
 
@@ -22,6 +25,14 @@ func NewProcessHandler(processService service.ProcessService) *ProcessHandler {
 	return &ProcessHandler{
 		processService: processService,
 	}
+}
+
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
 }
 
 func (h *ProcessHandler) RegisterRoutes(r *gin.Engine) {
@@ -198,6 +209,15 @@ func (h *ProcessHandler) GetDocumentChunks(c *gin.Context) {
 func (h *ProcessHandler) RegisterMiddlewares(r *gin.Engine) {
 	r.Use(func(c *gin.Context) {
 		c.Header("Content-Type", "application/json")
+
+		// Extract X-User-ID from HTTP header and attach to incoming gRPC metadata
+		// so that auth.GetUserID(ctx) can read it from the context
+		if userID := c.GetHeader("X-User-ID"); userID != "" {
+			md := metadata.Pairs(auth.UserIDKey, userID)
+			ctx := metadata.NewIncomingContext(c.Request.Context(), md)
+			c.Request = c.Request.WithContext(ctx)
+		}
+
 		c.Next()
 	})
 }

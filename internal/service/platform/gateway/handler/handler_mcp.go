@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -20,7 +19,8 @@ func (h *Handler) CallTool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.CallTool(context.Background(), &req)
+	ctx := h.withUserID(c)
+	resp, err := h.MCPClient.CallTool(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -41,7 +41,7 @@ func (h *Handler) RegisterTool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.RegisterTool(context.Background(), &req)
+	resp, err := h.MCPClient.RegisterTool(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -56,7 +56,7 @@ func (h *Handler) ListMCPTools(c *gin.Context) {
 	}
 	var req pb.ListToolsRequest
 	c.ShouldBindJSON(&req)
-	resp, err := h.MCPClient.ListTools(context.Background(), &req)
+	resp, err := h.MCPClient.ListTools(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -73,7 +73,7 @@ func (h *Handler) GetMCPTool(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
 		return
 	}
-	resp, err := h.MCPClient.GetTool(context.Background(), &pb.GetToolRequest{ToolId: toolID})
+	resp, err := h.MCPClient.GetTool(h.withUserID(c), &pb.GetToolRequest{ToolId: toolID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -93,7 +93,7 @@ func (h *Handler) UpdateMCPTool(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.UpdateTool(context.Background(), &req)
+	resp, err := h.MCPClient.UpdateTool(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -107,7 +107,7 @@ func (h *Handler) DeleteMCPTool(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
 		return
 	}
-	resp, err := h.MCPClient.DeleteTool(context.Background(), &pb.DeleteToolRequest{ToolId: toolID})
+	resp, err := h.MCPClient.DeleteTool(h.withUserID(c), &pb.DeleteToolRequest{ToolId: toolID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -128,7 +128,7 @@ func (h *Handler) CreateMCPService(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.CreateMCPService(context.Background(), &req)
+	resp, err := h.MCPClient.CreateMCPService(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -146,7 +146,7 @@ func (h *Handler) ListMCPServices(c *gin.Context) {
 	if req.PageSize == 0 {
 		req.PageSize = 100
 	}
-	resp, err := h.MCPClient.ListMCPServices(context.Background(), &req)
+	resp, err := h.MCPClient.ListMCPServices(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -163,7 +163,7 @@ func (h *Handler) GetMCPService(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
 		return
 	}
-	resp, err := h.MCPClient.GetMCPService(context.Background(), &pb.GetMCPServiceRequest{ServiceId: serviceID})
+	resp, err := h.MCPClient.GetMCPService(h.withUserID(c), &pb.GetMCPServiceRequest{ServiceId: serviceID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -183,7 +183,7 @@ func (h *Handler) UpdateMCPService(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.UpdateMCPService(context.Background(), &req)
+	resp, err := h.MCPClient.UpdateMCPService(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -197,7 +197,7 @@ func (h *Handler) DeleteMCPService(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "MCP服务不可用"))
 		return
 	}
-	resp, err := h.MCPClient.DeleteMCPService(context.Background(), &pb.DeleteMCPServiceRequest{ServiceId: serviceID})
+	resp, err := h.MCPClient.DeleteMCPService(h.withUserID(c), &pb.DeleteMCPServiceRequest{ServiceId: serviceID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -215,7 +215,7 @@ func (h *Handler) TestMCPService(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MCPClient.TestMCPService(context.Background(), &req)
+	resp, err := h.MCPClient.TestMCPService(h.withUserID(c), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

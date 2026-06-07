@@ -96,7 +96,6 @@ func main() {
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.chat",
 		Port:        cfg.Ports.Chat,
-		Host:        "127.0.0.1",
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 		Governance:  governance.DefaultConfig(),
 	}, func(s *grpc.Server) {

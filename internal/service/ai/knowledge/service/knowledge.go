@@ -9,6 +9,7 @@ import (
 
 	"Logos/internal/service/ai/knowledge/dao"
 	"Logos/internal/service/ai/knowledge/model"
+	"Logos/pkg/auth"
 	"Logos/pkg/cache"
 	"Logos/pkg/es"
 	"Logos/pkg/logger"
@@ -16,6 +17,15 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// getUserIDFromContext 从 gRPC context 中提取 user_id
+func getUserIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
 
 var (
 	ErrEntityNotFound   = errors.New("实体不存在")
@@ -70,12 +80,14 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name, 
 		logger.StringField("name", name),
 		logger.StringField("collectionId", collectionID))
 
+	userID := getUserIDFromContext(ctx)
 	entity := &model.Entity{
 		Type:         entityType,
 		Name:         name,
 		CollectionID: collectionID,
 		Color:        color,
 		Properties:   model.JSONMap(properties),
+		UserID:       userID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -104,7 +116,7 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name, 
 }
 
 func (s *knowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error) {
-	existing, err := s.repo.FindEntityByNameAndType(ctx, name, entityType, collectionID)
+	existing, err := s.repo.FindEntityByNameAndType(ctx, name, entityType, collectionID, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Warn("查询已有实体失败",
 			logger.StringField("name", name),
@@ -157,6 +169,7 @@ func (s *knowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, entityTyp
 		CollectionID: collectionID,
 		Color:        color,
 		Properties:   model.JSONMap(properties),
+		UserID:       getUserIDFromContext(ctx),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -297,14 +310,15 @@ func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, na
 		logger.StringField("name", name),
 		logger.StringField("collectionId", collectionID))
 
+	userID := getUserIDFromContext(ctx)
 	offset := (page - 1) * pageSize
-	entities, err := s.repo.QueryEntities(ctx, entityType, name, collectionID, properties, offset, pageSize)
+	entities, err := s.repo.QueryEntities(ctx, entityType, name, collectionID, userID, properties, offset, pageSize)
 	if err != nil {
 		logger.Error("查询实体失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
 	}
 
-	total, err := s.repo.CountEntities(ctx, entityType, name, collectionID, properties)
+	total, err := s.repo.CountEntities(ctx, entityType, name, collectionID, userID, properties)
 	if err != nil {
 		logger.Error("统计实体失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
@@ -326,6 +340,7 @@ func (s *knowledgeServiceImpl) AddRelation(ctx context.Context, relationType, so
 		TargetID:     targetId,
 		CollectionID: collectionID,
 		Properties:   model.JSONMap(properties),
+		UserID:       getUserIDFromContext(ctx),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -419,13 +434,14 @@ func (s *knowledgeServiceImpl) QueryRelations(ctx context.Context, relationType,
 		logger.StringField("collectionId", collectionID))
 
 	offset := (page - 1) * pageSize
-	relations, err := s.repo.QueryRelations(ctx, relationType, sourceId, targetId, collectionID, offset, pageSize)
+	userID := getUserIDFromContext(ctx)
+	relations, err := s.repo.QueryRelations(ctx, relationType, sourceId, targetId, collectionID, userID, offset, pageSize)
 	if err != nil {
 		logger.Error("查询关系失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
 	}
 
-	total, err := s.repo.CountRelations(ctx, relationType, sourceId, targetId, collectionID)
+	total, err := s.repo.CountRelations(ctx, relationType, sourceId, targetId, collectionID, userID)
 	if err != nil {
 		logger.Error("统计关系失败", logger.ErrorField(err))
 		return nil, 0, ErrInternalServer
@@ -438,7 +454,7 @@ func (s *knowledgeServiceImpl) GetGraphStats(ctx context.Context, collectionID s
 	logger.Info("获取图谱统计信息请求",
 		logger.StringField("collectionId", collectionID))
 
-	stats, err := s.repo.GetGraphStats(ctx, collectionID)
+	stats, err := s.repo.GetGraphStats(ctx, collectionID, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("获取图谱统计信息失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
@@ -467,7 +483,7 @@ func (s *knowledgeServiceImpl) GetSubgraph(ctx context.Context, entityID string,
 		logger.IntField("depth", depth),
 		logger.StringField("collectionId", collectionID))
 
-	subgraph, err := s.repo.GetSubgraph(ctx, entityID, depth, collectionID)
+	subgraph, err := s.repo.GetSubgraph(ctx, entityID, depth, collectionID, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("获取子图失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
@@ -482,7 +498,7 @@ func (s *knowledgeServiceImpl) GetEntityPaths(ctx context.Context, sourceID, tar
 		logger.StringField("targetId", targetID),
 		logger.IntField("maxDepth", maxDepth))
 
-	paths, err := s.repo.GetEntityPaths(ctx, sourceID, targetID, maxDepth, collectionID)
+	paths, err := s.repo.GetEntityPaths(ctx, sourceID, targetID, maxDepth, collectionID, getUserIDFromContext(ctx))
 	if err != nil {
 		logger.Error("获取实体路径失败", logger.ErrorField(err))
 		return nil, ErrInternalServer

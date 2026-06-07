@@ -17,8 +17,8 @@ import (
 
 type MCPService interface {
 	CallTool(ctx context.Context, toolID string, toolName string, parameters map[string]string) (string, map[string]string, error)
-	RegisterTool(ctx context.Context, name string, description string, toolType int, parameters []ToolParameter, config map[string]string) (*model.Tool, error)
-	ListTools(ctx context.Context, toolType *int, enabledOnly bool, page, pageSize int) ([]*model.Tool, int64, error)
+	RegisterTool(ctx context.Context, name string, description string, toolType int, parameters []ToolParameter, config map[string]string, userID string) (*model.Tool, error)
+	ListTools(ctx context.Context, toolType *int, enabledOnly bool, userID string, page, pageSize int) ([]*model.Tool, int64, error)
 	GetTool(ctx context.Context, toolID string) (*model.Tool, error)
 	UpdateTool(ctx context.Context, toolID string, name string, description string, parameters []ToolParameter, config map[string]string, enabled bool) (*model.Tool, error)
 	DeleteTool(ctx context.Context, toolID string) error
@@ -88,7 +88,7 @@ func (s *mcpServiceImpl) CallTool(ctx context.Context, toolID string, toolName s
 	if toolID != "" {
 		tool, err = s.repo.GetTool(ctx, toolID)
 	} else if toolName != "" {
-		tool, err = s.repo.GetToolByName(ctx, toolName)
+		tool, err = s.repo.GetToolByName(ctx, toolName, "")
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("查询工具失败: %w", err)
@@ -230,10 +230,10 @@ func (s *mcpServiceImpl) executeCustomTool(ctx context.Context, tool *model.Tool
 	return response, map[string]string{"source": "llm", "tool_name": tool.Name}, nil
 }
 
-func (s *mcpServiceImpl) RegisterTool(ctx context.Context, name string, description string, toolType int, parameters []ToolParameter, config map[string]string) (*model.Tool, error) {
+func (s *mcpServiceImpl) RegisterTool(ctx context.Context, name string, description string, toolType int, parameters []ToolParameter, config map[string]string, userID string) (*model.Tool, error) {
 	logger.Info("注册工具", logger.StringField("name", name))
 
-	existing, _ := s.repo.GetToolByName(ctx, name)
+	existing, _ := s.repo.GetToolByName(ctx, name, userID)
 	if existing != nil {
 		return nil, fmt.Errorf("工具名称已存在: %s", name)
 	}
@@ -249,6 +249,7 @@ func (s *mcpServiceImpl) RegisterTool(ctx context.Context, name string, descript
 		Config:      string(configBytes),
 		Parameters:  string(paramBytes),
 		Enabled:     true,
+		UserID:      userID,
 	}
 
 	if err := s.repo.CreateTool(ctx, tool); err != nil {
@@ -258,8 +259,8 @@ func (s *mcpServiceImpl) RegisterTool(ctx context.Context, name string, descript
 	return tool, nil
 }
 
-func (s *mcpServiceImpl) ListTools(ctx context.Context, toolType *int, enabledOnly bool, page, pageSize int) ([]*model.Tool, int64, error) {
-	return s.repo.ListTools(ctx, toolType, enabledOnly, page, pageSize)
+func (s *mcpServiceImpl) ListTools(ctx context.Context, toolType *int, enabledOnly bool, userID string, page, pageSize int) ([]*model.Tool, int64, error) {
+	return s.repo.ListTools(ctx, toolType, enabledOnly, userID, page, pageSize)
 }
 
 func (s *mcpServiceImpl) GetTool(ctx context.Context, toolID string) (*model.Tool, error) {
@@ -306,9 +307,9 @@ func (s *mcpServiceImpl) DeleteTool(ctx context.Context, toolID string) error {
 }
 
 type MCPServiceService interface {
-	CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error)
+	CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool, userID string) (*model.MCPService, error)
 	GetService(ctx context.Context, id string) (*model.MCPService, error)
-	ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error)
+	ListServices(ctx context.Context, enabledOnly bool, userID string, page, pageSize int) ([]*model.MCPService, int64, error)
 	UpdateService(ctx context.Context, id string, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error)
 	DeleteService(ctx context.Context, id string) error
 	TestConnection(ctx context.Context, url, transportType string, headers map[string]string, authConfig map[string]string) error
@@ -326,10 +327,10 @@ func NewMCPServiceService(svcRepo dao.MCPServiceRepository, clientMgr *mcp.MCPCl
 	}
 }
 
-func (s *mcpServiceServiceImpl) CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error) {
+func (s *mcpServiceServiceImpl) CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool, userID string) (*model.MCPService, error) {
 	logger.Info("创建MCP服务", logger.StringField("name", name))
 
-	existing, _ := s.svcRepo.GetServiceByName(ctx, name)
+	existing, _ := s.svcRepo.GetServiceByName(ctx, name, userID)
 	if existing != nil {
 		return nil, fmt.Errorf("服务名称已存在: %s", name)
 	}
@@ -350,6 +351,7 @@ func (s *mcpServiceServiceImpl) CreateService(ctx context.Context, name, descrip
 		Headers:        string(headersBytes),
 		AuthConfig:     string(authConfigBytes),
 		AdvancedConfig: string(advancedConfigBytes),
+		UserID:         userID,
 	}
 
 	if err := s.svcRepo.CreateService(ctx, svc); err != nil {
@@ -367,8 +369,8 @@ func (s *mcpServiceServiceImpl) GetService(ctx context.Context, id string) (*mod
 	return s.svcRepo.GetService(ctx, id)
 }
 
-func (s *mcpServiceServiceImpl) ListServices(ctx context.Context, enabledOnly bool, page, pageSize int) ([]*model.MCPService, int64, error) {
-	return s.svcRepo.ListServices(ctx, enabledOnly, page, pageSize)
+func (s *mcpServiceServiceImpl) ListServices(ctx context.Context, enabledOnly bool, userID string, page, pageSize int) ([]*model.MCPService, int64, error) {
+	return s.svcRepo.ListServices(ctx, enabledOnly, userID, page, pageSize)
 }
 
 func (s *mcpServiceServiceImpl) UpdateService(ctx context.Context, id string, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool) (*model.MCPService, error) {
