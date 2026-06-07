@@ -151,14 +151,13 @@ bash deploy.sh
 
 ### 配置 AI 模型
 
-项目使用 [Eino](https://github.com/cloudwego/eino) 框架接入大模型，默认配置为 DeepSeek。修改 `config/config.yaml` 中的 `eino` 部分：
+项目使用 [Eino](https://github.com/cloudwego/eino) 框架接入大模型，默认配置为 DeepSeek。通过环境变量配置（参见 `.env.example`）：
 
-```yaml
-eino:
-  api_key: your-api-key
-  model: deepseek-chat
-  base_url: https://api.deepseek.com/
-  embedding_model: deepseek-embedding
+```bash
+ARK_API_KEY=your-api-key
+ARK_MODEL=deepseek-chat
+ARK_BASE_URL=https://api.deepseek.com/
+EMBEDDING_MODEL=embedding-3
 ```
 
 或在 `docker-compose.yml` 中通过环境变量覆盖：
@@ -188,17 +187,7 @@ cd cmd/ai/bot && go run main.go
 
 ### 管理脚本
 
-项目提供了交互式管理脚本：
-
-```bash
-# Linux / macOS
-bash start.sh
-
-# Windows
-start.bat
-```
-
-支持启动/停止/重启/查看状态/日志/构建镜像/清理缓存等操作。
+项目提供了交互式管理脚本（`script/bootstrap.sh`），支持引导式初始化部署环境。
 
 ## API 接口
 
@@ -355,6 +344,7 @@ Logos/
 │   │   ├── calculator.go             #   计算器
 │   │   ├── code_execution.go         #   代码执行 (Python3/Node.js/Go)
 │   │   ├── filesystem.go             #   文件系统
+│   │   ├── http_template.go          #   HTTP 请求模板
 │   │   ├── weather.go                #   天气查询
 │   │   ├── websearch.go              #   Web 搜索
 │   │   └── registry.go               #   工具注册表
@@ -371,7 +361,7 @@ Logos/
 ├── pkg/                              # 共享库
 │   ├── auth/                         #   gRPC 认证拦截器
 │   ├── cache/                        #   Redis 缓存
-│   ├── client/                       #   gRPC 客户端工厂 (20 个服务客户端)
+│   ├── client/                       #   gRPC 客户端工厂 (17 个服务客户端)
 │   ├── database/pgsql/               #   PostgreSQL (GORM)
 │   ├── eino/                         #   Eino AI 框架管理器
 │   ├── es/                           #   Elasticsearch
@@ -380,12 +370,14 @@ Logos/
 │   ├── grpcserver/                   #   gRPC 服务器 (Etcd 注册/健康检查/Keepalive)
 │   ├── jwt/                          #   JWT 认证
 │   ├── logger/                       #   Zap 日志
-│   ├── model/                        #   基础模型 (GORM 公共字段)
 │   ├── mq/                           #   Kafka
 │   ├── obs/                          #   OpenTelemetry 可观测性
+│   ├── outbox/                       #   Outbox 模式 (事件可靠投递)
+│   ├── push/                         #   离线推送
 │   ├── ratelimit/                    #   Redis 限流器
 │   ├── register/                     #   Etcd 服务注册
 │   ├── storage/                      #   MinIO 对象存储
+│   ├── strutil/                      #   字符串工具
 │   └── vector/                       #   Milvus 向量数据库
 ├── deployment/                       # Kubernetes 部署配置 (kind)
 │   ├── kind-cluster.yaml             #   Kind 集群定义
@@ -397,16 +389,14 @@ Logos/
 │   └── services/                     #   微服务部署 (20 个服务)
 ├── config/                           # 配置
 │   ├── config.go                     #   配置结构体 + Viper 加载
-│   ├── config.yaml                   #   默认配置文件
+│   ├── grafana/                      #   Grafana 仪表盘与数据源配置
 │   ├── prometheus.yml                #   Prometheus 配置
 │   └── otelcol-config.yaml           #   OpenTelemetry Collector 配置
 ├── script/                           # 脚本
-│   ├── test_api.sh                   #   API 测试脚本
-│   ├── test.sh / test.bat            #   测试启动脚本
+│   ├── bench/                        #   压测工具 (含 WebSocket 压测)
 │   └── bootstrap.sh                  #   引导脚本
 ├── docker-compose.yml                # Docker Compose 编排
 ├── Dockerfile                        # 多阶段构建 (20 个服务，含 ffmpeg/python3/nodejs)
-├── start.sh / start.bat              # 交互式管理脚本
 ├── .env.example                      # 环境变量示例
 ├── go.mod / go.sum                   # Go 模块
 └── LICENSE                           # Apache 2.0
@@ -418,9 +408,9 @@ Logos/
 
 | 能力     | 配置                           | 说明                |
 | ------ | ---------------------------- | ----------------- |
-| 超时控制   | 服务端 30s / 客户端 10s / LLM 120s | gRPC 拦截器自动注入      |
+| 超时控制   | 服务端 30s / 客户端 30s / LLM 120s | gRPC 拦截器自动注入      |
 | 重试策略   | 3 次，200ms-5s 指数退避            | 可重试码自动识别          |
-| 熔断器    | 5 次失败阈值 / 30s 超时 / 3 次成功恢复   | 基于 sony/gobreaker |
+| 熔断器    | 50 次失败阈值 / 10s 超时 / 3 次成功恢复   | 基于 sony/gobreaker |
 | 限流     | 100 RPS / 50 并发              | gRPC 服务端拦截器       |
 | LLM 治理 | 120s 超时 / 特殊重试策略             | 专为大模型调用设计         |
 
@@ -459,11 +449,11 @@ Gateway 层额外提供多级限流：
 | Neo4j          | 7474, 7687           | 图数据库     |
 | Milvus         | 19530, 9091          | 向量数据库    |
 | MinIO          | 9000, 9901           | 对象存储     |
-| OTEL Collector | 4317, 4318, 8889     | 遥测数据采集   |
+| OTEL Collector | 4317, 4318, 8890          | 遥测数据采集   |
 
 ## 配置说明
 
-项目通过 `config/config.yaml` 加载配置，同时支持环境变量覆盖。环境变量优先级高于配置文件。
+项目通过 `config/config.go` 加载配置（Viper 框架），同时支持环境变量覆盖。环境变量优先级高于配置文件。
 
 ### 关键环境变量
 
@@ -478,21 +468,21 @@ Gateway 层额外提供多级限流：
 | `ES_ADDRESSES`                | Elasticsearch URL       | <http://localhost:9200> |
 | `NEO4J_URI`                   | Neo4j URI               | bolt://localhost:7687   |
 | `MINIO_ENDPOINT`              | MinIO 地址                | localhost:9000          |
-| `MINIO_BUCKET`                | MinIO 存储桶               | logos                   |
+| `MINIO_BUCKET`                | MinIO 存储桶               | logos-documents          |
 | `ARK_API_KEY`                 | AI 模型 API Key           | -                       |
 | `ARK_MODEL`                   | AI 模型名称                 | deepseek-chat           |
 | `ARK_BASE_URL`                | AI 模型 API Base URL      | https://api.deepseek.com/ |
 | `EMBEDDING_MODEL`             | Embedding 模型名称          | -                       |
 | `JWT_SECRET`                  | JWT 签名密钥                | (见 config.yaml)         |
 | `FFMPEG_PATH`                 | FFmpeg 可执行文件路径          | ffmpeg                  |
-| `GRPC_CLIENT_TIMEOUT`         | gRPC 客户端超时 (秒)          | 10                      |
+| `GRPC_CLIENT_TIMEOUT`         | gRPC 客户端超时 (秒)          | 30                      |
 | `GRPC_SERVER_TIMEOUT`         | gRPC 服务端超时 (秒)          | 30                      |
-| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | 熔断器失败阈值           | 5                       |
-| `CIRCUIT_BREAKER_TIMEOUT`     | 熔断器超时 (秒)               | 30                      |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | 熔断器失败阈值           | 50                      |
+| `CIRCUIT_BREAKER_TIMEOUT`     | 熔断器超时 (秒)               | 10                      |
 | `RETRY_MAX_ATTEMPTS`          | 最大重试次数                  | 3                       |
 | `RETRY_INITIAL_DELAY`         | 重试初始延迟 (ms)             | 200                     |
 | `MESSAGE_RATE_LIMIT`          | 消息接口限流 (次/分钟)           | 50                      |
-| `RECOMMEND_RATE_LIMIT`        | 推荐接口限流 (次/分钟)           | 30                      |
+| `RECOMMEND_RATE_LIMIT`        | 推荐接口限流 (次/分钟)           | 60                      |
 
 完整环境变量列表参见 `.env.example`。
 

@@ -347,6 +347,17 @@ func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v
 	}
+	if v := os.Getenv("TRACING_ENABLE"); v != "" {
+		cfg.Tracing.Enable = v == "true" || v == "1"
+	}
+	if v := os.Getenv("OTEL_ENDPOINT"); v != "" {
+		cfg.Tracing.OtelEndpoint = v
+	}
+	if v := os.Getenv("TRACING_SAMPLE_RATE"); v != "" {
+		if rate, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Tracing.SampleRate = rate
+		}
+	}
 }
 
 // GetPostgresDSN 获取PostgreSQL连接字符串

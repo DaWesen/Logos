@@ -64,6 +64,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("recommend")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("recommend")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.recommend",
 		Port:        cfg.Ports.Recommend,

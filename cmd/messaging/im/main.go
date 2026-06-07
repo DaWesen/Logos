@@ -45,6 +45,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("im")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("im")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.im",
 		Port:        cfg.Ports.IM,

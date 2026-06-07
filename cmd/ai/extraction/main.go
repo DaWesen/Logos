@@ -80,6 +80,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("extraction")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("extraction")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.extraction",
 		Port:        cfg.Ports.Extraction,

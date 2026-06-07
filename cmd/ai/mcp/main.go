@@ -51,6 +51,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("mcp")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("mcp")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.mcp",
 		Port:        cfg.Ports.MCP,

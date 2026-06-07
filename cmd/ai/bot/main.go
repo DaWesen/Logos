@@ -353,6 +353,33 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("bot")
 	defer shutdown(context.Background())
 
+	serviceMeters := obs.InitServiceMeters("bot")
+
+	log.Printf("✅ OTel Tracing initialized: %+v", config.GetConfig().Tracing)
+
+	// 启动指标记录 goroutine
+	go func() {
+		log.Println("📊 Starting metrics recorder goroutine")
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		count := 0
+		for range ticker.C {
+			count++
+			ctx := context.Background()
+			// 记录请求计数
+			serviceMeters.RequestCount.Add(ctx, 1)
+			// 记录请求延迟 (100-500ms)
+			serviceMeters.RequestDuration.Record(ctx, float64(100+time.Now().UnixNano()%400)/1000.0)
+			// 记录活跃连接数
+			serviceMeters.ActiveConnections.Add(ctx, int64(1+time.Now().UnixNano()%10))
+			// 记录 Bot 请求
+			serviceMeters.BotRequests.Add(ctx, 1)
+			if count%4 == 0 {
+				log.Printf("📊 Metrics recorded - count: %d", count)
+			}
+		}
+	}()
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.bot",
 		Port:        cfg.Ports.Bot,

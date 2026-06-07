@@ -23,6 +23,10 @@ x-service-discovery: &service-discovery
   LOGOS_BILLING_HOST: billing-service
   LOGOS_MONITORING_HOST: monitoring-service
 
+x-tracing: &tracing
+  TRACING_ENABLE: "true"
+  OTEL_ENDPOINT: otel-collector:4317
+
 services:
   # ==================== 基础设施层 ====================
 
@@ -707,7 +711,7 @@ services:
     container_name: logos-bot
     command: ["./bot"]
     environment:
-      <<: *service-discovery
+      <<: [*service-discovery, *tracing]
       SERVICE_HOST: bot-service
       ETCD_ENDPOINTS: etcd:2379
       KAFKA_BROKERS: kafka:9092

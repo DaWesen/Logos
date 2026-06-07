@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 
 	"github.com/gin-gonic/gin"
 )
@@ -59,6 +61,11 @@ func main() {
 	cfg := config.GetConfig()
 
 	logger.InitLogger()
+
+	shutdown, _, _ := obs.InitGRPCProvider("process")
+	defer shutdown(context.Background())
+
+	_ = obs.InitServiceMeters("process")
 
 	db, err := pgsql.InitPostgres()
 	if err != nil {

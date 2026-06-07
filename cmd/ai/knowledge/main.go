@@ -97,6 +97,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("knowledge")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("knowledge")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.knowledge",
 		Port:        cfg.Ports.Knowledge,

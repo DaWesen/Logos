@@ -45,6 +45,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("contact")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("contact")
+
 	// 启动服务
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.contact",

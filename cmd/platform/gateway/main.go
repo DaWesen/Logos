@@ -9,6 +9,7 @@ import (
 	"Logos/internal/service/platform/gateway/websocket"
 	"Logos/pkg/client"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	"context"
 	"fmt"
 	"log"
@@ -25,6 +26,11 @@ func main() {
 	cfg := config.GetConfig()
 
 	logger.InitLogger()
+
+	shutdown, _, _ := obs.InitGRPCProvider("gateway")
+	defer shutdown(context.Background())
+
+	_ = obs.InitServiceMeters("gateway")
 
 	// 创建 websocket handler
 	wsHandler := websocket.NewHandler()

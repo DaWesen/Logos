@@ -93,6 +93,8 @@ func main() {
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("chat")
 	defer shutdown(context.Background())
 
+	_ = obs.InitServiceMeters("chat")
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.chat",
 		Port:        cfg.Ports.Chat,
