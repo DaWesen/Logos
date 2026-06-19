@@ -28,6 +28,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.23.12
 	github.com/sony/gobreaker v1.0.0
 	github.com/spf13/viper v1.18.2
+	github.com/wdvxdr1123/ZeroBot v1.8.2
 	go.etcd.io/etcd/client/v3 v3.6.2
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0
 	go.opentelemetry.io/otel v1.44.0
@@ -197,7 +198,6 @@ require (
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
-	github.com/wdvxdr1123/ZeroBot v1.8.2 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
