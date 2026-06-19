@@ -46,6 +46,9 @@ require (
 )
 
 require (
+	github.com/FloatTech/ttl v0.0.0-20250224045156-012b1463287d // indirect
+	github.com/RomiChan/syncx v0.0.0-20240418144900-b7402ffdebc7 // indirect
+	github.com/RomiChan/websocket v1.4.3-0.20251002072000-d3eb41798438 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
@@ -88,6 +91,7 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
+	github.com/fumiama/orbyte v0.0.0-20251002065953-3bb358367eb5 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/getsentry/sentry-go v0.12.0 // indirect
@@ -193,6 +197,7 @@ require (
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/ugorji/go/codec v1.3.1 // indirect
+	github.com/wdvxdr1123/ZeroBot v1.8.2 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect

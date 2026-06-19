@@ -26,6 +26,7 @@ type BotRepository interface {
 	DeleteBot(ctx context.Context, id string) error
 	GetBot(ctx context.Context, id string) (*model.Bot, error)
 	GetBotByName(ctx context.Context, userId, name string) (*model.Bot, error)
+	GetBotByQQNumber(ctx context.Context, qqNumber string) (*model.Bot, error)
 	ListBots(ctx context.Context, userId, botType, status string, offset, limit int) ([]*model.Bot, error)
 	CountBots(ctx context.Context, userId, botType, status string) (int64, error)
 
@@ -97,6 +98,18 @@ func (r *botRepository) GetBot(ctx context.Context, id string) (*model.Bot, erro
 func (r *botRepository) GetBotByName(ctx context.Context, userId, name string) (*model.Bot, error) {
 	var bot model.Bot
 	err := r.db.WithContext(ctx).Where("user_id = ? AND name = ?", userId, name).First(&bot).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &bot, nil
+}
+
+func (r *botRepository) GetBotByQQNumber(ctx context.Context, qqNumber string) (*model.Bot, error) {
+	var bot model.Bot
+	err := r.db.WithContext(ctx).Where("qq_number = ? AND deleted_at IS NULL", qqNumber).First(&bot).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

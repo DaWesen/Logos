@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Bot, Plus, Trash2, Edit3, Brain, BookOpen, Save, Key, Globe, User, MessageSquare, ChevronDown, ChevronUp, Camera, Database, Network, Eye, X } from 'lucide-react'
+import { Bot, Plus, Trash2, Edit3, Brain, BookOpen, Save, Key, Globe, User, MessageSquare, ChevronDown, ChevronUp, Camera, Database, Network, Eye, X, MessageCircle } from 'lucide-react'
 import { getBotList, createBot, updateBot, deleteBot, getUserMemory, setUserMemory, deleteUserMemory, type UserMemory } from '@/api/bot'
 import { uploadChatMedia } from '@/api/chat'
 import { listCollections } from '@/api/knowledge'
@@ -107,6 +107,7 @@ interface BotItem {
   enableGraph: boolean
   autoSaveToKb: boolean
   knowledgeBaseIds: string[]
+  qqNumber: string
   createdAt: string
 }
 
@@ -128,6 +129,7 @@ const defaultForm: Partial<BotItem> = {
   enableGraph: false,
   autoSaveToKb: false,
   knowledgeBaseIds: [],
+  qqNumber: '',
 }
 
 const providerOptions = [
@@ -272,6 +274,7 @@ export default function BotPage() {
               enableGraph: config.enable_graph === 'true',
               autoSaveToKb: config.auto_save_to_kb === 'true',
               knowledgeBaseIds: (config.collection_ids || '').split(',').filter(Boolean),
+              qqNumber: (config.qq_number || '') as string,
             } as BotItem
           })
         })
@@ -314,6 +317,7 @@ export default function BotPage() {
       enableGraph: form.enableGraph || false,
       autoSaveToKb: form.autoSaveToKb || false,
       knowledgeBaseIds: [],
+      qqNumber: form.qqNumber || '',
       createdAt: new Date().toISOString(),
     }
     setBots((prev) => [localBot, ...prev])
@@ -394,6 +398,7 @@ export default function BotPage() {
       enableGraph: bot.enableGraph,
       autoSaveToKb: bot.autoSaveToKb,
       knowledgeBaseIds: bot.knowledgeBaseIds || [],
+      qqNumber: bot.qqNumber || '',
     })
   }
 
@@ -907,6 +912,20 @@ export default function BotPage() {
               </div>
             </div>
           )}
+
+          <div className="bot-form-section-title"><MessageCircle size={14} /> QQ 绑定</div>
+          <div className="login-field">
+            <label>关联QQ号</label>
+            <input
+              className="ba-input"
+              placeholder="输入QQ号（选填）"
+              value={form.qqNumber || ''}
+              onChange={(e) => setForm({ ...form, qqNumber: e.target.value })}
+            />
+            <p style={{ color: 'var(--ba-text-light)', fontSize: 12, margin: '4px 0 0' }}>
+              绑定QQ号后，该Bot可通过QQ与您对话。每个QQ号只能绑定一个Bot。
+            </p>
+          </div>
 
           <button className="ba-btn ba-btn-primary" onClick={submitForm} style={{ marginTop: 16, width: '100%' }}>
             <Save size={16} /> {editingBotId ? '保存' : '创建'}

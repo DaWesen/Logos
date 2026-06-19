@@ -517,6 +517,29 @@ services:
     networks:
       - logos-network
 
+  qqbridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logos-qqbridge
+    command: ["./qqbridge"]
+    environment:
+      <<: *service-discovery
+      SERVICE_HOST: qqbridge
+      ETCD_ENDPOINTS: etcd:2379
+      KAFKA_BROKERS: kafka:9092
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: redis123456
+      QQBRIDGE_ENABLED: "true"
+      QQBRIDGE_WS_PORT: "6701"
+    ports:
+      - "6701:6701"
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - logos-network
+
   # ==================== AI 领域 ====================
   # 知识库 / 搜索 / 向量 / 问答 / 推荐 / 提取 / 集合 / Bot / Process — AI 能力
 

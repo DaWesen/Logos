@@ -223,8 +223,16 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, event.ChatID)
 		}
 		if len(recipientIDs) == 0 && event.ChatType == types.ChatTypePrivate {
-			// 保底，确保有接收者
-			recipientIDs = []string{event.SenderID}
+			// bot-{botUUID} 格式：Bot 回复时，从 MentionUserIDs 获取接收者
+			if strings.HasPrefix(event.ChatID, "bot-") && strings.HasPrefix(event.SenderID, "bot_") && len(event.MentionUserIDs) > 0 {
+				recipientIDs = event.MentionUserIDs
+			} else {
+				// 保底，确保有接收者
+				recipientIDs = []string{event.SenderID}
+			}
+		}
+		if event.Channel == "qq" && event.Metadata != nil && event.Metadata["qq_bound_user"] == "true" {
+			recipientIDs = appendUnique(recipientIDs, event.SenderID)
 		}
 		event.RecipientIDs = recipientIDs
 
@@ -247,13 +255,38 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		go func() {
 			// 确保会话和参与者存在！
 			if event.ChatType == types.ChatTypePrivate {
-				parts := strings.Split(event.ChatID, "_")
-				if len(parts) == 3 && parts[0] == "private" {
-					// private_{a}_{b}
-					_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
-				} else if len(parts) == 2 {
-					// {a}_{b}
-					_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
+				if strings.HasPrefix(event.ChatID, "bot-") {
+					// bot-{botUUID} 格式：Bot 聊天
+					botID := strings.TrimPrefix(event.ChatID, "bot-")
+					botSenderID := "bot_" + botID
+					// 从 MentionUserIDs 或 RecipientIDs 中获取用户 ID
+					var userID string
+					for _, uid := range event.MentionUserIDs {
+						if !strings.HasPrefix(uid, "bot_") {
+							userID = uid
+							break
+						}
+					}
+					if userID == "" {
+						for _, uid := range event.RecipientIDs {
+							if !strings.HasPrefix(uid, "bot_") {
+								userID = uid
+								break
+							}
+						}
+					}
+					if userID != "" {
+						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, botSenderID, userID)
+					}
+				} else {
+					parts := strings.Split(event.ChatID, "_")
+					if len(parts) == 3 && parts[0] == "private" {
+						// private_{a}_{b}
+						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
+					} else if len(parts) == 2 {
+						// {a}_{b}
+						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
+					}
 				}
 			}
 
@@ -316,6 +349,15 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 var botMentionRegex = regexp.MustCompile(`@(\S+)`)
 
 func (s *ChatServiceImpl) handleBotMentions(event *types.MessageEvent) {
+	// QQ Bridge 快速路径已直接调用 Bot，跳过避免重复调用
+	if event.Metadata != nil {
+		if direct, ok := event.Metadata["qq_direct_bot"]; ok && direct == "true" {
+			logger.Debug("QQ快速路径消息，跳过Bot调用",
+				logger.StringField("msg_id", event.ID))
+			return
+		}
+	}
+
 	var botIDs []string
 
 	for _, uid := range event.MentionUserIDs {
@@ -425,6 +467,8 @@ func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs 
 				ReplyToMessage: event.ID,
 				Timestamp:      time.Now(),
 				MentionUserIDs: []string{event.SenderID},
+				Metadata:       event.Metadata,
+				Channel:        event.Channel,
 			}
 
 			if err := s.eventBus.PublishMessageEvent(ctx, botResponseEvent); err != nil {
@@ -625,6 +669,18 @@ func (s *ChatServiceImpl) handleTypingEvent(event *types.TypingEvent) error {
 	return nil
 }
 
+func appendUnique(items []string, item string) []string {
+	if item == "" {
+		return items
+	}
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
 func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []string {
 	parts := strings.Split(chatID, "_")
 	if len(parts) == 3 && parts[0] == "private" {
@@ -641,6 +697,18 @@ func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []str
 		case parts[1]:
 			return []string{parts[0]} // 只返回对方
 		}
+	}
+
+	// bot-{botUUID} 格式：Bot 聊天的 ChatID
+	if strings.HasPrefix(chatID, "bot-") {
+		// 如果发送者是 Bot（bot_ 前缀），接收者无法仅从 ChatID 推断
+		// 返回空，由调用方通过 MentionUserIDs 等补充
+		if strings.HasPrefix(senderID, "bot_") {
+			return []string{}
+		}
+		// 用户发送消息给 Bot，接收者是 Bot
+		botID := strings.TrimPrefix(chatID, "bot-")
+		return []string{"bot_" + botID}
 	}
 
 	logger.Warn("无法解析单聊会话ID获取接收者",

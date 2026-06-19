@@ -19,6 +19,7 @@ interface BotItem {
   enableGraph: boolean
   autoSaveToKb: boolean
   knowledgeBaseIds: string[]
+  qqNumber: string
   createdAt: string
 }
 
@@ -101,6 +102,7 @@ export async function createBot(data: Partial<BotItem>): Promise<BotItem | null>
         collection_ids: (data.knowledgeBaseIds || []).join(','),
         embedding_base_url: data.embeddingBaseUrl || '',
         embedding_api_key: data.embeddingApiKey || '',
+        qq_number: data.qqNumber || '',
       },
     })
     return extractData(res, null)
@@ -130,6 +132,7 @@ export async function updateBot(id: string, data: Partial<BotItem>): Promise<Bot
         collection_ids: (data.knowledgeBaseIds || []).join(','),
         embedding_base_url: data.embeddingBaseUrl || '',
         embedding_api_key: data.embeddingApiKey || '',
+        qq_number: data.qqNumber || '',
       },
     })
     return extractData(res, null)

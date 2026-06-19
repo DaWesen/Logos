@@ -342,6 +342,14 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 			bot.DELETE("/memory", h.DeleteUserMemory)
 		}
 
+		// QQ 绑定
+		qq := authApi.Group("/qq")
+		{
+			qq.POST("/bind", h.BindQQ)
+			qq.DELETE("/bind", h.UnbindQQ)
+			qq.GET("/bind", h.GetQQBind)
+		}
+
 		// Chat 相关
 		chat := authApi.Group("/chat")
 		{

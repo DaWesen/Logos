@@ -19,6 +19,7 @@ import (
 	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
+	"Logos/pkg/cache"
 	"Logos/pkg/client"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
@@ -76,6 +77,7 @@ var (
 	ErrAgentNotInitialized  = errors.New("Agent未初始化")
 	ErrInsufficientBalance  = errors.New("余额不足")
 	ErrInvalidProvider      = errors.New("无效的模型提供商")
+	ErrQQNumberDuplicate    = errors.New("该QQ号已被其他Bot绑定")
 )
 
 type BotService interface {
@@ -189,9 +191,24 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 		EmbeddingModel: embeddingModel,
 		SystemPrompt:   systemPrompt,
 		Config:         botmodel.JSONMap(config),
+		QQNumber:       config["qq_number"],
 		Status:         "active",
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
+	}
+
+	// Validate QQ number uniqueness
+	if config != nil {
+		if qqNum, ok := config["qq_number"]; ok && qqNum != "" {
+			existing, err := s.repo.GetBotByQQNumber(ctx, qqNum)
+			if err != nil {
+				logger.Error("检查QQ号唯一性失败", logger.ErrorField(err))
+				return nil, ErrInternalServer
+			}
+			if existing != nil {
+				return nil, ErrQQNumberDuplicate
+			}
+		}
 	}
 
 	err := s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
@@ -213,6 +230,11 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 	}
 
 	s.syncEmbeddingToCollections(ctx, bot)
+
+	// 写入 QQ-Bot 绑定缓存
+	if bot.QQNumber != "" {
+		s.updateQQBotCache(bot.QQNumber, bot.ID)
+	}
 
 	logger.Info("创建 Bot 成功", logger.StringField("id", bot.ID))
 	return bot, nil
@@ -267,6 +289,17 @@ func (s *botServiceImpl) UpdateBot(ctx context.Context, userID, id, name, descri
 	if config != nil {
 		bot.Config = botmodel.JSONMap(config)
 		configChanged = true
+		if qqNum, ok := config["qq_number"]; ok && qqNum != "" {
+			existing, err := s.repo.GetBotByQQNumber(ctx, qqNum)
+			if err != nil {
+				logger.Error("检查QQ号唯一性失败", logger.ErrorField(err))
+				return nil, ErrInternalServer
+			}
+			if existing != nil && existing.ID != id {
+				return nil, ErrQQNumberDuplicate
+			}
+			bot.QQNumber = qqNum
+		}
 	}
 	if status != "" {
 		bot.Status = status
@@ -282,6 +315,11 @@ func (s *botServiceImpl) UpdateBot(ctx context.Context, userID, id, name, descri
 
 	if configChanged && s.agentManager != nil {
 		s.agentManager.InvalidateAgent(bot.ID)
+	}
+
+	// 更新 QQ-Bot 绑定缓存
+	if bot.QQNumber != "" {
+		s.updateQQBotCache(bot.QQNumber, bot.ID)
 	}
 
 	logger.Info("更新 Bot 成功", logger.StringField("id", id))
@@ -1681,4 +1719,22 @@ func mergeAuthConfigToHeaders(headers map[string]string, authConfig map[string]s
 		}
 	}
 	return result
+}
+
+// updateQQBotCache 更新 QQ 号与 Bot ID 的绑定缓存
+// QQ Bridge 服务通过此缓存查找绑定了 QQ 号的 Bot
+func (s *botServiceImpl) updateQQBotCache(qqNumber, botID string) {
+	redis := cache.NewRedisCache()
+	ctx := context.Background()
+	key := fmt.Sprintf("qq:bot_bind:%s", qqNumber)
+	if err := redis.Set(ctx, key, botID, 0); err != nil {
+		logger.Warn("写入QQ-Bot绑定缓存失败",
+			logger.StringField("qq_number", qqNumber),
+			logger.StringField("bot_id", botID),
+			logger.ErrorField(err))
+	} else {
+		logger.Info("QQ-Bot绑定缓存已更新",
+			logger.StringField("qq_number", qqNumber),
+			logger.StringField("bot_id", botID))
+	}
 }

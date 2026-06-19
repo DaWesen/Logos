@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { updateProfile, updateAvatar } from '@/api/user'
 import { toMediaUrl } from '@/api/chat'
 import { getAISettings, saveAISettings, AI_PROVIDERS, type AISettings, type AIModelConfig } from '@/api/settings'
-import { Save, User, Trash2, Camera, Sparkles, Eye, EyeOff, Key, Globe, Cpu, Thermometer } from 'lucide-react'
+import { Save, User, Trash2, Camera, Sparkles, Eye, EyeOff, Key, Globe, Cpu, Thermometer, MessageCircle } from 'lucide-react'
 import './SettingsPage.css'
 
 type AIFeature = 'summary' | 'reply' | 'todo' | 'translation'
@@ -29,6 +29,30 @@ export default function SettingsPage() {
   const [aiSaved, setAiSaved] = useState(false)
   const [showApiKeys, setShowApiKeys] = useState<Record<string, boolean>>({})
   const [expandedFeature, setExpandedFeature] = useState<AIFeature>('summary')
+
+  // QQ 绑定状态
+  const [qqNumber, setQqNumber] = useState('')
+  const [qqBound, setQqBound] = useState(false)
+  const [qqBoundNumber, setQqBoundNumber] = useState('')
+  const [qqSaving, setQqSaving] = useState(false)
+  const [qqSaved, setQqSaved] = useState(false)
+
+  // 加载QQ绑定状态
+  useEffect(() => {
+    const token = localStorage.getItem('aim_token')
+    if (!token) return
+    fetch('/api/v1/qq/bind', {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.data?.bound) {
+          setQqBound(true)
+          setQqBoundNumber(data.data.qq_number)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   const handleSave = async () => {
     setSaving(true)
@@ -297,6 +321,82 @@ export default function SettingsPage() {
               <Save size={16} /> {aiSaving ? '保存中...' : aiSaved ? '已保存 ✓' : '保存配置'}
             </button>
           </div>
+        </div>
+
+        <div className="settings-section ba-card">
+          <h3 className="settings-section-title">
+            <MessageCircle size={18} /> QQ 绑定
+          </h3>
+          <p style={{ color: 'var(--ba-text-light)', fontSize: 13, marginBottom: 16 }}>
+            绑定你的QQ号后，在QQ上给Bot发消息会同步到本项目的聊天页面。
+          </p>
+          {qqBound ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ color: 'var(--ba-text)', fontSize: 14 }}>
+                已绑定QQ号: <strong>{qqBoundNumber}</strong>
+              </span>
+              <button
+                className="ba-btn"
+                style={{ background: '#ef4444', fontSize: 12, padding: '4px 12px' }}
+                onClick={async () => {
+                  const token = localStorage.getItem('aim_token')
+                  if (!token) return
+                  try {
+                    await fetch('/api/v1/qq/bind', {
+                      method: 'DELETE',
+                      headers: { Authorization: `Bearer ${token}` }
+                    })
+                    setQqBound(false)
+                    setQqBoundNumber('')
+                  } catch {}
+                }}
+              >
+                解绑
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                className="ba-input"
+                type="text"
+                placeholder="输入你的QQ号"
+                value={qqNumber}
+                onChange={e => setQqNumber(e.target.value)}
+                style={{ flex: 1, maxWidth: 200 }}
+              />
+              <button
+                className="ba-btn"
+                disabled={!qqNumber || qqSaving}
+                onClick={async () => {
+                  const token = localStorage.getItem('aim_token')
+                  if (!token || !qqNumber) return
+                  setQqSaving(true)
+                  try {
+                    const res = await fetch('/api/v1/qq/bind', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ qq_number: qqNumber })
+                    })
+                    const data = await res.json()
+                    if (res.ok) {
+                      setQqBound(true)
+                      setQqBoundNumber(qqNumber)
+                      setQqSaved(true)
+                      setTimeout(() => setQqSaved(false), 2000)
+                    } else {
+                      alert(data.message || '绑定失败')
+                    }
+                  } catch {
+                    alert('绑定失败')
+                  } finally {
+                    setQqSaving(false)
+                  }
+                }}
+              >
+                {qqSaving ? '绑定中...' : qqSaved ? '已绑定!' : '绑定'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="settings-section ba-card">

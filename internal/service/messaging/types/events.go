@@ -35,6 +35,7 @@ type MessageEvent struct {
 	MentionUserIDs []string               `json:"mention_user_ids,omitempty"`
 	Extra          map[string]interface{} `json:"extra,omitempty"`
 	RecipientIDs   []string               `json:"recipient_ids,omitempty"`
+	Channel        string                 `json:"channel,omitempty"`
 }
 
 type MessageReadEvent struct {

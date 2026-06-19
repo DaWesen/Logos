@@ -33,6 +33,7 @@ type Config struct {
 	Etcd          Etcd          `mapstructure:"etcd"`
 	GRPC          GRPC          `mapstructure:"grpc"`
 	Eino          Eino          `mapstructure:"eino"`
+	QQBridge      QQBridge      `mapstructure:"qqbridge"`
 }
 
 // Ports 服务端口配置
@@ -57,6 +58,7 @@ type Ports struct {
 	Bot        int `mapstructure:"bot"`
 	Billing    int `mapstructure:"billing"`
 	Process    int `mapstructure:"process"`
+	QQBridge   int `mapstructure:"qqbridge"`
 }
 
 // ServiceConfig 单个服务配置
@@ -212,6 +214,21 @@ type Eino struct {
 	EmbeddingModel string `mapstructure:"embedding_model"`
 }
 
+// QQBridge QQ Bridge配置
+type QQBridge struct {
+	Enabled          bool   `mapstructure:"enabled"`
+	WSHost           string `mapstructure:"ws_host"`
+	WSPort           int    `mapstructure:"ws_port"`
+	WSForwardURL     string `mapstructure:"ws_forward_url"`
+	ConsumerGroup    string `mapstructure:"consumer_group"`
+	OutgoingGroup    string `mapstructure:"outgoing_group"`
+	QQUserPrefix     string `mapstructure:"qq_user_prefix"`
+	QQGroupPrefix    string `mapstructure:"qq_group_prefix"`
+	AutoRegisterUser bool   `mapstructure:"auto_register_user"`
+	AutoCreateGroup  bool   `mapstructure:"auto_create_group"`
+	TempDir          string `mapstructure:"temp_dir"`
+}
+
 func LoadConfig(path string) (*Config, error) {
 	viper.AddConfigPath(path)
 	viper.SetConfigName("config")
@@ -262,6 +279,10 @@ func bindEnvVars() {
 		{"ARK_MODEL", "eino.model"},
 		{"ARK_BASE_URL", "eino.base_url"},
 		{"JWT_SECRET", "jwt.secret"},
+		{"QQBRIDGE_ENABLED", "qqbridge.enabled"},
+		{"QQBRIDGE_WS_HOST", "qqbridge.ws_host"},
+		{"QQBRIDGE_WS_PORT", "qqbridge.ws_port"},
+		{"QQBRIDGE_WS_FORWARD_URL", "qqbridge.ws_forward_url"},
 	}
 
 	for _, b := range envBindings {
@@ -357,6 +378,17 @@ func overrideFromEnv(cfg *Config) {
 		if rate, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Tracing.SampleRate = rate
 		}
+	}
+	if v := os.Getenv("QQBRIDGE_ENABLED"); v != "" {
+		cfg.QQBridge.Enabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("QQBRIDGE_WS_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.QQBridge.WSPort = port
+		}
+	}
+	if v := os.Getenv("QQBRIDGE_WS_FORWARD_URL"); v != "" {
+		cfg.QQBridge.WSForwardURL = v
 	}
 }
 

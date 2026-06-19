@@ -24,6 +24,7 @@ type Bot struct {
 	EmbeddingModel string         `gorm:"size:255;comment:Embedding模型名称" json:"embeddingModel,omitempty"`
 	SystemPrompt   string         `gorm:"type:text;comment:系统提示词" json:"systemPrompt"`
 	Config         JSONMap        `gorm:"type:jsonb;comment:Bot配置" json:"config"`
+	QQNumber       string         `gorm:"type:varchar(20);uniqueIndex;comment:关联QQ号" json:"qqNumber,omitempty"`
 	Status         string         `gorm:"size:20;default:active;comment:状态" json:"status"`
 	CreatedAt      time.Time      `gorm:"autoCreateTime;comment:创建时间" json:"createdAt"`
 	UpdatedAt      time.Time      `gorm:"autoUpdateTime;comment:更新时间" json:"updatedAt"`
