@@ -62,7 +62,7 @@ type Message struct {
 	MediaURL       string         `gorm:"type:varchar(500);comment:媒体URL" json:"mediaUrl"`
 	MediaMeta      string         `gorm:"type:text;comment:媒体元数据" json:"mediaMeta"`
 	Metadata       JSONMap        `gorm:"type:jsonb;comment:元数据" json:"metadata"`
-	MentionUserIDs []string       `gorm:"type:jsonb;comment:提及用户ID列表" json:"mentionUserIds"`
+	MentionUserIDs StringSlice    `gorm:"type:jsonb;comment:提及用户ID列表" json:"mentionUserIds"`
 	ReplyToMessage string         `gorm:"type:varchar(36);comment:回复消息ID" json:"replyToMessage"`
 	Status         string         `gorm:"type:varchar(50);default:'sent';comment:消息状态" json:"status"`
 	IsRead         bool           `gorm:"default:false;comment:是否已读" json:"isRead"`
@@ -122,6 +122,24 @@ func (j *JSONMap) Scan(value interface{}) error {
 	return json.Unmarshal(bytes, j)
 }
 
+// StringSlice 字符串切片类型，用于 JSONB 字段
+type StringSlice []string
+
+func (s StringSlice) Value() (driver.Value, error) {
+	if s == nil {
+		return json.Marshal([]string{})
+	}
+	return json.Marshal(s)
+}
+
+func (s *StringSlice) Scan(value interface{}) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return nil
+	}
+	return json.Unmarshal(bytes, s)
+}
+
 func (m *Message) BeforeCreate(tx *gorm.DB) error {
 	if m.ID == "" {
 		m.ID = uuid.New().String()
@@ -133,7 +151,7 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 		m.Metadata = make(JSONMap)
 	}
 	if m.MentionUserIDs == nil {
-		m.MentionUserIDs = []string{}
+		m.MentionUserIDs = StringSlice{}
 	}
 	if m.MediaMeta == "" {
 		m.MediaMeta = "{}"

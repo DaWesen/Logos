@@ -2342,7 +2342,24 @@ export default function ChatPage() {
             <button className="chat-list-action-btn" onClick={() => setShowCreateGroup(true)} title="创建群组">👥</button>
             <button className="chat-list-action-btn" onClick={() => { setShowJoinGroup(true); setJoinGroupError('') }} title="加入群组">🔗</button>
             <button className="chat-list-action-btn" onClick={refreshConversations} title="刷新列表"><RefreshCw size={18} /></button>
-            <button className="chat-list-action-btn" onClick={() => setShowBotPanel(true)} title="Bot列表"><Bot size={18} /></button>
+            <button className="chat-list-action-btn" onClick={() => {
+              setShowBotPanel(true)
+              getBotList().then((list) => {
+                const safeList = Array.isArray(list) ? list : []
+                setBots(safeList)
+                setChats((prev) => {
+                  const existingBotAvatars = new Map<string, string>()
+                  prev.filter((c) => c.type === 'bot').forEach((c) => {
+                    if (c.avatar) existingBotAvatars.set(c.botId || c.id.replace('bot-', ''), c.avatar)
+                  })
+                  const botChats: ChatItem[] = safeList.map((b) => {
+                    const avatar = b.avatar || existingBotAvatars.get(b.id) || ''
+                    return { id: `bot-${b.id}`, type: 'bot' as const, name: b.name, avatar, unreadCount: 0, botId: b.id }
+                  })
+                  return [...botChats, ...prev.filter((c) => c.type !== 'bot')]
+                })
+              }).catch(() => {})
+            }} title="Bot列表"><Bot size={18} /></button>
             <button className="chat-list-action-btn" onClick={() => setShowNewChat(true)} title="新对话"><Plus size={18} /></button>
           </div>
         </div>

@@ -419,6 +419,20 @@ func (s *botServiceImpl) autoSaveToKnowledgeBase(bot *botmodel.Bot, userContent,
 func (s *botServiceImpl) DeleteBot(ctx context.Context, id string) error {
 	logger.Info("删除 Bot 请求", logger.StringField("id", id))
 
+	// 先获取 Bot，如果有 QQ 号则清除绑定，避免唯一索引冲突
+	bot, err := s.repo.GetBot(ctx, id)
+	if err != nil {
+		logger.Error("获取 Bot 失败", logger.ErrorField(err))
+		return ErrInternalServer
+	}
+	if bot != nil && bot.QQNumber != "" {
+		bot.QQNumber = ""
+		if err := s.repo.UpdateBot(ctx, bot); err != nil {
+			logger.Error("清除 Bot QQ 绑定失败", logger.ErrorField(err))
+			return ErrInternalServer
+		}
+	}
+
 	if err := s.repo.DeleteBot(ctx, id); err != nil {
 		logger.Error("删除 Bot 失败", logger.ErrorField(err))
 		return ErrInternalServer
@@ -652,7 +666,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 		Role:           "user",
 		Content:        strutil.CleanInvalidUTF8(content),
 		Metadata:       botmodel.JSONMap(metadata),
-		MentionUserIDs: []string{},
+		MentionUserIDs: botmodel.StringSlice{},
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -707,8 +721,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 		return chatResp, conversationID, cost, estimatedTokens, nil
 	}
 
-	currentMsg := schema.UserMessage(content)
-	allMessages := append(historyMessages, currentMsg)
+	allMessages := historyMessages
 
 	aiTimeout := 90 * time.Second
 	if deadline, ok := ctx.Deadline(); ok {
@@ -811,7 +824,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		Role:           "user",
 		Content:        content,
 		Metadata:       botmodel.JSONMap(metadata),
-		MentionUserIDs: []string{},
+		MentionUserIDs: botmodel.StringSlice{},
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -850,8 +863,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return conversationID, nil
 	}
 
-	currentMsg := schema.UserMessage(content)
-	allMessages := append(historyMessages, currentMsg)
+	allMessages := historyMessages
 
 	var fullResponse strings.Builder
 	streamOnChunk := func(chunk string) error {
@@ -1361,7 +1373,7 @@ func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bo
 		basePrompt = "你是一个有用的AI助手。"
 	}
 
-	if s.einoManager == nil || s.repo == nil {
+	if s.einoManager == nil || !s.einoManager.IsInitialized() || s.repo == nil {
 		return basePrompt
 	}
 
@@ -1425,7 +1437,7 @@ func (s *botServiceImpl) saveAssistantMessage(ctx context.Context, botID, conver
 		ChatID:         conversationID,
 		Role:           "assistant",
 		Content:        cleanContent,
-		MentionUserIDs: []string{},
+		MentionUserIDs: botmodel.StringSlice{},
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
@@ -1665,17 +1677,20 @@ func (a *knowledgeSearchAdapter) ListCollections(ctx context.Context) ([]*botToo
 }
 
 func (s *botServiceImpl) triggerMemoryExtraction(ctx context.Context, botID, conversationID string) {
-	if s.einoManager == nil {
+	if s.einoManager == nil || !s.einoManager.IsInitialized() {
+		logger.Warn("记忆提取跳过: EinoManager未初始化", logger.StringField("botID", botID))
 		return
 	}
 
 	conversation, err := s.repo.GetConversation(ctx, conversationID)
 	if err != nil || conversation == nil {
+		logger.Warn("记忆提取跳过: 获取对话失败", logger.StringField("conversationID", conversationID), logger.ErrorField(err))
 		return
 	}
 
 	messages, err := s.repo.GetMessages(ctx, conversationID, 20, nil)
-	if err != nil || len(messages) < 4 {
+	if err != nil || len(messages) == 0 {
+		logger.Warn("记忆提取跳过: 无消息", logger.StringField("conversationID", conversationID), logger.IntField("messageCount", len(messages)), logger.ErrorField(err))
 		return
 	}
 
@@ -1689,6 +1704,8 @@ func (s *botServiceImpl) triggerMemoryExtraction(ctx context.Context, botID, con
 			}
 		}
 	}
+
+	logger.Info("触发记忆提取", logger.StringField("botID", botID), logger.StringField("userID", conversation.UserID), logger.IntField("messageCount", len(messages)))
 
 	memMgr := botmemory.GetMemoryManager(s.repo, s.einoManager, s.agentManager)
 	memMgr.ExtractAndSaveMemories(ctx, conversation.UserID, botID, messages, chatModel)

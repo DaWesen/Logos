@@ -98,7 +98,7 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if len(messages) < 3 {
+	if len(messages) == 0 {
 		return
 	}
 
