@@ -20,7 +20,7 @@ type PresetsConfig struct {
 	Bots []BotPreset `yaml:"bots"`
 }
 
-var DefaultPresetsYAMLPath = filepath.Join("internal", "bot", "agent", "presets", "promot", "presets.yaml")
+var DefaultPresetsYAMLPath = filepath.Join("internal", "bot", "agent", "presets", "prompt", "presets.yaml")
 
 func LoadPresetsFromYAML(mgr *agent.AgentManager, filePath string) error {
 	if filePath == "" {

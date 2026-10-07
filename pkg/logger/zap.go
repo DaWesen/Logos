@@ -39,9 +39,18 @@ type Logger interface {
 // 获取日志实例
 func GetLogger() *zap.Logger {
 	loggerOnce.Do(func() {
+		// SetLogger 已注入则跳过默认初始化
+		if loggerInstance != nil {
+			return
+		}
 		loggerInstance = initZapLogger()
 	})
 	return loggerInstance
+}
+
+// SetLogger 注入自定义日志实例（主要用于测试，隔离对配置文件的依赖）
+func SetLogger(l *zap.Logger) {
+	loggerInstance = l
 }
 
 // 初始化Zap日志记录器

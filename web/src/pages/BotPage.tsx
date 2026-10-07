@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Bot, Plus, Trash2, Edit3, Brain, BookOpen, Save, Key, Globe, User, MessageSquare, ChevronDown, ChevronUp, Camera, Database, Network, Eye, X, MessageCircle } from 'lucide-react'
+import { Bot, Plus, Trash2, Edit3, Brain, BookOpen, Save, Key, Globe, User, MessageSquare, ChevronDown, ChevronUp, Camera, Database, Network, Eye, X, MessageCircle, ListTodo } from 'lucide-react'
 import { getBotList, createBot, updateBot, deleteBot, getUserMemory, setUserMemory, deleteUserMemory, type UserMemory } from '@/api/bot'
 import { uploadChatMedia } from '@/api/chat'
 import { listCollections } from '@/api/knowledge'
@@ -105,6 +105,9 @@ interface BotItem {
   enableMemory: boolean
   enableRag: boolean
   enableGraph: boolean
+  enablePlanner: boolean
+  enableReflection: boolean
+  enableToolTrace: boolean
   autoSaveToKb: boolean
   knowledgeBaseIds: string[]
   qqNumber: string
@@ -127,6 +130,9 @@ const defaultForm: Partial<BotItem> = {
   enableMemory: true,
   enableRag: false,
   enableGraph: false,
+  enablePlanner: false,
+  enableReflection: false,
+  enableToolTrace: false,
   autoSaveToKb: false,
   knowledgeBaseIds: [],
   qqNumber: '',
@@ -272,6 +278,9 @@ export default function BotPage() {
               enableRag: config.enable_rag === 'true',
               enableMemory: config.enable_memory === 'true',
               enableGraph: config.enable_graph === 'true',
+              enablePlanner: config.enable_planner === 'true',
+              enableReflection: config.enable_reflection === 'true',
+              enableToolTrace: config.enable_tool_trace === 'true',
               autoSaveToKb: config.auto_save_to_kb === 'true',
               knowledgeBaseIds: (config.collection_ids || '').split(',').filter(Boolean),
               qqNumber: (config.qq_number || '') as string,
@@ -315,6 +324,9 @@ export default function BotPage() {
       enableMemory: form.enableMemory || false,
       enableRag: form.enableRag || false,
       enableGraph: form.enableGraph || false,
+      enablePlanner: form.enablePlanner || false,
+      enableReflection: form.enableReflection || false,
+      enableToolTrace: form.enableToolTrace || false,
       autoSaveToKb: form.autoSaveToKb || false,
       knowledgeBaseIds: [],
       qqNumber: form.qqNumber || '',
@@ -396,6 +408,9 @@ export default function BotPage() {
       enableMemory: bot.enableMemory,
       enableRag: bot.enableRag,
       enableGraph: bot.enableGraph,
+      enablePlanner: bot.enablePlanner,
+      enableReflection: bot.enableReflection,
+      enableToolTrace: bot.enableToolTrace,
       autoSaveToKb: bot.autoSaveToKb,
       knowledgeBaseIds: bot.knowledgeBaseIds || [],
       qqNumber: bot.qqNumber || '',
@@ -512,7 +527,10 @@ export default function BotPage() {
               <div className="bot-card-badges">
                 {bot.enableMemory && <span className="ba-badge ba-badge-blue"><Brain size={10} /> 记忆</span>}
                 {bot.enableRag && <span className="ba-badge ba-badge-green"><BookOpen size={10} /> RAG</span>}
+                {bot.enablePlanner && <span className="ba-badge ba-badge-purple"><ListTodo size={10} /> 规划</span>}
                 {bot.enableGraph && <span className="ba-badge ba-badge-purple"><Network size={10} /> 图谱</span>}
+                {bot.enableReflection && <span className="ba-badge" style={{ background: 'rgba(251,191,36,0.12)', color: '#D97706', fontSize: 10 }}><Eye size={10} /> 反思</span>}
+                {bot.enableToolTrace && <span className="ba-badge" style={{ background: 'rgba(20,184,166,0.12)', color: '#0D9488', fontSize: 10 }}><MessageCircle size={10} /> 调用链</span>}
               </div>
             </div>
             <div className="bot-card-body">
@@ -871,8 +889,20 @@ export default function BotPage() {
               <BookOpen size={16} /> RAG 检索
             </label>
             <label className="bot-toggle">
+              <input type="checkbox" checked={form.enablePlanner || false} onChange={(e) => setForm({ ...form, enablePlanner: e.target.checked })} />
+              <ListTodo size={16} /> 任务规划
+            </label>
+            <label className="bot-toggle">
               <input type="checkbox" checked={form.enableGraph || false} onChange={(e) => setForm({ ...form, enableGraph: e.target.checked })} />
               <Network size={16} /> 知识图谱
+            </label>
+            <label className="bot-toggle">
+              <input type="checkbox" checked={form.enableReflection || false} onChange={(e) => setForm({ ...form, enableReflection: e.target.checked })} />
+              <Eye size={16} /> 自我反思
+            </label>
+            <label className="bot-toggle">
+              <input type="checkbox" checked={form.enableToolTrace || false} onChange={(e) => setForm({ ...form, enableToolTrace: e.target.checked })} />
+              <MessageCircle size={16} /> 工具调用链
             </label>
             {form.enableRag && (
               <label className="bot-toggle">

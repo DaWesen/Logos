@@ -14,6 +14,7 @@ type Connection struct {
 	Send      chan []byte
 	mu        sync.Mutex
 	IsClosed  bool
+	done      chan struct{} // 关闭信号；Send 永不关闭，避免并发发送到已关闭 channel 导致 panic
 }
 
 type ConnectionManager struct {

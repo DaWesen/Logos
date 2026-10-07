@@ -416,6 +416,12 @@ func (c *RedisCache) Close() error {
 	return c.client.Close()
 }
 
+// RawClient 暴露底层 *redis.Client，供 PubSub 等高级特性复用连接池
+// 调用方不应关闭返回的 client（由 RedisCache.Close 统一管理）
+func (c *RedisCache) RawClient() *redis.Client {
+	return c.client
+}
+
 func GenerateUserKey(userID int64) string {
 	return fmt.Sprintf("user:%d", userID)
 }

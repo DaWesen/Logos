@@ -1,6 +1,6 @@
 import client from './client'
 
-function extractData<T>(res: { data: unknown }, fallback: T): T {
+function extractData<T>(res: { data: unknown }, fallback: T | null): T | null {
 	const d = res.data as Record<string, unknown>
 	if (!d) return fallback
 	if (d.data !== undefined && d.data !== null) return d.data as T

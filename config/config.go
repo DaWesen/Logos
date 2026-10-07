@@ -30,10 +30,25 @@ type Config struct {
 	Log           Log           `mapstructure:"log"`
 	JWT           JWT           `mapstructure:"jwt"`
 	Tracing       Tracing       `mapstructure:"tracing"`
-	Etcd          Etcd          `mapstructure:"etcd"`
-	GRPC          GRPC          `mapstructure:"grpc"`
-	Eino          Eino          `mapstructure:"eino"`
-	QQBridge      QQBridge      `mapstructure:"qqbridge"`
+	Etcd             Etcd             `mapstructure:"etcd"`
+	GRPC             GRPC             `mapstructure:"grpc"`
+	Eino             Eino             `mapstructure:"eino"`
+	QQBridge         QQBridge         `mapstructure:"qqbridge"`
+	ServiceDiscovery ServiceDiscovery `mapstructure:"service_discovery"`
+	Gateway          GatewayCfg       `mapstructure:"gateway"`
+}
+
+// ServiceDiscovery 服务发现配置（多节点水平扩展）
+type ServiceDiscovery struct {
+	UseEtcdResolver bool `mapstructure:"use_etcd_resolver"`
+}
+
+// GatewayCfg 网关配置（多节点广播）
+type GatewayCfg struct {
+	NodeID          string `mapstructure:"node_id"`
+	PubSubChannel  string `mapstructure:"pubsub_channel"`
+	EnableBroadcast bool   `mapstructure:"enable_broadcast"`
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
 }
 
 // Ports 服务端口配置
@@ -283,6 +298,10 @@ func bindEnvVars() {
 		{"QQBRIDGE_WS_HOST", "qqbridge.ws_host"},
 		{"QQBRIDGE_WS_PORT", "qqbridge.ws_port"},
 		{"QQBRIDGE_WS_FORWARD_URL", "qqbridge.ws_forward_url"},
+		{"LOGOS_USE_ETCD_RESOLVER", "service_discovery.use_etcd_resolver"},
+		{"LOGOS_NODE_ID", "gateway.node_id"},
+		{"LOGOS_WS_PUBSUB_CHANNEL", "gateway.pubsub_channel"},
+		{"LOGOS_WS_BROADCAST_ENABLED", "gateway.enable_broadcast"},
 	}
 
 	for _, b := range envBindings {
@@ -390,6 +409,33 @@ func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("QQBRIDGE_WS_FORWARD_URL"); v != "" {
 		cfg.QQBridge.WSForwardURL = v
 	}
+	if v := os.Getenv("LOGOS_USE_ETCD_RESOLVER"); v != "" {
+		cfg.ServiceDiscovery.UseEtcdResolver = v == "true" || v == "1"
+	}
+	if v := os.Getenv("LOGOS_NODE_ID"); v != "" {
+		cfg.Gateway.NodeID = v
+	}
+	if v := os.Getenv("LOGOS_WS_PUBSUB_CHANNEL"); v != "" {
+		cfg.Gateway.PubSubChannel = v
+	}
+	if v := os.Getenv("LOGOS_WS_BROADCAST_ENABLED"); v != "" {
+		cfg.Gateway.EnableBroadcast = v == "true" || v == "1"
+	}
+	if v := os.Getenv("LOGOS_WS_ALLOWED_ORIGINS"); v != "" {
+		cfg.Gateway.AllowedOrigins = splitAndTrim(v)
+	}
+}
+
+// splitAndTrim 按逗号切分并去除空白项
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // GetPostgresDSN 获取PostgreSQL连接字符串
@@ -527,4 +573,29 @@ func GetConfig() *Config {
 		}
 	})
 	return cfg
+}
+
+// GetGatewayNodeID 获取网关节点 ID，cfg.Gateway.NodeID 为空时 fallback 到 HOSTNAME
+func (c *Config) GetGatewayNodeID() string {
+	if c.Gateway.NodeID != "" {
+		return c.Gateway.NodeID
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
+	}
+	return "gateway-unknown"
+}
+
+// GetGatewayPubSubChannel 获取 PubSub channel，默认 logos:ws:broadcast
+func (c *Config) GetGatewayPubSubChannel() string {
+	if c.Gateway.PubSubChannel != "" {
+		return c.Gateway.PubSubChannel
+	}
+	return "logos:ws:broadcast"
+}
+
+// GetGatewayAllowedOrigins 获取 WebSocket Origin 白名单
+// 返回空切片表示不校验 Origin（兼容本地开发）
+func (c *Config) GetGatewayAllowedOrigins() []string {
+	return c.Gateway.AllowedOrigins
 }

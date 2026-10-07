@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,13 +87,7 @@ func (r *Result) Print() {
 		copy(durations, r.Latencies)
 		r.mu.Unlock()
 
-		for i := 0; i < len(durations); i++ {
-			for j := i + 1; j < len(durations); j++ {
-				if durations[j] < durations[i] {
-					durations[i], durations[j] = durations[j], durations[i]
-				}
-			}
-		}
+		slices.Sort(durations)
 
 		var total time.Duration
 		for _, d := range durations {

@@ -30,7 +30,7 @@ func toInt64(s string) int64 {
 
 type ChatService interface {
 	SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error)
-	GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int) ([]*model.Message, bool, error)
+	GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error)
 	SearchMessages(chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
 	MarkMessagesRead(msgIDs []string, userID, chatID string) error
 	WithdrawMessage(msgID, userID string) error
@@ -199,9 +199,9 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			}
 		}
 
-		// 🔴 3️⃣ 收到 Kafka 消息
+		// 收到 Kafka 消息
 		if event.ChatType == types.ChatTypePrivate {
-			logger.Info("\x1b[34m🔴 3️⃣ [Kafka-ChatService] 收到私聊消息\x1b[0m",
+			logger.Debug("收到私聊消息",
 				logger.StringField("msg_id", event.ID),
 				logger.StringField("chat_id", event.ChatID),
 				logger.StringField("sender_id", event.SenderID),
@@ -236,9 +236,9 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		}
 		event.RecipientIDs = recipientIDs
 
-		// 🔴 4️⃣ 直接发布到 outgoing Kafka！不等待数据库保存和审核！
+		// 直接发布到 outgoing Kafka！不等待数据库保存和审核！
 		if event.ChatType == types.ChatTypePrivate {
-			logger.Info("\x1b[35m🔴 4️⃣ [ChatService-Kafka] 发布私聊消息到 outgoing topic\x1b[0m",
+			logger.Debug("发布私聊消息到 outgoing topic",
 				logger.StringField("msg_id", event.ID),
 				logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
 		}
@@ -251,88 +251,23 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			logger.IntField("recipient_count", len(event.RecipientIDs)),
 		)
 
-		// 2️⃣ 异步处理所有其他逻辑（保存数据库、审核、翻译、推送等）
+		// 2️⃣ 同步落库：只有落库成功才返回 nil，Kafka 才会提交 offset；
+		// 落库失败返回 error → Subscribe 不提交 offset → 消息重投（at-least-once，不丢消息）。
+		// CreateMessage 按主键判重，重投不会产生重复数据。
+		if err := s.persistIncomingMessage(event); err != nil {
+			logger.Error("消息落库失败，不提交 offset 等待 Kafka 重投",
+				logger.StringField("msg_id", event.ID),
+				logger.StringField("chat_id", event.ChatID),
+				logger.ErrorField(err))
+			return err
+		}
+
+		// 3️⃣ 异步处理尽力而为的后续逻辑（审核、翻译、Bot 回复、离线推送）
+		// 这些失败不影响消息可靠性，因此不阻塞 offset 提交
 		go func() {
-			// 确保会话和参与者存在！
-			if event.ChatType == types.ChatTypePrivate {
-				if strings.HasPrefix(event.ChatID, "bot-") {
-					// bot-{botUUID} 格式：Bot 聊天
-					botID := strings.TrimPrefix(event.ChatID, "bot-")
-					botSenderID := "bot_" + botID
-					// 从 MentionUserIDs 或 RecipientIDs 中获取用户 ID
-					var userID string
-					for _, uid := range event.MentionUserIDs {
-						if !strings.HasPrefix(uid, "bot_") {
-							userID = uid
-							break
-						}
-					}
-					if userID == "" {
-						for _, uid := range event.RecipientIDs {
-							if !strings.HasPrefix(uid, "bot_") {
-								userID = uid
-								break
-							}
-						}
-					}
-					if userID != "" {
-						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, botSenderID, userID)
-					}
-				} else {
-					parts := strings.Split(event.ChatID, "_")
-					if len(parts) == 3 && parts[0] == "private" {
-						// private_{a}_{b}
-						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
-					} else if len(parts) == 2 {
-						// {a}_{b}
-						_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
-					}
-				}
+			if s.moderationClient != nil {
+				s.moderateMessage(event)
 			}
-
-			go func() {
-				if s.moderationClient != nil {
-					s.moderateMessage(event)
-				}
-			}()
-
-			// 保存消息到数据库（使用原始ID）
-			msgID := event.ID // 保持原始ID不变！
-			now := time.Now()
-			msg := &model.Message{
-				ID:             msgID,
-				ConversationID: event.ChatID,
-				ChatID:         event.ChatID,
-				ChatType:       int(event.ChatType),
-				SenderID:       event.SenderID,
-				SenderName:     event.SenderName,
-				SenderAvatar:   event.SenderAvatar,
-				MessageType:    int(event.MessageType),
-				Content:        event.Content,
-				MediaURL:       event.MediaURL,
-				MediaMeta:      model.JSONRaw(event.MediaMeta),
-				Metadata:       event.Metadata,
-				Status:         "sent",
-				Channel:        "web",
-				Role:           "user",
-				CreatedAt:      now,
-				UpdatedAt:      now,
-				ReplyToMessage: event.ReplyToMessage,
-				MentionUserIDs: model.StringArray(event.MentionUserIDs),
-			}
-
-			logger.Info("HandleMessageEvent: saving message", logger.StringField("msg_id", msgID), logger.StringField("media_url", event.MediaURL), logger.IntField("type", int(event.MessageType)))
-
-			if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
-				logger.Error("创建消息失败", logger.ErrorField(err))
-				return
-			}
-
-			if err := s.repo.UpdateConversationLastMessage(s.ctx, event.ChatID, msgID); err != nil {
-				logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
-			}
-
-			// 异步处理翻译和推送
 			if s.botClient != nil && event.SenderID != "system" {
 				s.handleBotMentions(event)
 			}
@@ -341,6 +276,91 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 
 	default:
 		logger.Warn("未知事件类型", logger.StringField("event_type", string(eventType)))
+	}
+
+	return nil
+}
+
+// persistIncomingMessage 同步落库：确保会话存在 + 写入消息（幂等）+ 更新会话最后消息。
+//
+// 之所以同步执行而非放进 goroutine：Kafka 消费者只有收到 handler 返回 nil 才提交 offset。
+// 若落库失败而 handler 已返回 nil，offset 会被提交，该消息将永久丢失（无法重投）。
+// 同步落库让失败能被消费者感知，从而不提交 offset、由 Kafka 重投恢复，
+// 配合 CreateMessage 的主键判重实现 at-least-once 且不产生重复数据。
+func (s *ChatServiceImpl) persistIncomingMessage(event *types.MessageEvent) error {
+	// 确保会话和参与者存在（GetOrCreatePrivateConversation 自身幂等）
+	if event.ChatType == types.ChatTypePrivate {
+		if strings.HasPrefix(event.ChatID, "bot-") {
+			// bot-{botUUID} 格式：Bot 聊天
+			botID := strings.TrimPrefix(event.ChatID, "bot-")
+			botSenderID := "bot_" + botID
+			// 从 MentionUserIDs 或 RecipientIDs 中获取用户 ID
+			var userID string
+			for _, uid := range event.MentionUserIDs {
+				if !strings.HasPrefix(uid, "bot_") {
+					userID = uid
+					break
+				}
+			}
+			if userID == "" {
+				for _, uid := range event.RecipientIDs {
+					if !strings.HasPrefix(uid, "bot_") {
+						userID = uid
+						break
+					}
+				}
+			}
+			if userID != "" {
+				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, botSenderID, userID)
+			}
+		} else {
+			parts := strings.Split(event.ChatID, "_")
+			if len(parts) == 3 && parts[0] == "private" {
+				// private_{a}_{b}
+				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
+			} else if len(parts) == 2 {
+				// {a}_{b}
+				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
+			}
+		}
+	}
+
+	// 保存消息到数据库（使用原始ID）
+	msgID := event.ID // 保持原始ID不变！
+	now := time.Now()
+	msg := &model.Message{
+		ID:             msgID,
+		ConversationID: event.ChatID,
+		ChatID:         event.ChatID,
+		ChatType:       int(event.ChatType),
+		SenderID:       event.SenderID,
+		SenderName:     event.SenderName,
+		SenderAvatar:   event.SenderAvatar,
+		MessageType:    int(event.MessageType),
+		Content:        event.Content,
+		MediaURL:       event.MediaURL,
+		MediaMeta:      model.JSONRaw(event.MediaMeta),
+		Metadata:       event.Metadata,
+		Status:         "sent",
+		Channel:        "web",
+		Role:           "user",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		ReplyToMessage: event.ReplyToMessage,
+		MentionUserIDs: model.StringArray(event.MentionUserIDs),
+	}
+
+	logger.Info("HandleMessageEvent: saving message",
+		logger.StringField("msg_id", msgID),
+		logger.StringField("media_url", event.MediaURL),
+		logger.IntField("type", int(event.MessageType)))
+
+	if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdateConversationLastMessage(s.ctx, event.ChatID, msgID); err != nil {
+		logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
 	}
 
 	return nil
@@ -594,13 +614,22 @@ func (s *ChatServiceImpl) handleMessageReadEvent(event *types.MessageReadEvent) 
 		return nil
 	}
 
-	if err := s.repo.MarkMessagesRead(s.ctx, event.MessageIDs); err != nil {
-		logger.Error("标记消息已读失败", logger.ErrorField(err))
-		return err
+	// 已读位点化：用本次回执携带消息的最大 seq 推进会话已读位点（单调不回退）。
+	// 未读数由位点比对计算，无需逐条 UPDATE messages.is_read。
+	if event.ChatID != "" && event.ReaderID != "" {
+		targetSeq, err := s.repo.GetMaxSeqByMessageIDs(s.ctx, event.MessageIDs)
+		if err != nil {
+			logger.Warn("查询已读回执消息 seq 失败", logger.ErrorField(err))
+		}
+		if err := s.repo.AdvanceReadPosition(s.ctx, event.ChatID, event.ReaderID, targetSeq); err != nil {
+			logger.Error("推进已读位点失败", logger.ErrorField(err))
+			return err
+		}
 	}
 
-	if event.ChatID != "" && event.ReaderID != "" {
-		_ = s.repo.UpdateParticipantLastRead(s.ctx, event.ChatID, event.ReaderID)
+	// 兼容既有已读态展示：仍标记显式 msgIDs 的 is_read（有界，非全量）
+	if err := s.repo.MarkMessagesRead(s.ctx, event.MessageIDs); err != nil {
+		logger.Warn("标记消息已读失败", logger.ErrorField(err))
 	}
 
 	recipientIDs := s.getReadReceiptRecipients(event)
@@ -878,7 +907,23 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 	return msg, recipientIDs, nil
 }
 
-func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int) ([]*model.Message, bool, error) {
+func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error) {
+	// afterSeq > 0：增量补拉路径。只返回 seq 大于该游标的消息，已按 seq 升序，无需反转。
+	// 用于客户端 WS 断线重连后，填补 Redis PubSub 实时扇出丢失的窗口。
+	// afterSeq == 0：保持原有「取最近 limit 条 + 反转成升序」的历史分页语义。
+	if afterSeq > 0 {
+		messages, err := s.repo.GetMessagesAfterSeq(s.ctx, chatID, afterSeq, limit+1)
+		if err != nil {
+			logger.Error("获取增量消息失败", logger.ErrorField(err))
+			return nil, false, err
+		}
+		hasMore := len(messages) > limit
+		if hasMore {
+			messages = messages[:limit]
+		}
+		return messages, hasMore, nil
+	}
+
 	// 如果是私聊且 chatID 是用户 ID，需要先获取当前用户 ID 来构建会话 ID
 	// 注意：这里我们假设调用方会处理这个问题，或者我们需要修改方法签名来传入 senderID
 	// 暂时保持原样，先让发送消息能工作
@@ -904,19 +949,37 @@ func (s *ChatServiceImpl) SearchMessages(chatID string, chatType model.ChatType,
 	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize)
 }
 
+// MarkMessagesRead 将会话已读位点推进到位（位点化）：
+//   - 带 msgIDs：取这些消息的最大 seq 作为目标位点；
+//   - 不带 msgIDs（进入会话"全部已读"）：取会话当前最大 seq。
+//
+// 未读数由 conversation_participants.last_read_seq 比对得出，因此不再全量
+// UPDATE messages.is_read（避免大会话下的写放大），仅对显式 msgIDs 保留标记以兼容展示。
 func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string, userID, chatID string) error {
-	if len(msgIDs) == 0 {
-		if chatID != "" && userID != "" {
-			_ = s.repo.UpdateParticipantLastRead(s.ctx, chatID, userID)
-			_ = s.repo.MarkAllChatMessagesRead(s.ctx, chatID, userID)
-		}
-		return nil
+	if chatID == "" || userID == "" {
+		// 缺少会话/用户信息时退化为逐条标记（兼容旧调用方）
+		return s.repo.MarkMessagesRead(s.ctx, msgIDs)
 	}
-	if err := s.repo.MarkMessagesRead(s.ctx, msgIDs); err != nil {
+
+	var targetSeq int64
+	if len(msgIDs) > 0 {
+		var err error
+		if targetSeq, err = s.repo.GetMaxSeqByMessageIDs(s.ctx, msgIDs); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		if targetSeq, err = s.repo.GetMaxMessageSeq(s.ctx, chatID); err != nil {
+			return err
+		}
+	}
+
+	if err := s.repo.AdvanceReadPosition(s.ctx, chatID, userID, targetSeq); err != nil {
 		return err
 	}
-	if chatID != "" && userID != "" {
-		_ = s.repo.UpdateParticipantLastRead(s.ctx, chatID, userID)
+
+	if len(msgIDs) > 0 {
+		_ = s.repo.MarkMessagesRead(s.ctx, msgIDs)
 	}
 	return nil
 }

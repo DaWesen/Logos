@@ -102,8 +102,8 @@ func (b *Bridge) subscribeOutgoing(ctx context.Context) {
 			return nil
 		}
 
-		// 只转发 Bot 发送的消息（Bot 回复）
-		if !strings.HasPrefix(event.SenderID, "bot_") && !isBotSender(event.SenderID) {
+		// 只转发 Bot 发送的消息（Bot 回复），Bot 消息的 SenderID 统一以 "bot_" 为前缀
+		if !strings.HasPrefix(event.SenderID, "bot_") {
 			return nil
 		}
 
@@ -114,14 +114,6 @@ func (b *Bridge) subscribeOutgoing(ctx context.Context) {
 	if err := eventBus.SubscribeChatOutgoing(ctx, handler, "qq-bridge-outgoing-consumer"); err != nil {
 		logger.Error("订阅 chat_outgoing 失败", logger.ErrorField(err))
 	}
-}
-
-// isBotSender 检查是否是 Bot 发送者
-func isBotSender(senderID string) bool {
-	// 检查 Redis 缓存中是否有 qq:bot_bind 反向映射
-	// 这里简单判断：如果 senderID 是 UUID 格式且在 bot 表中存在
-	// 实际由 converter 的 findBotByQQNumber 维护
-	return strings.HasPrefix(senderID, "bot_")
 }
 
 // handleOutboundMessage 处理出站消息 (Logos → QQ)

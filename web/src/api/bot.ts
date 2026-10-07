@@ -17,6 +17,9 @@ interface BotItem {
   enableMemory: boolean
   enableRag: boolean
   enableGraph: boolean
+  enablePlanner: boolean
+  enableReflection: boolean
+  enableToolTrace: boolean
   autoSaveToKb: boolean
   knowledgeBaseIds: string[]
   qqNumber: string
@@ -98,6 +101,9 @@ export async function createBot(data: Partial<BotItem>): Promise<BotItem | null>
         enable_memory: String(data.enableMemory || false),
         enable_rag: String(data.enableRag || false),
         enable_graph: String(data.enableGraph || false),
+        enable_planner: String(data.enablePlanner || false),
+        enable_reflection: String(data.enableReflection || false),
+        enable_tool_trace: String(data.enableToolTrace || false),
         auto_save_to_kb: String(data.autoSaveToKb || false),
         collection_ids: (data.knowledgeBaseIds || []).join(','),
         embedding_base_url: data.embeddingBaseUrl || '',
@@ -128,6 +134,9 @@ export async function updateBot(id: string, data: Partial<BotItem>): Promise<Bot
         enable_memory: String(data.enableMemory || false),
         enable_rag: String(data.enableRag || false),
         enable_graph: String(data.enableGraph || false),
+        enable_planner: String(data.enablePlanner || false),
+        enable_reflection: String(data.enableReflection || false),
+        enable_tool_trace: String(data.enableToolTrace || false),
         auto_save_to_kb: String(data.autoSaveToKb || false),
         collection_ids: (data.knowledgeBaseIds || []).join(','),
         embedding_base_url: data.embeddingBaseUrl || '',
@@ -167,6 +176,117 @@ export async function sendBotMessage(botId: string, content: string, chatId?: st
     console.error('❌ sendBotMessage 出错:', err)
     const message = err instanceof Error ? err.message : 'Bot 响应失败'
     return { content: '', error: message }
+  }
+}
+
+export interface BotStreamMeta {
+  chatId?: string
+  cost?: number
+  tokens?: number
+}
+
+export interface BotStreamHandlers {
+  onChunk?: (chunk: string) => void
+  onMeta?: (meta: BotStreamMeta) => void
+}
+
+/**
+ * 流式发送消息给 Bot（SSE）。
+ * LLM 生成的 token 逐个通过 onChunk 回调到达，用于打字机效果。
+ * fetch 而非 axios：流式响应无固定超时，用 AbortController 兜底 3 分钟。
+ */
+export async function streamBotMessage(
+  botId: string,
+  content: string,
+  chatId?: string,
+  autoSaveToKb?: boolean,
+  handlers?: BotStreamHandlers,
+): Promise<{ content: string; chatId?: string; cost?: number; tokens?: number; error?: string }> {
+  const token = localStorage.getItem('aim_token')
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 180_000)
+
+  try {
+    const resp = await fetch('/api/v1/bot/message/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        bot_id: botId,
+        content,
+        chat_id: chatId,
+        metadata: autoSaveToKb ? { auto_save_to_kb: 'true' } : {},
+      }),
+      signal: controller.signal,
+    })
+
+    if (!resp.ok || !resp.body) {
+      let message = `请求失败 (${resp.status})`
+      try {
+        const data = await resp.json()
+        if (data?.message) message = String(data.message)
+      } catch {
+        /* 非 JSON 错误体 */
+      }
+      return { content: '', error: message }
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    let full = ''
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // SSE 事件以空行分隔
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop() ?? ''
+
+      for (const part of parts) {
+        const line = part.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+
+        let payload: Record<string, unknown>
+        try {
+          payload = JSON.parse(line.slice(5).trim())
+        } catch {
+          continue
+        }
+
+        if (payload.error) {
+          return { content: full, chatId: payload.chat_id as string | undefined, error: String(payload.error) }
+        }
+
+        const chunk = typeof payload.content === 'string' ? payload.content : ''
+        if (chunk) {
+          full += chunk
+          handlers?.onChunk?.(chunk)
+        }
+
+        if (payload.done) {
+          const meta: BotStreamMeta = {
+            chatId: payload.chat_id as string | undefined,
+            cost: payload.cost as number | undefined,
+            tokens: payload.tokens as number | undefined,
+          }
+          handlers?.onMeta?.(meta)
+          return { content: full, ...meta }
+        }
+      }
+    }
+
+    // 流意外结束（未收到 done 事件）
+    return { content: full }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Bot 流式响应失败'
+    return { content: '', error: message }
+  } finally {
+    clearTimeout(timer)
   }
 }
 

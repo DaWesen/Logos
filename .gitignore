@@ -17,6 +17,7 @@ web/dist/
 web/.pnpm-store/
 web/pnpm-lock.yaml
 *.tsbuildinfo
+web/*.timestamp-*.mjs
 
 # ==================== IDE ====================
 .idea/

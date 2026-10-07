@@ -49,6 +49,7 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	r := gin.New()
 
 	r.Use(middleware.Recovery())
+	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
 	r.Use(promMiddleware())
@@ -334,6 +335,7 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 
 			// Bot 对话
 			bot.POST("/message", h.SendBotMessage)
+			bot.POST("/message/stream", h.StreamBotMessage)
 			bot.GET("/history", h.GetBotHistory)
 
 			// Bot 记忆

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"Logos/config"
 	"Logos/internal/service/messaging/types"
 	"Logos/internal/service/platform/gateway"
 	"Logos/pkg/client"
@@ -24,9 +25,30 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
+	CheckOrigin:     checkOrigin,
+}
+
+// checkOrigin 校验 WebSocket 请求来源
+// 未配置白名单（LOGOS_WS_ALLOWED_ORIGINS 为空）时放行，兼容本地开发；
+// 配置后仅允许白名单内的 Origin，防止跨站 WebSocket 劫持。
+func checkOrigin(r *http.Request) bool {
+	allowed := config.GetConfig().GetGatewayAllowedOrigins()
+	if len(allowed) == 0 {
 		return true
-	},
+	}
+
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	for _, a := range allowed {
+		if a == "*" || strings.EqualFold(a, origin) {
+			return true
+		}
+	}
+
+	logger.Warn("WebSocket Origin 被拒绝", logger.StringField("origin", origin))
+	return false
 }
 
 // Handler 处理 WebSocket 连接（更简化，专注于连接管理和转发）
@@ -152,7 +174,7 @@ func (h *Handler) handleChatEvent(msg *mq.Message) error {
 		}
 
 		if event.ChatType == types.ChatTypePrivate {
-			logger.Info("\x1b[36m🔴 5️⃣ [Kafka-Gateway] 收到 outgoing 私聊消息\x1b[0m",
+			logger.Debug("收到 outgoing 私聊消息",
 				logger.StringField("msg_id", event.ID),
 				logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
 		}
@@ -169,9 +191,9 @@ func (h *Handler) handleChatEvent(msg *mq.Message) error {
 			return err
 		}
 
-		// 🔴 6️⃣ 推送到前端 WebSocket
+		// 推送到前端 WebSocket
 		if event.ChatType == types.ChatTypePrivate {
-			logger.Info("\x1b[31m🔴 6️⃣ [Gateway-前端] 推送私聊消息到 WebSocket\x1b[0m",
+			logger.Debug("推送私聊消息到 WebSocket",
 				logger.StringField("msg_id", event.ID),
 				logger.StringField("recipient_ids", strings.Join(event.RecipientIDs, ",")),
 				logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
@@ -462,6 +484,7 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		IsClosed: false,
+		done:     make(chan struct{}),
 	}
 
 	if queryToken != "" {
@@ -575,12 +598,14 @@ func (h *Handler) writePump(conn *Connection, wg *sync.WaitGroup) {
 
 	for {
 		select {
-		case msg, ok := <-conn.Send:
+		case <-conn.done:
+			// 连接已关闭：尽力发送一次关闭帧，保持正常的关闭握手
+			conn.Conn.SetWriteDeadline(time.Now().Add(time.Second))
+			_ = conn.Conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			return
+		case msg := <-conn.Send:
 			conn.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if !ok {
-				conn.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
 
 			w, err := conn.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
@@ -676,6 +701,13 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 
 	h.manager.AddConnection(sessionID, conn)
 	h.unified.Register(sessionID, claims.UserID, payload.DeviceID, "websocket", func(data []byte) {
+		conn.mu.Lock()
+		if conn.IsClosed {
+			conn.mu.Unlock()
+			return
+		}
+		conn.mu.Unlock()
+
 		select {
 		case conn.Send <- data:
 		default:
@@ -793,13 +825,13 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 	// 生成消息ID
 	messageID := uuid.New().String()
 
-	// 🔴 1️⃣ 前端发送消息链路开始
+	// 前端发送消息链路开始（仅记录长度，不落消息明文）
 	if messagePayload.ChatType == 1 {
-		logger.Info("\x1b[33m🔴 1️⃣ [前端-Gateway] 收到私聊消息\x1b[0m",
+		logger.Debug("收到私聊消息",
 			logger.StringField("msg_id", messageID),
 			logger.StringField("sender_id", conn.UserID),
 			logger.StringField("chat_id", messagePayload.ChatID),
-			logger.StringField("content", messagePayload.Content),
+			logger.IntField("content_len", len(messagePayload.Content)),
 			logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
 	}
 
@@ -820,9 +852,9 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 		event.Extra = messagePayload.Extra
 	}
 
-	// 🔴 2️⃣ 发布到 Kafka
+	// 发布到 Kafka
 	if messagePayload.ChatType == 1 {
-		logger.Info("\x1b[32m🔴 2️⃣ [Gateway-Kafka] 发布私聊消息到 Kafka\x1b[0m",
+		logger.Debug("发布私聊消息到 Kafka",
 			logger.StringField("msg_id", messageID),
 			logger.StringField("time", time.Now().Format("2006-01-02 15:04:05.000000")))
 	}
@@ -1007,7 +1039,7 @@ func (h *Handler) cleanup(conn *Connection) {
 		return
 	}
 	conn.IsClosed = true
-	close(conn.Send) // 在锁定状态下就关闭 channel
+	close(conn.done) // 关闭 done 而非 Send，使 writePump 退出且发送方永不 panic
 	conn.mu.Unlock()
 
 	if conn.SessionID != "" {

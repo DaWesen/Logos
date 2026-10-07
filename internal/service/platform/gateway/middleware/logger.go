@@ -21,8 +21,10 @@ func Logger() gin.HandlerFunc {
 		path := c.Request.URL.Path
 		query := c.Request.URL.RawQuery
 		method := c.Request.Method
+		requestID := GetRequestID(c)
 
 		logger.Info("Request started",
+			logger.StringField("request_id", requestID),
 			logger.StringField("method", method),
 			logger.StringField("path", path),
 			logger.StringField("query", query),
@@ -34,6 +36,7 @@ func Logger() gin.HandlerFunc {
 		statusCode := c.Writer.Status()
 
 		logger.Info("Request completed",
+			logger.StringField("request_id", requestID),
 			logger.IntField("status_code", statusCode),
 			logger.StringField("latency", latency.String()),
 			logger.StringField("method", method),
@@ -51,6 +54,7 @@ func Logger() gin.HandlerFunc {
 				}
 				msg := fmt.Sprintf("%s %s %d %s", method, path, statusCode, latency)
 				fields := map[string]string{
+					"request_id":  requestID,
 					"method":      method,
 					"path":        path,
 					"query":       query,

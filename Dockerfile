@@ -51,7 +51,12 @@ LABEL maintainer="Logos Team"
 LABEL description="Logos - AI-Powered Instant Messaging Platform"
 LABEL version="2.0.0"
 
-RUN apk --no-cache add ca-certificates tzdata curl python3 nodejs ffmpeg
+RUN apk --no-cache add ca-certificates tzdata curl python3 nodejs ffmpeg wget && \
+    # grpc_health_probe 是 gRPC 官方健康检查工具，多副本部署时供 docker healthcheck 使用
+    wget -qO /usr/local/bin/grpc_health_probe \
+      https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.4.30/grpc_health_probe-linux-amd64 && \
+    chmod +x /usr/local/bin/grpc_health_probe && \
+    apk del wget
 
 WORKDIR /app
 
@@ -86,7 +91,9 @@ COPY --from=builder /app/config ./config
 
 EXPOSE 8888 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 9011 9012 9013 9016 9017 9018 9019 9020 9021
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8888/health || exit 1
+# 不在 Dockerfile 内写死 HEALTHCHECK（端口随 service 变化）
+# 由 docker-compose.yml 各 service 通过 healthcheck 字段按各自端口配置：
+#   - gateway:        curl http://localhost:8888/health
+#   - gRPC services:  grpc_health_probe -addr=localhost:<port>
 
 CMD ["./gateway"]

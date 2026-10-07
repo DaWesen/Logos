@@ -139,11 +139,12 @@ export async function uploadChatMedia(chatId: string, file: File, onProgress?: (
   }
 }
 
-export async function getChatHistory(chatId: string, limit = 50, before?: string) {
+export async function getChatHistory(chatId: string, limit = 50, before?: string, afterSeq?: number) {
   try {
-    const res = await client.get('/chat/history', {
-      params: { chat_id: chatId, limit, before },
-    })
+    const params: Record<string, unknown> = { chat_id: chatId, limit, before }
+    // after_seq > 0 时走增量补拉：只取 seq 大于该游标的消息（升序），用于 WS 重连后补齐缺口
+    if (afterSeq && afterSeq > 0) params.after_seq = afterSeq
+    const res = await client.get('/chat/history', { params })
     return extractArray<Record<string, unknown>>(res)
   } catch {
     return []

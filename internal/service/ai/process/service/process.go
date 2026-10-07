@@ -576,49 +576,16 @@ func (s *ProcessService) GetServiceURL() string {
 
 func (s *ProcessService) splitContentIntoChunks(doc *model.Document, content string, metadata map[string]interface{}) []*model.DocumentChunk {
 	var chunks []*model.DocumentChunk
-	chunkIndex := 0
 
-	chunkSize := 1000
-	chunkOverlap := 100
-
-	lines := strings.Split(content, "\n")
-	var currentChunk strings.Builder
-
-	for _, line := range lines {
-		if currentChunk.Len()+len(line) > chunkSize && currentChunk.Len() > 0 {
-			chunk := &model.DocumentChunk{
-				ID:         generateID(),
-				DocumentID: doc.ID,
-				ChunkIndex: chunkIndex,
-				ChunkType:  model.ChunkTypeText,
-				Content:    strings.ToValidUTF8(currentChunk.String(), ""),
-				IsEnabled:  true,
-			}
-			chunks = append(chunks, chunk)
-			chunkIndex++
-
-			overlap := currentChunk.String()
-			if len(overlap) > chunkOverlap {
-				overlap = overlap[len(overlap)-chunkOverlap:]
-			}
-			currentChunk.Reset()
-			currentChunk.WriteString(overlap)
-		}
-
-		currentChunk.WriteString(line)
-		currentChunk.WriteString("\n")
-	}
-
-	if currentChunk.Len() > 0 {
-		chunk := &model.DocumentChunk{
+	for i, text := range SplitTextIntoChunks(content, defaultChunkSize, defaultChunkOverlap) {
+		chunks = append(chunks, &model.DocumentChunk{
 			ID:         generateID(),
 			DocumentID: doc.ID,
-			ChunkIndex: chunkIndex,
+			ChunkIndex: i,
 			ChunkType:  model.ChunkTypeText,
-			Content:    strings.ToValidUTF8(currentChunk.String(), ""),
+			Content:    strings.ToValidUTF8(text, ""),
 			IsEnabled:  true,
-		}
-		chunks = append(chunks, chunk)
+		})
 	}
 
 	if imageChunks, ok := s.extractImageChunks(doc, metadata); ok {

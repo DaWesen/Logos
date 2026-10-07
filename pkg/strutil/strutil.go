@@ -5,6 +5,23 @@ import (
 	"unicode/utf8"
 )
 
+// ExtractJSON 从 LLM 输出中提取 JSON 对象文本：
+// 剥离 markdown 代码块包装，取首个 '{' 到末个 '}' 之间的内容。
+// 找不到 JSON 结构时原样返回（调用方自行报错）。
+func ExtractJSON(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	s = strings.TrimSpace(s)
+	start := strings.Index(s, "{")
+	end := strings.LastIndex(s, "}")
+	if start >= 0 && end > start {
+		return s[start : end+1]
+	}
+	return s
+}
+
 func CleanInvalidUTF8(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

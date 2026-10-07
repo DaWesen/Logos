@@ -48,6 +48,24 @@
   max-width: 100%;
 }
 
+/* 流式回复打字机光标 */
+.chat-streaming-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--ba-blue, #3b82f6);
+  border-radius: 2px;
+  animation: chat-cursor-blink 0.9s steps(1) infinite;
+}
+
+@keyframes chat-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .other-bubble {
   background: var(--ba-card);
   border: 1px solid var(--ba-border);

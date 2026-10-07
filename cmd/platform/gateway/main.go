@@ -3,10 +3,12 @@ package main
 import (
 	"Logos/config"
 	"Logos/internal/service/messaging/types"
+	"Logos/internal/service/platform/gateway"
 	"Logos/internal/service/platform/gateway/middleware"
 	"Logos/internal/service/platform/gateway/router"
 	"Logos/internal/service/platform/gateway/tcp"
 	"Logos/internal/service/platform/gateway/websocket"
+	"Logos/pkg/cache"
 	"Logos/pkg/client"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
@@ -34,6 +36,10 @@ func main() {
 
 	// 创建 websocket handler
 	wsHandler := websocket.NewHandler()
+
+	// 初始化跨节点广播器（多节点水平扩展）
+	// enable_broadcast=false 或 redis 不可用时降级为纯本地投递
+	broadcasterCleanup := initBroadcaster(cfg)
 
 	userClient, userErr := client.NewUserClientFromConfig(cfg)
 	if userErr != nil {
@@ -177,6 +183,17 @@ func main() {
 		log.Println("HTTP server shut down")
 	}()
 
+	// 关闭跨节点广播器（停止 redis 订阅 goroutine）
+	if broadcasterCleanup != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			log.Println("Closing broadcaster...")
+			broadcasterCleanup()
+			log.Println("Broadcaster closed")
+		}()
+	}
+
 	// 等待所有资源关闭完成，或者超时
 	waitChan := make(chan struct{})
 	go func() {
@@ -198,4 +215,58 @@ func main() {
 	}
 
 	log.Println("Gateway stopped")
+}
+
+// initBroadcaster 初始化跨节点广播器并注入到 UnifiedConnectionManager
+//
+// 启用条件：cfg.Gateway.EnableBroadcast=true（默认 true）
+// 降级策略：redis 不可用时仅警告不退出，SetBroadcaster(nil) 保持纯本地投递
+//
+// 返回 cleanup 函数：在 main shutdown 流程中调用以停止 redis 订阅 goroutine
+// 返回 nil 表示未启动广播器（cleanup 无需调用）
+func initBroadcaster(cfg *config.Config) func() {
+	if !cfg.Gateway.EnableBroadcast {
+		logger.Info("broadcaster disabled by config, running in local-only mode")
+		gateway.GetUnifiedConnectionManager().SetBroadcaster(nil)
+		return nil
+	}
+
+	// 复用 cache 单例的底层 redis client（共享连接池）
+	cacheInstance := cache.NewRedisCache()
+	redisCache, ok := cacheInstance.(*cache.RedisCache)
+	if !ok {
+		logger.Warn("broadcaster: cache instance is not *RedisCache, broadcasting disabled")
+		gateway.GetUnifiedConnectionManager().SetBroadcaster(nil)
+		return nil
+	}
+	rdb := redisCache.RawClient()
+
+	nodeID := cfg.GetGatewayNodeID()
+	channel := cfg.GetGatewayPubSubChannel()
+
+	b := gateway.NewBroadcaster(rdb, nodeID, channel)
+	gateway.GetUnifiedConnectionManager().SetBroadcaster(b)
+
+	// 启动订阅 goroutine
+	subscribeCtx, subscribeCancel := context.WithCancel(context.Background())
+	go func() {
+		logger.Info("broadcaster: subscribe goroutine started",
+			logger.StringField("node_id", nodeID),
+			logger.StringField("channel", channel))
+		if err := b.Subscribe(subscribeCtx, gateway.GetUnifiedConnectionManager().HandleRemoteMessage); err != nil {
+			logger.Warn("broadcaster: subscribe exited with error",
+				logger.ErrorField(err))
+		}
+		logger.Info("broadcaster: subscribe goroutine exited")
+	}()
+
+	logger.Info("broadcaster initialized for multi-node scaling",
+		logger.StringField("node_id", nodeID),
+		logger.StringField("channel", channel))
+
+	// cleanup：cancel 订阅 ctx + 关闭 pubsub
+	return func() {
+		subscribeCancel()
+		_ = b.Close()
+	}
 }

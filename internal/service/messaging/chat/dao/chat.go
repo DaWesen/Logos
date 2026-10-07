@@ -12,6 +12,7 @@ import (
 	"Logos/pkg/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func sortUserIDs(id1, id2 string) (smaller, larger string) {
@@ -58,9 +59,17 @@ type ChatRepository interface {
 	UpdateMessage(ctx context.Context, msg *model.Message) error
 	GetMessageByID(ctx context.Context, id string) (*model.Message, error)
 	GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int) ([]*model.Message, error)
+	// GetMessagesAfterSeq 返回会话内 seq 大于 afterSeq 的消息，按 seq 升序，用于断线重连后的增量补拉。
+	GetMessagesAfterSeq(ctx context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error)
 	SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
+	// MarkMessagesRead 逐条标记指定消息为已读。
+	// 仅用于已读回执携带的显式、有界 msgIDs（供前端展示已读态）；
+	// 未读数统计走 AdvanceReadPosition 的位点比对，不依赖本方法。
 	MarkMessagesRead(ctx context.Context, msgIDs []string) error
-	MarkAllChatMessagesRead(ctx context.Context, chatID, userID string) error
+	// GetMaxMessageSeq 返回会话当前最大消息 seq（无消息返回 0）
+	GetMaxMessageSeq(ctx context.Context, chatID string) (int64, error)
+	// GetMaxSeqByMessageIDs 返回指定消息中的最大 seq（用于按位点标记已读）
+	GetMaxSeqByMessageIDs(ctx context.Context, msgIDs []string) (int64, error)
 	WithdrawMessage(ctx context.Context, msgID string) error
 	EditMessage(ctx context.Context, msgID, content string) error
 	DeleteChatHistory(ctx context.Context, chatID string) error
@@ -92,7 +101,8 @@ type ChatRepository interface {
 	GetConversationList(ctx context.Context, userID string, page, pageSize int) ([]*model.ConversationItem, int64, error)
 	GetUnreadCounts(ctx context.Context, userID string, chatIDs []string) (map[string]int64, error)
 	GetTotalUnreadCount(ctx context.Context, userID string) (int64, error)
-	UpdateParticipantLastRead(ctx context.Context, conversationID, userID string) error
+	// AdvanceReadPosition 推进会话已读位点（单调不回退），并同步 last_read_at
+	AdvanceReadPosition(ctx context.Context, conversationID, userID string, seq int64) error
 	DeleteConversationForUser(ctx context.Context, conversationID, userID string) error
 	GetUsernameByID(ctx context.Context, userID int64) (string, error)
 }
@@ -125,6 +135,12 @@ func MigrateExpandSenderID(db *gorm.DB) {
 	}
 }
 
+// CreateMessage 幂等写入消息，并在事务内按 chat_id 原子分配会话内单调递增的 seq。
+//
+// 幂等：先按主键判重，Kafka 重投不会产生重复数据。
+// seq 分配：conversation_seqs 行锁（FOR UPDATE）保证多副本并发下同一会话 seq 严格递增且不重复。
+// 若因唯一键冲突回滚，已自增的 seq 会被跳过（产生空洞），这是可接受的——
+// seq 只要求单调，不要求连续。
 func (r *chatRepositoryImpl) CreateMessage(ctx context.Context, msg *model.Message) error {
 	var existing model.Message
 	err := r.db.WithContext(ctx).Select("id").First(&existing, "id = ?", msg.ID).Error
@@ -134,7 +150,31 @@ func (r *chatRepositoryImpl) CreateMessage(ctx context.Context, msg *model.Messa
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	return r.db.WithContext(ctx).Create(msg).Error
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 确保分配器行存在（并发下可能已被创建，DoNothing 忽略冲突）
+		seqRow := &model.ConversationSeq{ChatID: msg.ChatID, LastSeq: 0, UpdatedAt: time.Now()}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(seqRow).Error; err != nil {
+			return err
+		}
+
+		// 2. 行锁 + 自增，原子取得本会话下一个 seq
+		var locked model.ConversationSeq
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("chat_id = ?", msg.ChatID).First(&locked).Error; err != nil {
+			return err
+		}
+		locked.LastSeq++
+		if err := tx.Model(&model.ConversationSeq{}).
+			Where("chat_id = ?", msg.ChatID).
+			Update("last_seq", locked.LastSeq).Error; err != nil {
+			return err
+		}
+		msg.Seq = locked.LastSeq
+
+		// 3. 写入消息（Seq 已带上）
+		return tx.Create(msg).Error
+	})
 }
 
 func (r *chatRepositoryImpl) UpdateMessage(ctx context.Context, msg *model.Message) error {
@@ -150,14 +190,50 @@ func (r *chatRepositoryImpl) GetMessageByID(ctx context.Context, id string) (*mo
 	return &msg, err
 }
 
+// GetMessagesByChatID 返回会话历史消息。
+// 排序优先按会话内 seq（单调且无时间戳并列问题），seq 为 0 的历史兜底行排在最后；
+// beforeTime 作为游标保留：仅返回 created_at 早于该时间的消息，兼容既有分页调用方。
 func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int) ([]*model.Message, error) {
 	var messages []*model.Message
 	query := r.db.WithContext(ctx).Where("chat_id = ?", chatID)
 	if !beforeTime.IsZero() {
 		query = query.Where("created_at < ?", beforeTime)
 	}
-	err := query.Order("created_at DESC").Limit(limit).Find(&messages).Error
+	err := query.Order("seq DESC, created_at DESC").Limit(limit).Find(&messages).Error
 	return messages, err
+}
+
+// GetMessagesAfterSeq 增量补拉：只取 seq 严格大于 afterSeq 的消息，按 seq 升序返回，
+// 使调用方无需再反转即可直接追加到会话末尾。用于 WS 断线重连后填补 PubSub 丢失的窗口。
+func (r *chatRepositoryImpl) GetMessagesAfterSeq(ctx context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
+	var messages []*model.Message
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ? AND seq > ?", chatID, afterSeq).
+		Order("seq ASC").
+		Limit(limit).
+		Find(&messages).Error
+	return messages, err
+}
+
+func (r *chatRepositoryImpl) GetMaxMessageSeq(ctx context.Context, chatID string) (int64, error) {
+	var maxSeq int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("chat_id = ?", chatID).
+		Select("COALESCE(MAX(seq), 0)").
+		Scan(&maxSeq).Error
+	return maxSeq, err
+}
+
+func (r *chatRepositoryImpl) GetMaxSeqByMessageIDs(ctx context.Context, msgIDs []string) (int64, error) {
+	if len(msgIDs) == 0 {
+		return 0, nil
+	}
+	var maxSeq int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("id IN ?", msgIDs).
+		Select("COALESCE(MAX(seq), 0)").
+		Scan(&maxSeq).Error
+	return maxSeq, err
 }
 
 func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error) {
@@ -199,10 +275,19 @@ func (r *chatRepositoryImpl) MarkMessagesRead(ctx context.Context, msgIDs []stri
 		Update("is_read", true).Error
 }
 
-func (r *chatRepositoryImpl) MarkAllChatMessagesRead(ctx context.Context, chatID, userID string) error {
-	return r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("chat_id = ? AND sender_id != ? AND is_read = false", chatID, userID).
-		Update("is_read", true).Error
+// AdvanceReadPosition 推进会话已读位点：seq 取较大值（GREATEST），保证位点单调不回退。
+// 未读数由「seq > last_read_seq」计算，因此这里不再逐条 UPDATE messages.is_read，
+// 把 O(未读条数) 的写放大降为 O(1) 的单行更新。
+func (r *chatRepositoryImpl) AdvanceReadPosition(ctx context.Context, conversationID, userID string, seq int64) error {
+	if conversationID == "" || userID == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+		Updates(map[string]interface{}{
+			"last_read_seq": gorm.Expr("GREATEST(last_read_seq, ?)", seq),
+			"last_read_at":  time.Now(),
+		}).Error
 }
 
 func (r *chatRepositoryImpl) WithdrawMessage(ctx context.Context, msgID string) error {
@@ -545,9 +630,10 @@ func (r *chatRepositoryImpl) GetUnreadCounts(ctx context.Context, userID string,
 
 	for _, p := range participants {
 		var count int64
+		// 未读数 = seq 大于已读位点的消息数（排除自己发的），不再依赖逐条 is_read
 		r.db.WithContext(ctx).Model(&model.Message{}).
-			Where("chat_id = ? AND created_at > ? AND sender_id != ? AND is_read = false",
-				p.ConversationID, p.LastReadAt, userID).
+			Where("chat_id = ? AND seq > ? AND sender_id != ?",
+				p.ConversationID, p.LastReadSeq, userID).
 			Count(&count)
 		result[p.ConversationID] = count
 	}
@@ -573,12 +659,6 @@ func (r *chatRepositoryImpl) GetTotalUnreadCount(ctx context.Context, userID str
 		total += count
 	}
 	return total, nil
-}
-
-func (r *chatRepositoryImpl) UpdateParticipantLastRead(ctx context.Context, conversationID, userID string) error {
-	return r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
-		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
-		Update("last_read_at", time.Now()).Error
 }
 
 func (r *chatRepositoryImpl) DeleteConversationForUser(ctx context.Context, conversationID, userID string) error {

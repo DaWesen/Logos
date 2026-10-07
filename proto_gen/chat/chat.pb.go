@@ -319,8 +319,10 @@ type Message struct {
 	MentionUserIds   []string               `protobuf:"bytes,12,rep,name=mention_user_ids,json=mentionUserIds,proto3" json:"mention_user_ids,omitempty"`
 	MediaUrl         string                 `protobuf:"bytes,13,opt,name=media_url,json=mediaUrl,proto3" json:"media_url,omitempty"`
 	MediaMeta        string                 `protobuf:"bytes,14,opt,name=media_meta,json=mediaMeta,proto3" json:"media_meta,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// seq 会话内单调递增序号，作为客户端增量补拉的游标（仅历史接口返回时有效）。
+	Seq           int64 `protobuf:"varint,15,opt,name=seq,proto3" json:"seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Message) Reset() {
@@ -449,6 +451,13 @@ func (x *Message) GetMediaMeta() string {
 		return x.MediaMeta
 	}
 	return ""
+}
+
+func (x *Message) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 // 群组
@@ -963,11 +972,14 @@ func (x *SearchMessagesResponse) GetTotal() int32 {
 
 // 获取消息历史请求
 type GetMessageHistoryRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ChatId        string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	ChatType      ChatType               `protobuf:"varint,2,opt,name=chat_type,json=chatType,proto3,enum=messaging.chat.ChatType" json:"chat_type,omitempty"`
-	BeforeTime    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=before_time,json=beforeTime,proto3" json:"before_time,omitempty"`
-	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ChatId     string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	ChatType   ChatType               `protobuf:"varint,2,opt,name=chat_type,json=chatType,proto3,enum=messaging.chat.ChatType" json:"chat_type,omitempty"`
+	BeforeTime *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=before_time,json=beforeTime,proto3" json:"before_time,omitempty"`
+	Limit      int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	// after_seq 会话内游标：> 0 时返回 seq 大于该值的消息（升序），用于断线重连后补齐实时推送缺口；
+	// = 0 时保持原有语义（按 before_time 取最近 limit 条）。
+	AfterSeq      int64 `protobuf:"varint,5,opt,name=after_seq,json=afterSeq,proto3" json:"after_seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1026,6 +1038,13 @@ func (x *GetMessageHistoryRequest) GetBeforeTime() *timestamppb.Timestamp {
 func (x *GetMessageHistoryRequest) GetLimit() int32 {
 	if x != nil {
 		return x.Limit
+	}
+	return 0
+}
+
+func (x *GetMessageHistoryRequest) GetAfterSeq() int64 {
+	if x != nil {
+		return x.AfterSeq
 	}
 	return 0
 }
@@ -3489,7 +3508,7 @@ var File_idl_messaging_chat_proto protoreflect.FileDescriptor
 
 const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\n" +
-	"\x18idl/messaging/chat.proto\x12\x0emessaging.chat\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa2\x05\n" +
+	"\x18idl/messaging/chat.proto\x12\x0emessaging.chat\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb4\x05\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\achat_id\x18\x02 \x01(\tR\x06chatId\x125\n" +
@@ -3508,7 +3527,8 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\x10mention_user_ids\x18\f \x03(\tR\x0ementionUserIds\x12\x1b\n" +
 	"\tmedia_url\x18\r \x01(\tR\bmediaUrl\x12\x1d\n" +
 	"\n" +
-	"media_meta\x18\x0e \x01(\tR\tmediaMeta\x1a;\n" +
+	"media_meta\x18\x0e \x01(\tR\tmediaMeta\x12\x10\n" +
+	"\x03seq\x18\x0f \x01(\x03R\x03seq\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb8\x03\n" +
@@ -3565,13 +3585,14 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x123\n" +
 	"\bmessages\x18\x03 \x03(\v2\x17.messaging.chat.MessageR\bmessages\x12\x14\n" +
-	"\x05total\x18\x04 \x01(\x05R\x05total\"\xbd\x01\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\"\xda\x01\n" +
 	"\x18GetMessageHistoryRequest\x12\x17\n" +
 	"\achat_id\x18\x01 \x01(\tR\x06chatId\x125\n" +
 	"\tchat_type\x18\x02 \x01(\x0e2\x18.messaging.chat.ChatTypeR\bchatType\x12;\n" +
 	"\vbefore_time\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"beforeTime\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\x99\x01\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1b\n" +
+	"\tafter_seq\x18\x05 \x01(\x03R\bafterSeq\"\x99\x01\n" +
 	"\x19GetMessageHistoryResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x123\n" +

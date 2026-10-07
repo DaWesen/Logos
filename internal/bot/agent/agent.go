@@ -212,6 +212,8 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 		}
 
 		if len(msg.ToolCalls) > 0 {
+			// 透传 Agent 的中间决策（调用了什么工具）给上层观察者
+			notifyToolCalls(ctx, msg.ToolCalls)
 			logger.Debug("跳过中间Assistant消息",
 				logger.IntField("event_index", eventCount),
 				logger.IntField("tool_calls", len(msg.ToolCalls)))
@@ -290,6 +292,8 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 		}
 
 		if len(msg.ToolCalls) > 0 {
+			// 透传 Agent 的中间决策（调用了什么工具）给上层观察者
+			notifyToolCalls(ctx, msg.ToolCalls)
 			buffer.Reset()
 			continue
 		}

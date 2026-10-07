@@ -34,6 +34,15 @@ func buildGovCfg(cfg *config.Config) *governance.Config {
 }
 
 func newConn(cfg *config.Config, serviceName string) (*grpc.ClientConn, error) {
+	// 多节点水平扩展模式：直接走 etcd resolver + round_robin LB
+	// 适用于后端 service 多副本部署的场景
+	if cfg.ServiceDiscovery.UseEtcdResolver {
+		logger.Info("使用 etcd 服务发现",
+			logger.StringField("service", serviceName))
+		return grpcserver.NewGRPCClientConnWithGovernance(
+			cfg.Etcd.Endpoints, serviceName, buildGovCfg(cfg))
+	}
+	// 开发/单机模式：优先直连，失败 fallback 到 etcd resolver
 	port := getServicePort(cfg, serviceName)
 	if port > 0 {
 		return tryDialWithFallback(cfg, serviceName, port)

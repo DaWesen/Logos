@@ -286,10 +286,8 @@ func (s *BotServiceImpl) StreamBotMessage(req *pb.SendBotMessageRequest, stream 
 	})
 	if err != nil {
 		logger.Error("流式发送消息失败", logger.ErrorField(err))
-		return stream.Send(&pb.StreamBotResponse{
-			Content: err.Error(),
-			Done:    true,
-		})
+		// 返回错误让 gRPC 流终止，网关会以 error 事件告知前端
+		return err
 	}
 
 	return stream.Send(&pb.StreamBotResponse{

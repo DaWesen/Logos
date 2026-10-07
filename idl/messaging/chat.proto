@@ -67,6 +67,8 @@ message Message {
   repeated string mention_user_ids = 12;
   string media_url = 13;
   string media_meta = 14;
+  // seq 会话内单调递增序号，作为客户端增量补拉的游标（仅历史接口返回时有效）。
+  int64 seq = 15;
 }
 
 // 群组
@@ -135,6 +137,9 @@ message GetMessageHistoryRequest {
   ChatType chat_type = 2;
   google.protobuf.Timestamp before_time = 3;
   int32 limit = 4;
+  // after_seq 会话内游标：> 0 时返回 seq 大于该值的消息（升序），用于断线重连后补齐实时推送缺口；
+  // = 0 时保持原有语义（按 before_time 取最近 limit 条）。
+  int64 after_seq = 5;
 }
 
 // 获取消息历史响应

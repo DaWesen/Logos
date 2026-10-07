@@ -1,0 +1,71 @@
+# 多节点水平扩展生产部署 override
+#
+# 启动：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 设计：
+# - gateway 3 副本：核心无状态网关，nginx 经 docker DNS 轮询分摊新连接
+#   （nginx.conf 用 resolver + 变量式 proxy_pass，扩缩容免 reload）
+# - 后端 service 2 副本：gRPC client 通过 etcd resolver + round_robin 自动 LB
+# - 不设 container_name：多副本时固定名会冲突，由 compose 自动生成 -N 后缀
+# - LOGOS_USE_ETCD_RESOLVER=true：所有 service 切换到 etcd 服务发现
+# - LOGOS_NODE_ID=${HOSTNAME}：docker 每副本 HOSTNAME 自动唯一
+#
+# 单机扩展副本数（不依赖 swarm）：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d \
+#     --scale gateway=3 --scale user-service=2 --scale chat-service=2
+#
+# `scale` 字段是 compose v2.x spec 支持，`docker compose up` 原生生效
+# 若需 K8s 风格的 Deployment/Service 抽象，可后续迁移到 k8s manifests
+
+services:
+  nginx:
+    ports:
+      - "80:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  gateway:
+    scale: 3
+    # 不需要再设 environment，base 已含 LOGOS_USE_ETCD_RESOLVER=true 等
+
+  user-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  monitoring-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  billing-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  im-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  chat-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  contact-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  message-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"
+
+  bot-service:
+    scale: 2
+    environment:
+      LOGOS_USE_ETCD_RESOLVER: "true"

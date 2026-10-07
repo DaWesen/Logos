@@ -209,13 +209,14 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, 
               <Download size={16} style={{ color: 'var(--ba-text-light)' }} />
             </div>
           )}
-          {(message.messageType === 'text' || (!mediaUrl && message.messageType !== 'system' && message.messageType !== 'withdrawn' && message.messageType !== 'video' && message.messageType !== 'voice' && message.messageType !== 'image')) && (
+          {(message.messageType === 'text' || (!mediaUrl && message.messageType !== 'video' && message.messageType !== 'voice' && message.messageType !== 'image')) && (
             <div className="chat-bubble-content">
               {message.isBot ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               ) : (
                 message.content
               )}
+              {message.isStreaming && <span className="chat-streaming-cursor" />}
             </div>
           )}
           {translated && (

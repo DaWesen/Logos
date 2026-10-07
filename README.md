@@ -73,12 +73,21 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 ### AI 能力
 
 - **内置聊天 Bot**：接入多家厂商模型接口，用户可直接 @Bot 对话
+- **流式输出**：Bot 回复经 gRPC 服务端流 → Gateway SSE 全链路逐 token 推送到前端，打字机效果
 - **RAG 知识库 Bot**：用户可上传多种格式的文档构建私有知识库，Bot 可基于知识库回答问题
+- **混合检索**：`knowledge_search` 单次调用并发执行语义（Milvus）与关键词（ES）双路检索，RRF 倒数排名融合重排
+- **结构感知分块**：文档入库按 Markdown 标题边界切分并合并短小节，超长小节降级为重叠窗口，检索上下文更完整
 - **自动存入知识库**：Bot 聊天界面可开启"自动存入知识库"开关，每条对话自动向量化存入关联的 RAG 知识库
 - **向量模型自动同步**：Bot 配置向量模型时自动同步到关联的 RAG 知识库，确保向量化一致性
 - **MCP 工具集成**：Bot 可调用外部工具（天气查询、代码执行、Web 搜索、计算器等），扩展能力边界
+- **MCP 代码执行沙箱**：多层防护——环境变量白名单（服务密钥不泄漏给被执行代码）、超时硬上限 + 进程树终止、输出/代码大小限额、全局并发限制；设置 `LOGOS_CODE_SANDBOX=docker` 时升级为容器级隔离（`--network none --memory 128m`，无网络、只读挂载）
+- **语义缓存**：语义相似的重复问题直接返回缓存答案（Redis + 向量余弦相似度 ≥ 0.90 命中），省一次 LLM 调用、毫秒级响应；Redis 不可用时自动降级直通
+- **长对话上下文压缩**：历史消息按 token 预算装载，超出预算的早期对话滚动摘要为「对话背景」注入（按会话缓存，均摊成本 O(新溢出消息数)）；摘要失败自动降级为截断，不阻塞主流程
+- **Prompt 注入防护**：规则引擎检测疑似指令注入（中英文 15 类模式），命中时注入安全护栏而非拒绝（控制误伤）；RAG 检索结果统一加内容边界声明，防止知识库文档中的间接注入
 - **多 Bot 协作**：支持配置多个不同人设/能力的 Bot，按场景自动路由或由用户指定
+- **Plan-and-Execute 任务规划**：Bot 可开启规划模式（`enable_planner`）——复杂任务先由 Planner 生成显式步骤清单（1-8 步，可展示可审计），逐步交给带工具的 ReAct Agent 执行（单步内工具调用能力完整保留），步骤失败自动重规划一次而非整体失败，最后由 Synthesizer 综合作答；流式模式下规划与步骤进度实时推送到前端
 - **记忆管理**：Bot 记住用户偏好与历史交互，跨会话保持上下文；支持 7 种记忆分类（preference/habit/fact/goal/relationship/style/other），手动添加的记忆受保护不被自动清理
+- **记忆置信度生命周期**：LLM 抽取的记忆带证据引用（消息 ID，可审计；编造引用整条作废）与归一化置信度（异常值 → 0.5"不知道"）；跨轮次三态合并——确认 +0.05 封顶 0.98（重复确认 ≠ 绝对真理）、补充取更详细值、矛盾 −0.15 保底 0.2 并保留双结论不自动选边；注入 prompt 双档消费：< 0.5 不注入（agent 不会因为标注就不当真）、[0.5, 0.65) 标注「⚠︎证据较少」、类内按置信度降序、截断声明条数
 - **消息总结**：一键总结群聊/单聊历史消息，生成要点摘要与待办提取
 - **智能回复候选**：根据上下文生成回复候选，用户可一键选用
 - **实时多语言翻译**：支持前端配置翻译模型（DeepSeek/OpenAI 等），不再硬编码
@@ -218,7 +227,7 @@ Authorization: Bearer <token>
 | `/api/v1/chat`       | 聊天     | POST /message, POST /search, GET /history, POST /group            |
 | `/api/v1/im`         | 即时通讯   | POST /connect, POST /online-status, GET /stream                   |
 | `/api/v1/message`    | 消息队列   | POST /send, POST /subscribe, GET /consume, POST /ack              |
-| `/api/v1/bot`        | AI 机器人 | POST, GET, POST /message, GET /history, POST /auto-save-kb        |
+| `/api/v1/bot`        | AI 机器人 | POST, GET, POST /message, POST /message/stream (SSE), GET /history, POST /auto-save-kb |
 | `/api/v1/bot/memory` | 记忆管理   | GET (查询), POST (添加), DELETE (删除)                                  |
 | `/api/v1/knowledge`  | 知识图谱   | POST /entities, POST /relations, POST /search                     |
 | `/api/v1/search`     | 全文搜索   | POST, POST /documents, POST /indexes/:type                        |
@@ -411,8 +420,17 @@ Logos/
 | 超时控制   | 服务端 30s / 客户端 30s / LLM 120s | gRPC 拦截器自动注入      |
 | 重试策略   | 3 次，200ms-5s 指数退避            | 可重试码自动识别          |
 | 熔断器    | 50 次失败阈值 / 10s 超时 / 3 次成功恢复   | 基于 sony/gobreaker |
-| 限流     | 100 RPS / 50 并发              | gRPC 服务端拦截器       |
+| 限流     | 100 RPS / 50 并发              | gRPC 服务端拦截器（线程安全令牌桶） |
 | LLM 治理 | 120s 超时 / 特殊重试策略             | 专为大模型调用设计         |
+
+### 事务性发件箱（Outbox）
+
+`pkg/outbox/` 实现与业务同事务写入的 at-least-once 事件投递：
+
+- **多副本安全**：投递在事务内以 `SELECT ... FOR UPDATE SKIP LOCKED` 锁定批次，多实例部署不会重复消费同一批消息
+- **失败重试**：投递失败的消息回到 pending 并按指数退避（30s 起步、上限 32 分钟）延后重投，最多 5 次
+- **死信终态**：重试耗尽进入 failed 终态保留排查，达到上限时输出告警日志
+- **自动清理**：已发送消息 24 小时后定期清理
 
 Gateway 层额外提供多级限流：
 
@@ -426,6 +444,9 @@ Gateway 层额外提供多级限流：
 | 突发保护  | 1000 次/5分钟 |
 
 ## 监控与可观测性
+
+- **Request-ID 链路贯穿**：Gateway 为每个请求生成/透传 `X-Request-ID`（UUID），响应头回写、日志与 monitoring 上报统一携带，单请求全链路可串联排障
+- **优雅停机**：全部 gRPC 微服务在 SIGTERM 时执行三段式下线——etcd 主动注销（新流量立即摘除，无需等 lease 过期）→ 健康检查置 NOT_SERVING → GracefulStop 等待 in-flight 请求排空（默认 25s 宽限期，`GRPC_SHUTDOWN_GRACE` 可调，小于 K8s terminationGracePeriodSeconds 保证不被 SIGKILL 撕断）；Gateway HTTP 侧并行关闭 TCP/WebSocket/EventBus 并超时兜底
 
 | 服务            | 地址                       | 说明       |
 | ------------- | ------------------------ | -------- |
@@ -483,6 +504,7 @@ Gateway 层额外提供多级限流：
 | `RETRY_INITIAL_DELAY`         | 重试初始延迟 (ms)             | 200                     |
 | `MESSAGE_RATE_LIMIT`          | 消息接口限流 (次/分钟)           | 50                      |
 | `RECOMMEND_RATE_LIMIT`        | 推荐接口限流 (次/分钟)           | 60                      |
+| `LOGOS_CODE_SANDBOX`          | MCP 代码执行沙箱模式            | process                |
 
 完整环境变量列表参见 `.env.example`。
 

@@ -13,6 +13,7 @@ type EventBus struct {
 	producer  *mq.Producer
 	consumers map[string]*mq.Consumer
 	mu        sync.RWMutex
+	closed    bool
 }
 
 var (
@@ -278,6 +279,12 @@ func (eb *EventBus) SubscribeNotifications(ctx context.Context, handler mq.Messa
 func (eb *EventBus) Close() error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
+
+	// 幂等：多个 handler 在停机时可能并发调用同一个 EventBus 单例的 Close
+	if eb.closed {
+		return nil
+	}
+	eb.closed = true
 
 	if eb.producer != nil {
 		_ = eb.producer.Close()

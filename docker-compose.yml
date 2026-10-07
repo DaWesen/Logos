@@ -277,7 +277,15 @@ services:
     ports:
       - "80:80"
     volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx-logs:/var/log/nginx
+    depends_on:
+      - gateway
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - logos-network
 
@@ -299,7 +307,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-gateway
+    # 注意：不设 container_name，多副本时固定名会冲突
     environment:
       GIN_MODE: release
       SERVICE_HOST: gateway
@@ -330,8 +338,13 @@ services:
       LOGOS_SUMMARY_HOST: summary-service
       LOGOS_MCP_HOST: mcp-service
       LOGOS_MODERATION_HOST: moderation-service
-    ports:
-      - "8888:8888"
+      # 多节点水平扩展配置
+      LOGOS_USE_ETCD_RESOLVER: "true"
+      LOGOS_WS_BROADCAST_ENABLED: "true"
+      LOGOS_NODE_ID: ${HOSTNAME:-gateway-local}
+    # 多副本时不对外暴露 8888，仅内部网络可达，由 nginx 反代统一入口
+    expose:
+      - "8888"
     depends_on:
       - etcd
       - postgres
@@ -343,7 +356,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-user
     command: ["./user"]
     environment:
       <<: *service-discovery
@@ -368,7 +380,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-monitoring
     command: ["./monitoring"]
     environment:
       <<: *service-discovery
@@ -393,7 +404,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-billing
     command: ["./billing"]
     environment:
       <<: *service-discovery
@@ -421,7 +431,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-im
     command: ["./im"]
     environment:
       <<: *service-discovery
@@ -445,7 +454,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-chat
     command: ["./chat"]
     environment:
       <<: *service-discovery
@@ -471,7 +479,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-contact
     command: ["./contact"]
     environment:
       <<: *service-discovery
@@ -496,7 +503,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-message
     command: ["./message"]
     environment:
       <<: *service-discovery
@@ -731,7 +737,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: logos-bot
     command: ["./bot"]
     environment:
       <<: [*service-discovery, *tracing]

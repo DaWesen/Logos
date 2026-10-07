@@ -4,7 +4,9 @@ import (
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -229,6 +231,80 @@ func (h *Handler) SendBotMessage(c *gin.Context) {
 		Message: "success",
 		Data:    data,
 	})
+}
+
+// StreamBotMessage 以 SSE 逐 token 转发 Bot 的流式回复。
+// 客户端断开时 c.Request.Context() 取消，gRPC 流随之终止，
+// Bot 侧的 LLM 生成也会通过 ctx 级联取消。
+func (h *Handler) StreamBotMessage(c *gin.Context) {
+	if h.BotClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
+		return
+	}
+	var req pb.SendBotMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+
+	if userID, exists := c.Get("user_id"); exists {
+		req.UserId, _ = userID.(string)
+	}
+	req.Stream = true
+
+	stream, err := h.BotClient.StreamBotMessage(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	// 禁用 Nginx 等反向代理的缓冲，保证 token 实时到达
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Flush()
+
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			writeSSEEvent(c, map[string]interface{}{"error": err.Error(), "done": true})
+			return
+		}
+
+		event := map[string]interface{}{
+			"content": resp.GetContent(),
+			"done":    resp.GetDone(),
+		}
+		if resp.GetChatId() != "" {
+			event["chat_id"] = resp.GetChatId()
+		}
+		if resp.GetCost() > 0 {
+			event["cost"] = resp.GetCost()
+		}
+		if resp.GetTokens() > 0 {
+			event["tokens"] = resp.GetTokens()
+		}
+		writeSSEEvent(c, event)
+
+		if resp.GetDone() {
+			return
+		}
+	}
+}
+
+func writeSSEEvent(c *gin.Context, data map[string]interface{}) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	if _, err := c.Writer.WriteString("data: " + string(jsonBytes) + "\n\n"); err != nil {
+		return
+	}
+	c.Writer.Flush()
 }
 
 func (h *Handler) GetBotHistory(c *gin.Context) {

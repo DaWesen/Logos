@@ -215,7 +215,9 @@ type LocationContent struct {
 }
 
 type Message struct {
-	ID             string         `gorm:"type:varchar(64);primaryKey" json:"id"`
+	ID string `gorm:"type:varchar(64);primaryKey" json:"id"`
+	// Seq 会话内单调递增序号，用于稳定排序与增量/游标拉取（仅追加字段，前端可忽略）
+	Seq            int64          `gorm:"index;default:0" json:"seq"`
 	RequestID      string         `gorm:"type:varchar(64);index" json:"request_id"`
 	ConversationID string         `gorm:"type:varchar(100);index" json:"conversation_id"`
 	ChatID         string         `gorm:"type:varchar(100);index" json:"chat_id"`
@@ -365,13 +367,29 @@ type ConversationParticipant struct {
 	ConversationID string    `gorm:"index;type:varchar(100);not null" json:"conversation_id"`
 	UserID         string    `gorm:"type:varchar(64);index;not null" json:"user_id"`
 	LastReadAt     time.Time `json:"last_read_at"`
-	JoinedAt       time.Time `json:"joined_at"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	// LastReadSeq 会话已读位点：<= 该 seq 的消息视为已读，未读数由 seq 位点比对得出，
+	// 避免逐条 UPDATE messages.is_read 的全表写放大。
+	LastReadSeq int64     `gorm:"default:0" json:"last_read_seq"`
+	JoinedAt    time.Time `json:"joined_at"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 func (ConversationParticipant) TableName() string {
 	return "conversation_participants"
+}
+
+// ConversationSeq 维护每个会话的 seq 分配器。
+// 通过 INSERT ... ON CONFLICT DO NOTHING 保证行存在，再 FOR UPDATE 行锁原子自增，
+// 从而在多副本并发写入时为同一会话分配严格单调递增且不重复的 seq。
+type ConversationSeq struct {
+	ChatID    string    `gorm:"type:varchar(100);primaryKey" json:"chat_id"`
+	LastSeq   int64     `gorm:"not null;default:0" json:"last_seq"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (ConversationSeq) TableName() string {
+	return "conversation_seqs"
 }
 
 type ConversationItem struct {
@@ -392,13 +410,61 @@ func AutoMigrate(db *gorm.DB) error {
 	// 先清理无效的 JSON 数据
 	cleanInvalidJSON(db)
 
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&Message{},
 		&Conversation{},
 		&Group{},
 		&GroupMember{},
 		&ConversationParticipant{},
-	)
+		&ConversationSeq{},
+	); err != nil {
+		return err
+	}
+
+	// 为历史消息回填 seq（仅 PostgreSQL），保证按 seq 排序/游标拉取对旧数据同样生效
+	backfillMessageSeq(db)
+	// 为历史参与者回填已读位点，避免升级后把全部历史消息误判为未读
+	backfillReadSeq(db)
+	return nil
+}
+
+// backfillReadSeq 依据既有 last_read_at 推导会话已读位点：
+// 取该会话中 created_at <= last_read_at 的最大 seq（排除自己发送的消息）。
+// 仅回填 last_read_seq = 0 的行，保证已推进过的位点不被回退。
+func backfillReadSeq(db *gorm.DB) {
+	if db.Dialector.Name() != "postgres" {
+		return
+	}
+	db.Exec(`UPDATE conversation_participants p
+		SET last_read_seq = COALESCE((
+			SELECT MAX(m.seq) FROM messages m
+			WHERE m.chat_id = p.conversation_id
+			  AND m.created_at <= p.last_read_at
+			  AND m.sender_id <> p.user_id
+		), 0)
+		WHERE p.last_read_seq = 0`)
+}
+
+// backfillMessageSeq 为 seq=0 的历史消息按 created_at 顺序分配会话内 seq，
+// 并把 conversation_seqs 的分配器推进到各会话当前最大 seq，避免新增消息 seq 冲突。
+func backfillMessageSeq(db *gorm.DB) {
+	if db.Dialector.Name() != "postgres" {
+		return
+	}
+	// 幂等：仅处理 seq=0 的行；已回填过的行 seq>0 会被跳过
+	db.Exec(`UPDATE messages m SET seq = sub.rn
+		FROM (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY chat_id ORDER BY created_at ASC, id ASC) AS rn
+			FROM messages WHERE seq = 0
+		) sub
+		WHERE m.id = sub.id AND m.seq = 0`)
+
+	// 将分配器同步到现有最大 seq（取较大值，不回退）
+	db.Exec(`INSERT INTO conversation_seqs (chat_id, last_seq, updated_at)
+		SELECT chat_id, MAX(seq), NOW() FROM messages GROUP BY chat_id
+		ON CONFLICT (chat_id) DO UPDATE
+		SET last_seq = GREATEST(conversation_seqs.last_seq, EXCLUDED.last_seq),
+		    updated_at = NOW()`)
 }
 
 func cleanInvalidJSON(db *gorm.DB) {

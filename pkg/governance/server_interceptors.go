@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 
 	"Logos/pkg/logger"
@@ -78,6 +79,7 @@ func UnaryServerCircuitBreaker(manager *CircuitBreakerManager) grpc.UnaryServerI
 }
 
 type TokenBucketLimiter struct {
+	mu         sync.Mutex
 	tokens     float64
 	maxTokens  float64
 	rate       float64
@@ -94,6 +96,9 @@ func NewTokenBucketLimiter(rate float64) *TokenBucketLimiter {
 }
 
 func (l *TokenBucketLimiter) Allow() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	now := time.Now()
 	elapsed := now.Sub(l.lastRefill).Seconds()
 	l.tokens += elapsed * l.rate

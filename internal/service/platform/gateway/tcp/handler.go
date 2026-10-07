@@ -94,6 +94,7 @@ type TCPConnection struct {
 	Send      chan []byte
 	mu        sync.Mutex
 	IsClosed  bool
+	done      chan struct{} // 关闭信号；Send 永不关闭，避免并发发送到已关闭 channel 导致 panic
 }
 
 type Handler struct {
@@ -212,6 +213,7 @@ func (h *Handler) ServeTCP(conn net.Conn) {
 		Conn:     conn,
 		Send:     make(chan []byte, 256),
 		IsClosed: false,
+		done:     make(chan struct{}),
 	}
 
 	var wg sync.WaitGroup
@@ -262,10 +264,9 @@ func (h *Handler) writePump(conn *TCPConnection, wg *sync.WaitGroup) {
 		select {
 		case <-h.ctx.Done():
 			return
-		case data, ok := <-conn.Send:
-			if !ok {
-				return
-			}
+		case <-conn.done:
+			return
+		case data := <-conn.Send:
 			conn.mu.Lock()
 			err := conn.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err == nil {
@@ -358,12 +359,13 @@ func (h *Handler) handleConnect(conn *TCPConnection, msg *IncomingMessage) {
 }
 
 func (h *Handler) handleDisconnect(conn *TCPConnection, msg *IncomingMessage) {
-	h.cleanup(conn)
+	// 先回执再清理：cleanup 会关闭 done 让 writePump 退出，之后再发送就无法送达
 	h.sendMessage(conn, OutgoingMessage{
 		Type:      MessageTypeDisconnect,
 		RequestID: msg.RequestID,
 		Timestamp: time.Now().UnixMilli(),
 	})
+	h.cleanup(conn)
 }
 
 func (h *Handler) handleHeartbeat(conn *TCPConnection, msg *IncomingMessage) {
@@ -534,7 +536,7 @@ func (h *Handler) cleanup(conn *TCPConnection) {
 		return
 	}
 	conn.IsClosed = true
-	close(conn.Send)
+	close(conn.done) // 关闭 done 而非 Send，使 writePump 退出且发送方永不 panic
 	conn.mu.Unlock()
 
 	if conn.SessionID != "" {

@@ -29,11 +29,15 @@ func NewChatClientFromConfig(cfg *config.Config) (*ChatClient, error) {
 	return NewChatClient(client, conn), nil
 }
 
-func (c *ChatClient) GetMessageHistory(ctx context.Context, chatID string, limit int, beforeTime *time.Time) ([]*ChatMessage, error) {
+// GetMessageHistory 拉取会话历史。afterSeq > 0 时走增量补拉语义：
+// 返回 seq 大于该游标的升序消息（beforeTime 忽略）；afterSeq == 0 时保持原有
+// 「按 beforeTime 取最近 limit 条」语义。
+func (c *ChatClient) GetMessageHistory(ctx context.Context, chatID string, limit int, beforeTime *time.Time, afterSeq int64) ([]*ChatMessage, error) {
 	req := &pb.GetMessageHistoryRequest{
 		ChatId:   chatID,
 		Limit:    int32(limit),
 		ChatType: pb.ChatType_CHAT_TYPE_PRIVATE,
+		AfterSeq: afterSeq,
 	}
 	if beforeTime != nil {
 		req.BeforeTime = timestamppb.New(*beforeTime)

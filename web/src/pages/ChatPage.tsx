@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare, Filter, Image, File, Mic, Film, MapPin, Clock, X } from 'lucide-react'
 import type { Message, WsMessage } from '@/types'
 import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages } from '@/api/chat'
-import { sendBotMessage, getBotList, getBotHistory } from '@/api/bot'
+import { streamBotMessage, getBotList, getBotHistory } from '@/api/bot'
 import { searchUsers, getUser } from '@/api/user'
 import { getGroup, createGroup, getGroupMembers, inviteGroupMember, inviteBotToGroup, leaveGroup, kickGroupMember, joinGroup, updateGroupAvatar, muteGroupMember, transferGroupOwner, updateGroupAnnouncement, setGroupAdmin } from '@/api/group'
 import { addFriend, handleFriendRequest, getFriendRequests, checkFriendship, deleteFriend } from '@/api/friend'
@@ -17,8 +17,10 @@ import Modal from '@/components/Modal'
 import FileViewerModal from '@/components/FileViewerModal'
 import './ChatPage.css'
 
-// 直接连接到后端 Gateway，避免代理问题
-const wsBase = `ws://localhost:8888/ws`
+// 与 HTTP API 一致使用同源地址：开发经 Vite 代理、生产经 nginx 转发
+// 如需直连独立网关，可用 VITE_WS_BASE 覆盖
+const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const wsBase = import.meta.env.VITE_WS_BASE || `${wsProtocol}//${window.location.host}/ws`
 
 function privateChatId(myId: string, otherId: string): string {
   const a = String(myId)
@@ -149,6 +151,9 @@ export default function ChatPage() {
   const avatarRef = useRef<HTMLInputElement>(null)
   const sentMessagesRef = useRef<Map<string, { localId: string; timestamp: number }>>(new Map())
   const mediaUrlToLocalIdRef = useRef<Map<string, string>>(new Map())
+  // 每个会话已见过的最大 seq（只由历史接口响应推进）。WS 重连时以此为游标增量补拉，
+  // 填补 Redis PubSub 丢失的消息；实时推送载荷不含 seq，故不参与游标推进。
+  const seqCursorRef = useRef<Map<string, number>>(new Map())
   const messageProcessingQueue = useRef<{ msg: WsMessage; resolve: () => void }[]>([])
   const isProcessingMessage = useRef(false)
   const [showMenu, setShowMenu] = useState(false)
@@ -351,8 +356,8 @@ export default function ChatPage() {
     if (activeChatIdRef.current === chatId) setMessages(deduped)
   }, [getCorrectSenderName, bots, user])
 
-  const fetchRemoteMessages = useCallback(async (chatId: string) => {
-    console.log('%c🌐 [远程] 开始获取远程消息', 'background: #00BCD4; color: white; padding:2px 5px; border-radius:3px;', { chatId })
+  const fetchRemoteMessages = useCallback(async (chatId: string, afterSeq?: number) => {
+    console.log('%c🌐 [远程] 开始获取远程消息', 'background: #00BCD4; color: white; padding:2px 5px; border-radius:3px;', { chatId, afterSeq })
     try {
       const isBotChat = chatId.startsWith('bot-') || chatId.startsWith('bot_')
       let data: any[]
@@ -378,7 +383,8 @@ export default function ChatPage() {
           }
         })
       } else {
-        data = await getChatHistory(chatId)
+        // 有游标时走增量补拉（多给一些条数以防缺口较大），否则按默认语义取最近历史
+        data = await getChatHistory(chatId, afterSeq && afterSeq > 0 ? 200 : 50, undefined, afterSeq)
       }
       const localMsgs = loadChatMessages(chatId)
       if (Array.isArray(data) && data.length > 0) {
@@ -467,6 +473,8 @@ export default function ChatPage() {
               return String(raw)
             })(),
             isBot: isBotMsg,
+            // 历史接口携带的会话内序号，仅用于推进补拉游标（实时推送不含该字段）
+            seq: typeof m.seq === 'number' ? m.seq : (m.seq != null ? Number(m.seq) : undefined),
           }
         })
 
@@ -562,7 +570,13 @@ export default function ChatPage() {
           const timeB = new Date(b.createdAt).getTime()
           return timeA - timeB
         })
-        
+
+        // 推进该会话的补拉游标：只取历史接口返回的 seq，单调取大不回退
+        const maxSeq = sorted.reduce((mx, m) => Math.max(mx, typeof m.seq === 'number' ? m.seq : 0), 0)
+        if (maxSeq > 0) {
+          seqCursorRef.current.set(chatId, Math.max(seqCursorRef.current.get(chatId) || 0, maxSeq))
+        }
+
         persistAndSetMessages(chatId, sorted)
       }
     } catch (e) { console.log('%c🌐 [远程] 获取失败', 'background: #F44336; color: white; padding:2px 5px; border-radius:3px;', e) }
@@ -788,7 +802,8 @@ export default function ChatPage() {
               let finalName = existingChat.name
               let finalAvatar = existingChat.avatar
               
-              if (!isGroupChat && chatType !== 'bot') {
+              // bot 会话已在上方 continue 跳过，此处仅需排除群聊
+              if (!isGroupChat) {
                 if (chatName && chatName !== '新对话') {
                   finalName = chatName
                 }
@@ -942,9 +957,9 @@ export default function ChatPage() {
       await inviteGroupMember(selectedChat.id, [addMemberId.trim()])
       // 刷新成员列表
       const members = await getGroupMembers(selectedChat.id)
-      const newMap = new Map<string, { userId: string; username: string; avatar: string }>()
+      const newMap = new Map<string, { userId: string; username: string; avatar: string; role: string }>()
       members.forEach((member) => {
-        newMap.set(member.userId, { userId: member.userId, username: member.username, avatar: member.avatar })
+        newMap.set(member.userId, { userId: member.userId, username: member.username, avatar: member.avatar, role: member.role })
       })
       setGroupMembers(newMap)
       
@@ -961,9 +976,9 @@ export default function ChatPage() {
       await kickGroupMember(selectedChat.id, userId)
       // 刷新成员列表
       const members = await getGroupMembers(selectedChat.id)
-      const newMap = new Map<string, { userId: string; username: string; avatar: string }>()
+      const newMap = new Map<string, { userId: string; username: string; avatar: string; role: string }>()
       members.forEach((member) => {
-        newMap.set(member.userId, { userId: member.userId, username: member.username, avatar: member.avatar })
+        newMap.set(member.userId, { userId: member.userId, username: member.username, avatar: member.avatar, role: member.role })
       })
       setGroupMembers(newMap)
     } catch { /* */ }
@@ -1607,7 +1622,30 @@ export default function ChatPage() {
     processWsMessage(msg)
   }, [processWsMessage, persistAndSetMessages, selectedChatId, typingChatId, user])
 
-  const { send: wsSend, connected: wsConnected } = useWebSocket(wsBase, { onMessage: handleWsMessage })
+  // 首次连接由「进入会话」的 effect 负责拉取，这里只在断线重连后补拉，避免正常挂载时重复请求
+  const hasOpenedWsRef = useRef(false)
+  // WS 重连补偿：Redis PubSub 只负责实时扇出且不可靠（订阅者掉线期间的消息不会重投，
+  // Kafka offset 也不会因此回退），所以重连后按当前会话已见的最大 seq 增量补拉，
+  // 并刷新会话列表与未读数，让「实时性缺口」自愈。
+  // 游标只由历史接口响应推进；实时推送不含 seq，故补拉结果仍需按 id 合并去重。
+  const handleWsReconnectSync = useCallback(() => {
+    if (!hasOpenedWsRef.current) {
+      hasOpenedWsRef.current = true
+      return
+    }
+    console.log('%c🔁 [补拉] WS 重连，按 seq 增量补拉消息与会话列表', 'background: #9C27B0; color: white; padding:2px 5px; border-radius:3px;')
+    const chatId = activeChatIdRef.current
+    if (chatId) {
+      const cursor = seqCursorRef.current.get(chatId) || 0
+      fetchRemoteMessages(chatId, cursor > 0 ? cursor : undefined).catch(() => {})
+    }
+    refreshConversations().catch(() => {})
+  }, [fetchRemoteMessages, refreshConversations])
+
+  const { send: wsSend, connected: wsConnected } = useWebSocket(wsBase, {
+    onMessage: handleWsMessage,
+    onOpen: handleWsReconnectSync,
+  })
 
   const updateChatLastMessage = (chatId: string, content: string) => {
     setChats((prev) => prev.map((c) => c.id === chatId ? { ...c, lastMessage: content, lastMessageTime: new Date().toISOString() } : c))
@@ -1931,53 +1969,66 @@ export default function ChatPage() {
     if (atBotMode || selectedChat.type === 'bot') {
       setAtBotMode(false)
       try {
-        console.log('调用 sendBotMessage...', { botId: selectedChat.botId || selectedChat.id, content: trimContent, chatId, selectedChatAvatar: selectedChat.avatar, botsCount: bots.length, botsAvatars: bots.map((b) => ({ id: b.id, avatar: b.avatar })) })
-        const result = await sendBotMessage(selectedChat.botId || selectedChat.id, trimContent, chatId, autoSaveToKb)
-        console.log('sendBotMessage 结果:', result)
+        // 流式回复：先插入占位消息，token 到达后逐个追加（打字机效果）
+        const streamMsgId = `bot-stream-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        const displayChatId = selectedChat.id
+        const botInfo = bots.find((b) => b.id === (selectedChat.botId || selectedChat.id.replace('bot-', '')))
+        const botAvatar = botInfo?.avatar || selectedChat.avatar || ''
+        const botName = botInfo?.name || selectedChat.name || 'Bot'
+        const botSenderId = selectedChat.botId || selectedChat.id.replace('bot-', '')
+
+        const streamMsg: Message = {
+          id: streamMsgId,
+          chatId: displayChatId,
+          senderId: botSenderId,
+          senderName: botName,
+          senderAvatar: botAvatar,
+          content: '',
+          messageType: 'text',
+          isBot: true,
+          isStreaming: true,
+          createdAt: new Date().toISOString(),
+        }
+        if (activeChatIdRef.current === displayChatId) {
+          setMessages((prev) => [...prev, streamMsg])
+        }
+
+        let streamed = ''
+        const result = await streamBotMessage(botSenderId, trimContent, chatId, autoSaveToKb, {
+          onChunk: (chunk) => {
+            streamed += chunk
+            if (activeChatIdRef.current === displayChatId) {
+              setMessages((prev) => prev.map((m) => (m.id === streamMsgId ? { ...m, content: streamed } : m)))
+            }
+          },
+        })
+        console.log('streamBotMessage 结果:', result)
 
         if (result.error) {
-          const errMsg: Message = { id: `bot-err-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, chatId, senderId: 'system', senderName: '系统', senderAvatar: '', content: `⚠️ ${result.error}`, messageType: 'text', isBot: true, createdAt: new Date().toISOString() }
-          setMessages((prev) => [...prev, errMsg])
+          // 流式中途失败：把占位消息替换为错误提示
+          const errorText = `⚠️ ${result.error}`
+          setMessages((prev) => prev.map((m) => (m.id === streamMsgId ? { ...m, content: errorText, isStreaming: false } : m)))
           updateChatLastMessage(chatId, result.error)
           queueMicrotask(() => {
             const currentMsgs = loadChatMessages(chatId)
             const existingIds = new Set(currentMsgs.map(m => m.id))
-            const newMsgs = [localMsg, errMsg].filter(m => !existingIds.has(m.id))
-            if (newMsgs.length > 0) persistAndSetMessages(chatId, [...currentMsgs, ...newMsgs])
+            if (!existingIds.has(localMsg.id)) {
+              persistAndSetMessages(chatId, [...currentMsgs, localMsg, { ...streamMsg, content: errorText, isStreaming: false }])
+            }
           })
           return
         }
 
         const reply = result.content || '(Bot 暂无回复)'
-        const displayChatId = selectedChat.id
-        const botInfo = bots.find((b) => b.id === (selectedChat.botId || selectedChat.id.replace('bot-', '')))
-        const botAvatar = botInfo?.avatar || selectedChat.avatar || ''
-        const botName = botInfo?.name || selectedChat.name || 'Bot'
-        const botMsg: Message = {
-          id: `bot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          chatId: displayChatId,
-          senderId: selectedChat.botId || selectedChat.id.replace('bot-', ''),
-          senderName: botName,
-          senderAvatar: botAvatar,
-          content: reply,
-          messageType: 'text',
-          isBot: true,
-          createdAt: new Date().toISOString(),
-        }
 
-        if (activeChatIdRef.current === displayChatId) {
-          setMessages((prev) => {
-            const exists = prev.some(m => m.isBot && m.content.trim() === reply.trim() && Math.abs(new Date(m.createdAt).getTime() - Date.now()) < 10000)
-            if (exists) return prev
-            return [...prev, botMsg]
-          })
-        }
+        // 流结束：去掉 streaming 标记，落最终内容
+        setMessages((prev) => prev.map((m) => (m.id === streamMsgId ? { ...m, content: reply, isStreaming: false } : m)))
         updateChatLastMessage(displayChatId, reply)
 
         queueMicrotask(() => {
           const currentMsgs = loadChatMessages(displayChatId)
           const existingIds = new Set(currentMsgs.map(m => m.id))
-          const newMsgs = [localMsg, botMsg].filter(m => !existingIds.has(m.id))
+          const newMsgs = [localMsg, { ...streamMsg, content: reply, isStreaming: false }].filter(m => !existingIds.has(m.id))
           if (newMsgs.length > 0) persistAndSetMessages(displayChatId, [...currentMsgs, ...newMsgs])
         })
       } catch (err: unknown) {

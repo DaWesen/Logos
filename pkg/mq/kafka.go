@@ -67,7 +67,7 @@ func InitProducer(brokers []string) (*Producer, error) {
 	producer := &Producer{
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(brokers...),
-			Balancer:     &kafka.LeastBytes{},
+			Balancer:     &kafka.Hash{}, // 按 Key（chatID/userID）哈希分区，保证同一会话落同一分区，消息有序
 			WriteTimeout: 5 * time.Second,
 			ReadTimeout:  5 * time.Second,
 			RequiredAcks: kafka.RequireOne, // 只需要leader确认就返回，更快
@@ -230,12 +230,20 @@ func (p *Producer) Close() error {
 	return p.writer.Close()
 }
 
+// Receive 拉取下一条消息，但不提交 offset。
+//
+// 使用 FetchMessage 而非 ReadMessage：ReadMessage 会在返回前自动提交 offset，
+// 导致 handler 还没执行消息就被标记为已消费（at-most-once）。
+// FetchMessage 只拉取不提交，由 Subscribe 在 handler 成功后显式 CommitMessages，
+// 失败则不提交、下次拉取到同一条消息重投，实现 at-least-once。
+//
+// 注意：调用方若直接使用 Receive 而不通过 Subscribe，需自行调用 Commit。
 func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
 	if c == nil || c.reader == nil {
 		return nil, fmt.Errorf("consumer not initialized")
 	}
 
-	msg, err := c.reader.ReadMessage(ctx)
+	msg, err := c.reader.FetchMessage(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("读取消息失败: %w", err)
 	}
@@ -250,16 +258,44 @@ func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
 	}, nil
 }
 
+// Commit 提交指定消息的 offset。
+// 在 at-least-once 语义下，应由 Subscribe 在 handler 成功后调用。
+// 失败时不调用，下次 FetchMessage 会拉取到同一条消息重投。
+func (c *Consumer) Commit(ctx context.Context, msg *Message) error {
+	if c == nil || c.reader == nil {
+		return fmt.Errorf("consumer not initialized")
+	}
+	return c.reader.CommitMessages(ctx, kafka.Message{
+		Topic:     msg.Topic,
+		Partition: msg.Partition,
+		Offset:    msg.Offset,
+		Key:       []byte(msg.Key),
+		Value:     msg.Value,
+	})
+}
+
 func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error {
 	if c == nil || c.reader == nil {
 		return fmt.Errorf("consumer not initialized")
 	}
+
+	// maxConsumerFailures 同一条消息连续处理失败的上限：
+	// 超过后强制提交 offset 跳过该消息，避免毒丸消息永久卡死整个分区。
+	const maxConsumerFailures = 5
 
 	go func() {
 		defer func() {
 			// 确保退出时关闭读取器
 			_ = c.Close()
 		}()
+		// 记录上一条消息的定位与连续失败次数，用于毒丸判定
+		var (
+			lastTopic     string
+			lastPartition int
+			lastOffset    int64
+			failCount     int
+		)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -283,8 +319,43 @@ func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error 
 					time.Sleep(100 * time.Millisecond)
 					continue
 				}
+				// 统计同一条消息（topic + partition + offset）的连续失败次数
+				if msg.Topic == lastTopic && msg.Partition == lastPartition && msg.Offset == lastOffset {
+					failCount++
+				} else {
+					lastTopic, lastPartition, lastOffset = msg.Topic, msg.Partition, msg.Offset
+					failCount = 0
+				}
+
+				// handler 失败不提交 offset，下次循环会重新拉取到同一条消息（at-least-once 重投）
 				if err := handler(msg); err != nil {
-					logger.Warn("处理消息失败", logger.ErrorField(err))
+					logger.Warn("处理消息失败，不提交 offset 等待重投",
+						logger.ErrorField(err),
+						logger.StringField("topic", msg.Topic),
+						logger.Int64Field("offset", msg.Offset),
+						logger.IntField("fail_count", failCount+1))
+					// 连续失败达上限：判定为毒丸，强制提交以放行分区，并落 Error 日志便于告警介入
+					if failCount+1 >= maxConsumerFailures {
+						logger.Error("消息连续处理失败达上限，跳过以避免阻塞分区",
+							logger.StringField("topic", msg.Topic),
+							logger.Int64Field("offset", msg.Offset),
+							logger.IntField("fail_count", failCount+1))
+						if cerr := c.Commit(ctx, msg); cerr != nil {
+							logger.Warn("跳过毒丸消息时提交 offset 失败",
+								logger.ErrorField(cerr),
+								logger.StringField("topic", msg.Topic),
+								logger.Int64Field("offset", msg.Offset))
+						}
+						failCount = 0
+					}
+					continue
+				}
+				// handler 成功后才提交 offset
+				if err := c.Commit(ctx, msg); err != nil {
+					logger.Warn("提交 offset 失败，下次可能重复消费",
+						logger.ErrorField(err),
+						logger.StringField("topic", msg.Topic),
+						logger.Int64Field("offset", msg.Offset))
 				}
 			}
 		}

@@ -21,10 +21,13 @@ export interface Message {
   createdAt: string
   editedAt?: string
   isBot?: boolean
+  isStreaming?: boolean
   translatedContent?: string
   isRead?: boolean
   uploading?: boolean
   uploadProgress?: number
+  // seq 会话内单调递增序号（仅历史接口返回时携带），用于断线重连后的增量补拉游标。
+  seq?: number
 }
 
 export interface Chat {

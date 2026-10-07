@@ -325,11 +325,20 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 			limit = int32(v)
 		}
 	}
+	// after_seq 为可选增量游标：> 0 时只返回 seq 大于该值的消息（升序），
+	// 供客户端断线重连后补齐实时推送缺口；缺省 0 表示保持原有历史分页语义。
+	afterSeq := int64(0)
+	if a := c.Query("after_seq"); a != "" {
+		if v, err := strconv.ParseInt(a, 10, 64); err == nil && v > 0 {
+			afterSeq = v
+		}
+	}
 
 	resp, err := h.ChatClient.GetMessageHistory(c.Request.Context(), &pb.GetMessageHistoryRequest{
 		ChatId:   chatID,
 		ChatType: pb.ChatType(chatType),
 		Limit:    limit,
+		AfterSeq: afterSeq,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))

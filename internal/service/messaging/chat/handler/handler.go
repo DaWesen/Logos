@@ -41,6 +41,7 @@ func msgToProto(msg *model.Message) *pb.Message {
 		CreatedAt:        timestamppb.New(msg.CreatedAt),
 		UpdatedAt:        timestamppb.New(msg.UpdatedAt),
 		ReplyToMessageId: msg.ReplyToMessage,
+		Seq:              msg.Seq,
 	}
 }
 
@@ -98,7 +99,7 @@ func (s *ChatServiceImpl) GetMessageHistory(ctx context.Context, req *pb.GetMess
 		}
 	}
 
-	messages, hasMore, err := s.service.GetMessageHistory(req.ChatId, model.ChatType(req.ChatType), beforeTime, int(req.Limit))
+	messages, hasMore, err := s.service.GetMessageHistory(req.ChatId, model.ChatType(req.ChatType), beforeTime, int(req.Limit), req.AfterSeq)
 	if err != nil {
 		logger.Error("获取消息历史失败", logger.ErrorField(err))
 		return &pb.GetMessageHistoryResponse{Code: 500, Message: err.Error()}, nil
