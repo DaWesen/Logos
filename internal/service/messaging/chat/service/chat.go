@@ -831,6 +831,15 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		if member == nil {
 			return nil, nil, fmt.Errorf("您不是该群组成员，无法发送消息")
 		}
+		// 禁言拦截：只把禁言状态写库而不拦发送等于禁言无效
+		if err := checkMuted(member, time.Now()); err != nil {
+			logger.Warn("群成员禁言拦截",
+				logger.StringField("group_id", actualChatID),
+				logger.StringField("user_id", senderID),
+				logger.StringField("mute_type", member.MuteType.String()),
+				logger.ErrorField(err))
+			return nil, nil, err
+		}
 	}
 
 	// 私聊跳过审核，只有群聊才审核
@@ -1378,6 +1387,21 @@ func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) er
 		logger.StringField("user_id", userID),
 	)
 
+	return nil
+}
+
+// checkMuted 判断群成员当前是否处于禁言状态。
+// 永久禁言始终生效；临时禁言在 MuteUntil 之前生效（未设置截止时间视为仍生效）。
+// 禁言到期后不再拦截，成员可正常发言。
+func checkMuted(member *model.GroupMember, now time.Time) error {
+	switch member.MuteType {
+	case model.MuteTypePermanent:
+		return fmt.Errorf("您已被永久禁言，无法发送消息")
+	case model.MuteTypeTemporary:
+		if member.MuteUntil == nil || member.MuteUntil.After(now) {
+			return fmt.Errorf("您已被禁言，无法发送消息")
+		}
+	}
 	return nil
 }
 
