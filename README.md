@@ -425,28 +425,62 @@ Logos/
 
 ### 事务性发件箱（Outbox）
 
-`pkg/outbox/` 实现与业务同事务写入的 at-least-once 事件投递：
+`pkg/outbox/` 实现与业务同事务写入的 at-least-once 事件投递，投递分三段执行，避免把 Kafka 网络往返放进数据库事务：
 
-- **多副本安全**：投递在事务内以 `SELECT ... FOR UPDATE SKIP LOCKED` 锁定批次，多实例部署不会重复消费同一批消息
-- **失败重试**：投递失败的消息回到 pending 并按指数退避（30s 起步、上限 32 分钟）延后重投，最多 5 次
-- **死信终态**：重试耗尽进入 failed 终态保留排查，达到上限时输出告警日志
+1. **短事务领取**：`SELECT ... FOR UPDATE SKIP LOCKED` 取一批消息，同时把 `next_retry_at` 写成租约截止时间，提交即释放行锁 —— 多副本部署不会重复领取同一批消息，进程崩溃时租约到期自动回到可领取状态
+2. **事务外发送**：逐条 `producer.Send`，网络抖动不再长时间持有行锁与连接池连接
+3. **单语句标记**：发送成功置 `sent`，失败按重试次数置回 `pending` 并设置退避；标记失败时消息会在租约到期后重投，属于 at-least-once 语义，消费端需保证幂等
+
+- **失败重试**：30s 起步的指数退避（30s×2ⁿ，上限 32 分钟），最多 5 次
+- **死信终态**：重试耗尽进入 failed 终态保留排查，并触发告警日志/告警钩子
+- **死信重放**：每 10 分钟自动把 `replay_count < 3` 的死信重置回 pending，也支持人工确认后手工重放，避免毒消息被无限重投
 - **自动清理**：已发送消息 24 小时后定期清理
 
-Gateway 层额外提供多级限流：
+### Kafka 消费可靠性
 
-| 限流策略  | 配置         |
-| ----- | ---------- |
-| 全局限流  | 120 次/分钟   |
-| IP 限流 | 200 次/分钟   |
-| 登录限流  | 5 次/分钟     |
-| 问答限流  | 30 次/分钟    |
-| 消息限流  | 50 次/分钟    |
-| 突发保护  | 1000 次/5分钟 |
+- **at-least-once**：消费端用 `FetchMessage` 只拉取不提交，handler 成功后才 `CommitMessages`；失败不提交，下次拉取到同一条消息重投
+- **毒丸消息止损**：同一条消息（topic + partition + offset）连续失败 5 次后判定为毒丸，先转存到 `<topic>.dlq`（保留原始 topic/partition/offset/key/error 与原始负载），转存成功后才提交 offset；转存失败则落原始负载日志，保证可人工恢复
+- **规范化**：消息按 `chat_id` 等 Key 哈希分区，同一会话有序；消费端通过数据库主键/唯一约束实现幂等
+
+Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
+
+| 限流维度 | 配置 | 说明 |
+| --- | --- | --- |
+| 全局限流 | 600 次/分钟 | 按 method + path 统计，防止单接口被整体打爆 |
+| IP 限流 | 600 次/分钟 | 单 IP 全接口合计 |
+| 登录/注册 | 5 次/分钟 | 按用户，防撞库 |
+| AI 问答 | 30 次/分钟 | 触发 LLM 调用，成本最高 |
+| 文档提取 | 60 次/分钟 | 解析/抽取重计算 |
+| 集合任务 | 30 次/分钟 | 仅 POST/PUT，读列表不受限 |
+| 消息发送 | 50 次/分钟 | 群聊写扩散到多个接收者 |
+| 推荐查询 | 120 次/分钟 | |
+| 常规读接口 | 600 次/分钟 | 默认档 |
+| 突发保护 | 1000 次/5分钟 | 单 IP 超限后短期封禁 |
 
 ## 监控与可观测性
 
 - **Request-ID 链路贯穿**：Gateway 为每个请求生成/透传 `X-Request-ID`（UUID），响应头回写、日志与 monitoring 上报统一携带，单请求全链路可串联排障
 - **优雅停机**：全部 gRPC 微服务在 SIGTERM 时执行三段式下线——etcd 主动注销（新流量立即摘除，无需等 lease 过期）→ 健康检查置 NOT_SERVING → GracefulStop 等待 in-flight 请求排空（默认 25s 宽限期，`GRPC_SHUTDOWN_GRACE` 可调，小于 K8s terminationGracePeriodSeconds 保证不被 SIGKILL 撕断）；Gateway HTTP 侧并行关闭 TCP/WebSocket/EventBus 并超时兜底
+
+### 可靠性指标与告警
+
+`pkg/obs` 统一注册指标（指标初始化在各服务 `obs.InitGRPCProvider` 设置 MeterProvider 后惰性完成），经 OTel Collector 的 Prometheus exporter（`:8889`）暴露：
+
+| 指标 | 类型 | 标签 | 含义 |
+| --- | --- | --- | --- |
+| `logos.kafka.consume.count` | Counter | `topic`、`result=ok/failed` | 消费成功/失败数 |
+| `logos.kafka.consume.duration` | Histogram | `topic`、`result` | handler 处理耗时 |
+| `logos.kafka.poison.count` | Counter | `topic` | 毒丸消息（已转存死信队列）数 |
+| `logos.outbox.dispatch.count` | Counter | `topic`、`result=sent/failed` | Outbox 投递成功/失败数 |
+| `logos.outbox.dispatch.duration` | Histogram | `topic`、`result` | Kafka 发送耗时 |
+| `logos.outbox.deadletter.count` | Counter | `topic` | Outbox 重试耗尽进入死信的域事件数 |
+
+配套告警规则见 `deployment/examples/prometheus-rules.yaml` 的 `logos.reliability` 组：
+
+- `KafkaPoisonMessage`（critical）：5 分钟内出现毒丸，需人工检查 `<topic>.dlq` 并回放
+- `KafkaConsumeFailureRateHigh`（warning）：消费失败率 > 5%，通常意味着下游 DB/Redis 异常
+- `OutboxDeadLetter`（critical）：域事件已停止投递，需人工确认后调用 `ReplayDeadLetters`
+- `OutboxDispatchFailureRateHigh`（warning）：投递失败率 > 10%，通常意味着 Kafka 抖动
 
 | 服务            | 地址                       | 说明       |
 | ------------- | ------------------------ | -------- |

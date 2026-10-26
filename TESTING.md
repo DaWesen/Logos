@@ -70,6 +70,24 @@ script/test.bat
 3. 逐服务编译检查
 4. gRPC 健康检查注册验证
 
+### 单元测试（无需基础设施）
+
+纯逻辑测试不依赖 PostgreSQL / Kafka / Redis，可直接运行：
+
+```bash
+go test ./pkg/... ./internal/service/ai/bot/service/...
+```
+
+当前覆盖的核心点：
+
+- **可靠性链路**：`pkg/outbox` 退避序列与 `FetchPending` 生成 SQL（`FOR UPDATE SKIP LOCKED`、状态与退避过滤、先进先出）；`pkg/mq` 死信信封构造（合法 JSON 原样保留、非法负载包装）、毒丸消息连续失败计数
+- **越权防护**：`internal/service/ai/bot/service` 用内存 stub repo 验证 Bot / 对话 / 提示词的归属校验（非所有者按“不存在”处理、公开与预设提示词的可见性规则），并验证删除 Bot 时同步清理 `qq:bot_bind:` 路由缓存
+- **限流分档**：`gateway/middleware` 验证各接口阈值互不相同（登录 5 / 问答 30 / 消息 50 / 默认 600），避免四层同值导致限流失效
+- **群禁言**：`chat/service` 验证永久禁言、临时禁言未到期、已到期、缺少截止时间四种状态的发送拦截
+- **AI 链路**：记忆合并、RRF 混合检索、提示词守卫、语义缓存、上下文压缩、planner、分块、熔断与重试
+
+需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
+
 ### 运行 API 测试脚本
 
 ```bash
