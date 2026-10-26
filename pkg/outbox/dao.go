@@ -16,6 +16,9 @@ type OutboxRepository interface {
 	// FetchPending 在事务中锁定一批待投递消息（FOR UPDATE SKIP LOCKED，
 	// 多副本部署时各实例不会抢到同一批消息），调用方必须在事务内调用。
 	FetchPending(ctx context.Context, tx *gorm.DB, limit int) ([]*OutboxMessage, error)
+	// ClaimPending 在短事务内领取一批消息并写入租约（next_retry_at = leaseUntil）。
+	// 事务提交后行锁即释放，不持有到网络发送结束；其他副本在租约到期前不会重复领取。
+	ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time) ([]*OutboxMessage, error)
 	MarkSent(ctx context.Context, tx *gorm.DB, id string) error
 	// MarkFailed 记录一次投递失败：未达到 MaxRetryCount 时消息回到 pending
 	// 并按指数退避设置 NextRetryAt；达到上限后进入 failed 终态（死信）。
@@ -65,6 +68,27 @@ func (r *outboxRepositoryImpl) FetchPending(ctx context.Context, tx *gorm.DB, li
 		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 		Find(&messages).Error
 	return messages, err
+}
+
+func (r *outboxRepositoryImpl) ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time) ([]*OutboxMessage, error) {
+	messages, err := r.FetchPending(ctx, tx, limit)
+	if err != nil || len(messages) == 0 {
+		return messages, err
+	}
+
+	ids := make([]string, 0, len(messages))
+	for _, m := range messages {
+		ids = append(ids, m.ID)
+	}
+	// 用 next_retry_at 充当租约截止时间：到期前其他副本的 FetchPending 不会命中这些行，
+	// 到期后自动回到可领取状态（进程崩溃时的自愈入口）
+	if err := tx.WithContext(ctx).
+		Model(&OutboxMessage{}).
+		Where("id IN ?", ids).
+		Update("next_retry_at", leaseUntil).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
 // RetryBackoff 返回第 retryCount 次失败后的退避时长：30s * 2^n，上限 32 分钟

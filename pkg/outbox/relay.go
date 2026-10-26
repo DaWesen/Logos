@@ -6,6 +6,7 @@ import (
 
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/obs"
 
 	"gorm.io/gorm"
 )
@@ -120,44 +121,59 @@ func (r *Relay) run() {
 	}
 }
 
-// dispatch 在单个数据库事务内完成「锁定 -> 投递 -> 标记」，
-// FOR UPDATE SKIP LOCKED 保证多副本时各实例不会重复投递同一批消息。
-// 注意：若 Kafka 发送成功但事务提交失败，消息会回到 pending 被再次投递，
+// dispatchLease 领取批次后各行的租约时长。
+// 租约短于最坏发送耗时是安全的：最坏情况只是租约到期后被另一副本重复领取，
+// 而 at-least-once 本就允许重复投递（消费端幂等），绝不会丢消息。
+const dispatchLease = 30 * time.Second
+
+// dispatch 拆成三段，保证 Kafka 网络往返期间不持有数据库事务与行锁：
+//  1. 短事务领取：FetchPending + 写租约，提交即释放行锁
+//  2. 事务外逐条发送：网络抖动不再拖住连接池
+//  3. 单语句标记 sent/failed（各自隐式短事务）
+//
+// 若发送成功而标记失败，租约到期后消息回到 pending 被再次投递，
 // 这是 at-least-once 语义的一部分，消费端需保证幂等。
 func (r *Relay) dispatch() {
+	var messages []*OutboxMessage
 	err := r.db.WithContext(r.ctx).Transaction(func(tx *gorm.DB) error {
-		messages, err := r.repo.FetchPending(r.ctx, tx, r.batchSize)
-		if err != nil {
-			return err
-		}
-
-		for _, msg := range messages {
-			if err := r.producer.Send(r.ctx, msg.Topic, msg.Key, []byte(msg.Value)); err != nil {
-				logger.Warn("Outbox send failed, will retry with backoff",
-					logger.StringField("id", msg.ID),
-					logger.StringField("topic", msg.Topic),
-					logger.IntField("retry_count", msg.RetryCount+1),
-					logger.ErrorField(err))
-				if markErr := r.repo.MarkFailed(r.ctx, tx, msg, err.Error()); markErr != nil {
-					logger.Warn("Outbox mark failed error", logger.ErrorField(markErr))
-				}
-				if msg.RetryCount+1 >= MaxRetryCount {
-					logger.Error("Outbox message exhausted retries, moved to dead letter",
-						logger.StringField("id", msg.ID),
-						logger.StringField("topic", msg.Topic))
-					r.onDeadLetter(msg, err)
-				}
-				continue
-			}
-
-			if markErr := r.repo.MarkSent(r.ctx, tx, msg.ID); markErr != nil {
-				logger.Warn("Outbox mark sent error", logger.ErrorField(markErr))
-			}
-		}
-		return nil
+		var claimErr error
+		messages, claimErr = r.repo.ClaimPending(r.ctx, tx, r.batchSize, time.Now().Add(dispatchLease))
+		return claimErr
 	})
 	if err != nil {
 		logger.Warn("Outbox dispatch failed", logger.ErrorField(err))
+		return
+	}
+
+	for _, msg := range messages {
+		sendStart := time.Now()
+		sendErr := r.producer.Send(r.ctx, msg.Topic, msg.Key, []byte(msg.Value))
+		elapsed := time.Since(sendStart).Seconds()
+
+		if sendErr != nil {
+			obs.RecordOutboxDispatch(r.ctx, msg.Topic, "failed", elapsed)
+			logger.Warn("Outbox send failed, will retry with backoff",
+				logger.StringField("id", msg.ID),
+				logger.StringField("topic", msg.Topic),
+				logger.IntField("retry_count", msg.RetryCount+1),
+				logger.ErrorField(sendErr))
+			if markErr := r.repo.MarkFailed(r.ctx, r.db, msg, sendErr.Error()); markErr != nil {
+				logger.Warn("Outbox mark failed error", logger.ErrorField(markErr))
+			}
+			if msg.RetryCount+1 >= MaxRetryCount {
+				obs.RecordOutboxDeadLetter(r.ctx, msg.Topic)
+				logger.Error("Outbox message exhausted retries, moved to dead letter",
+					logger.StringField("id", msg.ID),
+					logger.StringField("topic", msg.Topic))
+				r.onDeadLetter(msg, sendErr)
+			}
+			continue
+		}
+
+		obs.RecordOutboxDispatch(r.ctx, msg.Topic, "sent", elapsed)
+		if markErr := r.repo.MarkSent(r.ctx, r.db, msg.ID); markErr != nil {
+			logger.Warn("Outbox mark sent error", logger.ErrorField(markErr))
+		}
 	}
 }
 
