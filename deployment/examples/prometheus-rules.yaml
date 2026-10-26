@@ -65,6 +65,59 @@ spec:
         summary: "High latency for {{ $labels.service }}"
         description: "P99 latency is {{ $value }}s for {{ $labels.service }}"
 
+  # 可靠性链路：Kafka 消费 / Outbox 投递
+  # 指标由 OTel Collector 的 prometheus exporter 转换，counter 带 _total 后缀
+  - name: logos.reliability
+    interval: 30s
+    rules:
+    # 出现毒丸消息：消息已转存 <topic>.dlq，需要人工排查并回放
+    - alert: KafkaPoisonMessage
+      expr: |
+        sum by (topic) (increase(logos_kafka_poison_count_total[5m])) > 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Kafka 出现毒丸消息（topic={{ $labels.topic }}）"
+        description: "5 分钟内 {{ $labels.topic }} 有消息连续处理失败并被转存死信队列，请检查 {{ $labels.topic }}.dlq 并人工回放"
+
+    # 消费失败率过高：说明下游依赖（DB/Redis/下游服务）异常
+    - alert: KafkaConsumeFailureRateHigh
+      expr: |
+        sum by (topic) (rate(logos_kafka_consume_count_total{result="failed"}[5m]))
+          /
+        sum by (topic) (rate(logos_kafka_consume_count_total[5m])) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Kafka 消费失败率高（topic={{ $labels.topic }}）"
+        description: "{{ $labels.topic }} 近 5 分钟消费失败率 {{ $value | humanizePercentage }}，消息正在重投并可能阻塞分区"
+
+    # Outbox 重试耗尽进入死信：域事件已停止投递
+    - alert: OutboxDeadLetter
+      expr: |
+        sum by (topic) (increase(logos_outbox_deadletter_count_total[5m])) > 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Outbox 消息进入死信（topic={{ $labels.topic }}）"
+        description: "{{ $labels.topic }} 的域事件已重试 5 次仍失败，需人工确认后调用 ReplayDeadLetters 重放"
+
+    # Outbox 投递失败率过高：Kafka 抖动或 broker 不可用
+    - alert: OutboxDispatchFailureRateHigh
+      expr: |
+        sum by (topic) (rate(logos_outbox_dispatch_count_total{result="failed"}[5m]))
+          /
+        sum by (topic) (rate(logos_outbox_dispatch_count_total[5m])) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Outbox 投递失败率高（topic={{ $labels.topic }}）"
+        description: "{{ $labels.topic }} 近 5 分钟投递失败率 {{ $value | humanizePercentage }}，域事件投递延迟将持续增大"
+
   - name: logos.resources
     interval: 30s
     rules:
