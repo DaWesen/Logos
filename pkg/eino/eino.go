@@ -172,6 +172,8 @@ func (e *EinoManager) Chat(ctx context.Context, messages []string) (string, erro
 			if err != nil {
 				return "", err
 			}
+			// 采集供应商返回的真实 token 用量，供计费使用
+			RecordUsageFrom(ctx, response)
 			return response.Content, nil
 		})
 		if err != nil {
@@ -187,6 +189,7 @@ func (e *EinoManager) Chat(ctx context.Context, messages []string) (string, erro
 		logger.Error("ChatModel生成失败", logger.ErrorField(err))
 		return "", fmt.Errorf("生成失败: %w", err)
 	}
+	RecordUsageFrom(ctx, response)
 
 	logger.Info("ChatModel生成成功",
 		logger.StringField("content", response.Content))

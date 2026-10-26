@@ -184,6 +184,11 @@ func (h *Handler) ConsumeModelCall(c *gin.Context) {
 		return
 	}
 	req.UserId = userID
+	// token 数由调用方传入，标记来源便于与 AI 服务内部上报的真实用量区分
+	if req.Metadata == nil {
+		req.Metadata = map[string]string{}
+	}
+	req.Metadata["token_source"] = "client"
 
 	resp, err := h.BillingClient.ConsumeModelCall(context.Background(), &req)
 	if err != nil {

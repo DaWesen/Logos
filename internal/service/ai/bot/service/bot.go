@@ -768,6 +768,9 @@ func (s *botServiceImpl) ListConversations(ctx context.Context, botID, userID st
 }
 
 func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, conversationID, content string, stream bool, metadata map[string]string) (string, string, float64, int, error) {
+	// 挂载 token 用量采集器：本次请求内所有模型调用（planner/反思/Agent）的
+	// 真实 usage 都会累加到 recorder，供计费使用。
+	ctx, usageRecorder := eino.WithUsageRecorder(ctx)
 	startTime := time.Now()
 	defaultConversationID := fmt.Sprintf("%s_%s", userID, botID)
 
@@ -929,12 +932,11 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 			}
 		}
 
-		// AI 调用完成后计费
-		inputTokens := estimateTokenCount(content)
-		outputTokens := estimateTokenCount(chatResp)
+		// AI 调用完成后按真实 token 用量计费，供应商未返回 usage 时回退估算
+		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, chatResp)
 		estimatedTokens = inputTokens + outputTokens
 		if s.billingService != nil {
-			cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+			cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 		}
 
 		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
@@ -977,14 +979,13 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	logger.Info("AI 调用完成", logger.StringField("botID", botID), logger.StringField("elapsed_ai", time.Since(aiCallStart).String()))
 
-	// AI 调用完成后计费：估算输入+输出 tokens
-	inputTokens := estimateTokenCount(content)
-	outputTokens := estimateTokenCount(response)
+	// AI 调用完成后按真实 token 用量计费
+	inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, response)
 	totalTokens := inputTokens + outputTokens
 	estimatedTokens = totalTokens
 
 	if s.billingService != nil {
-		cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+		cost = s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 	}
 
 	s.saveAssistantMessage(ctx, botID, conversationID, response)
@@ -1013,6 +1014,8 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 }
 
 func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, conversationID, content string, metadata map[string]string, onChunk func(string) error) (string, error) {
+	// 挂载 token 用量采集器：流式 chunk 与 planner 调用的 usage 都会累加
+	ctx, usageRecorder := eino.WithUsageRecorder(ctx)
 	// 使用固定的 conversation ID: {userID}_{botID}
 	defaultConversationID := fmt.Sprintf("%s_%s", userID, botID)
 
@@ -1101,7 +1104,8 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 			logger.Warn("Planner 执行失败，回退普通流式对话", logger.ErrorField(pErr))
 		} else {
 			if s.billingService != nil {
-				s.doBilling(ctx, userID, bot, estimateTokenCount(content), estimateTokenCount(pResp))
+				inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, pResp)
+				s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 			}
 			if err := onChunk(pResp); err != nil {
 				return "", err
@@ -1141,11 +1145,10 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 			return "", ErrInternalServer
 		}
 
-		// 简单流式对话完成后计费
+		// 简单流式对话完成后按真实 token 用量计费
 		if s.billingService != nil {
-			inputTokens := estimateTokenCount(content)
-			outputTokens := estimateTokenCount(fullResponse.String())
-			s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+			inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
+			s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 		}
 
 		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
@@ -1166,11 +1169,10 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return "", ErrInternalServer
 	}
 
-	// 流式调用完成后计费
+	// 流式调用完成后按真实 token 用量计费
 	if s.billingService != nil {
-		inputTokens := estimateTokenCount(content)
-		outputTokens := estimateTokenCount(fullResponse.String())
-		s.doBilling(ctx, userID, bot, inputTokens, outputTokens)
+		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
+		s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 	}
 
 	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
@@ -1412,6 +1414,7 @@ func (s *botServiceImpl) DeleteAllUserMemories(ctx context.Context, userID, botI
 }
 
 func (s *botServiceImpl) ChatWithCoordinator(ctx context.Context, userID, content string) (string, error) {
+	ctx, usageRecorder := eino.WithUsageRecorder(ctx)
 	logger.Info("Coordinator 协作请求", logger.StringField("userID", userID))
 
 	coord := coordinator.GetCoordinator()
@@ -1425,17 +1428,17 @@ func (s *botServiceImpl) ChatWithCoordinator(ctx context.Context, userID, conten
 		return "", ErrInternalServer
 	}
 
-	// AI 调用完成后计费
+	// AI 调用完成后按真实 token 用量计费
 	if s.billingService != nil {
-		inputTokens := estimateTokenCount(content)
-		outputTokens := estimateTokenCount(response)
-		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens)
+		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, response)
+		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens, tokenSource)
 	}
 
 	return response, nil
 }
 
 func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, content string, onChunk func(string) error) error {
+	ctx, usageRecorder := eino.WithUsageRecorder(ctx)
 	logger.Info("Coordinator 流式协作请求", logger.StringField("userID", userID))
 
 	coord := coordinator.GetCoordinator()
@@ -1454,11 +1457,10 @@ func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, 
 		return ErrInternalServer
 	}
 
-	// 流式调用完成后计费
+	// 流式调用完成后按真实 token 用量计费
 	if s.billingService != nil {
-		inputTokens := estimateTokenCount(content)
-		outputTokens := estimateTokenCount(fullResponse.String())
-		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens)
+		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
+		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens, tokenSource)
 	}
 
 	return nil
@@ -1781,7 +1783,7 @@ func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, use
 	}
 }
 
-// estimateTokenCount 估算文本 token 数（用于计费）。
+// estimateTokenCount 本地估算文本 token 数，仅在供应商未返回 usage 时兜底。
 // 混合中英文按字符类型分别估算：ASCII 约 4 字符/token，CJK 约 1 字符/0.6 token。
 func estimateTokenCount(text string) int {
 	var asciiCount, nonASCIICount int
@@ -1795,8 +1797,23 @@ func estimateTokenCount(text string) int {
 	return int(float64(asciiCount)*0.25+float64(nonASCIICount)*0.6) + 50
 }
 
-// doBilling 统一计费逻辑，始终计费（不区分 usePlatformModel）
-func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botmodel.Bot, inputTokens, outputTokens int) float64 {
+// tokenUsage 优先取 eino 采集到的真实 usage（供应商返回的 prompt/completion tokens），
+// 拿不到时退回本地估算。返回 (输入, 输出, 来源)。
+func tokenUsage(recorder *eino.UsageRecorder, inputText, outputText string) (int, int, string) {
+	if usage, calls := recorder.Snapshot(); calls > 0 && usage.TotalTokens > 0 {
+		inputTokens := usage.PromptTokens
+		outputTokens := usage.CompletionTokens
+		if outputTokens == 0 {
+			outputTokens = usage.TotalTokens - inputTokens
+		}
+		return inputTokens, outputTokens, eino.UsageSourceEino
+	}
+	return estimateTokenCount(inputText), estimateTokenCount(outputText), eino.UsageSourceEstimate
+}
+
+// doBilling 统一计费逻辑，始终计费（不区分 usePlatformModel）。
+// tokenSource 标记本次用量来自 eino 真实 usage 还是本地估算，写入交易 metadata 便于核对。
+func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botmodel.Bot, inputTokens, outputTokens int, tokenSource string) float64 {
 	if s.billingService == nil {
 		logger.Warn("计费跳过：billingService未初始化")
 		return 0
@@ -1825,12 +1842,14 @@ func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botm
 		logger.StringField("provider", provider),
 		logger.StringField("model", bot.Model),
 		logger.IntField("inputTokens", inputTokens),
-		logger.IntField("outputTokens", outputTokens))
+		logger.IntField("outputTokens", outputTokens),
+		logger.StringField("tokenSource", tokenSource))
 
 	cost, err := s.billingService.ConsumeModelCall(billingCtx, userID, provider, bot.Model, totalTokens, map[string]string{
 		"bot_id":        bot.ID,
 		"input_tokens":  fmt.Sprintf("%d", inputTokens),
 		"output_tokens": fmt.Sprintf("%d", outputTokens),
+		"token_source":  tokenSource,
 	})
 	if err != nil {
 		logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))

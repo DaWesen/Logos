@@ -118,6 +118,7 @@ func (c *Coordinator) Chat(ctx context.Context, message string) (string, error) 
 		if event != nil {
 			msg, _, err := adk.GetMessage(event)
 			if err == nil && msg != nil && msg.Content != "" {
+				eino.RecordUsageFrom(ctx, msg)
 				fullResponse += msg.Content
 			}
 		}
@@ -147,6 +148,7 @@ func (c *Coordinator) ChatStream(ctx context.Context, message string, onChunk fu
 		if event != nil {
 			msg, _, err := adk.GetMessage(event)
 			if err == nil && msg != nil && msg.Content != "" {
+				eino.RecordUsageFrom(ctx, msg)
 				if err := onChunk(msg.Content); err != nil {
 					return err
 				}

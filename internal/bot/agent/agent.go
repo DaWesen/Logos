@@ -211,6 +211,8 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 			continue
 		}
 
+		eino.RecordUsageFrom(ctx, msg)
+
 		if len(msg.ToolCalls) > 0 {
 			// 透传 Agent 的中间决策（调用了什么工具）给上层观察者
 			notifyToolCalls(ctx, msg.ToolCalls)
@@ -291,6 +293,8 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 			continue
 		}
 
+		eino.RecordUsageFrom(ctx, msg)
+
 		if len(msg.ToolCalls) > 0 {
 			// 透传 Agent 的中间决策（调用了什么工具）给上层观察者
 			notifyToolCalls(ctx, msg.ToolCalls)
@@ -309,6 +313,7 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 						logger.Error("读取流式chunk失败", logger.ErrorField(recvErr))
 						break
 					}
+					eino.RecordUsageFrom(ctx, chunk)
 					if chunk.Content != "" {
 						if sendErr := onChunk(chunk.Content); sendErr != nil {
 							return sendErr
