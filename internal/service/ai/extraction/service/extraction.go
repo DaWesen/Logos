@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +16,9 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
+	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/schema"
 	"gorm.io/gorm"
@@ -475,7 +476,7 @@ func (s *extractionServiceImpl) recognizeEntities(ctx context.Context, text stri
 		return nil, fmt.Errorf("LLM实体识别失败: %w", err)
 	}
 
-	entities := parseJSONArray(response)
+	entities := parseJSONArray(ctx, response)
 	logger.Info("实体识别完成",
 		logger.IntField("count", len(entities)))
 
@@ -554,7 +555,7 @@ func (s *extractionServiceImpl) extractRelations(ctx context.Context, text strin
 		return nil, fmt.Errorf("LLM关系抽取失败: %w", err)
 	}
 
-	relations := parseJSONArray(response)
+	relations := parseJSONArray(ctx, response)
 	logger.Info("关系抽取完成",
 		logger.IntField("count", len(relations)))
 
@@ -640,7 +641,7 @@ func (s *extractionServiceImpl) extractTriples(ctx context.Context, text string,
 		return nil, fmt.Errorf("LLM三元组抽取失败: %w", err)
 	}
 
-	triples := parseJSONArray(response)
+	triples := parseJSONArray(ctx, response)
 	logger.Info("三元组抽取完成",
 		logger.IntField("count", len(triples)))
 
@@ -752,113 +753,18 @@ func domainHint(domain string) string {
 	return fmt.Sprintf("\n领域背景：%s\n请根据该领域的特点进行抽取。", domain)
 }
 
-func parseJSONArray(jsonStr string) []map[string]interface{} {
-	jsonStr = trimJSONResponse(jsonStr)
+func parseJSONArray(ctx context.Context, jsonStr string) []map[string]interface{} {
+	jsonStr = strutil.ExtractJSONValue(jsonStr)
 	var results []map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &results); err != nil {
-		logger.Warn("解析LLM JSON响应失败，尝试修复",
+		obs.RecordLLMParse(ctx, "extraction", "failed")
+		logger.Warn("解析LLM JSON响应失败",
 			logger.ErrorField(err),
-			logger.StringField("raw", jsonStr[:min(len(jsonStr), 200)]))
-		fixed := fixJSONResponse(jsonStr)
-		if fixed != "" {
-			json.Unmarshal([]byte(fixed), &results)
-		}
+			logger.StringField("raw", strutil.TruncateByRunes(jsonStr, 200)))
+		return nil
 	}
+	obs.RecordLLMParse(ctx, "extraction", "ok")
 	return results
-}
-
-func trimJSONResponse(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx >= 0 {
-			s = s[idx+1:]
-		}
-		if idx := strings.Index(s, "\r"); idx >= 0 {
-			s = s[idx+1:]
-		}
-	}
-	if strings.HasSuffix(s, "```") {
-		if idx := strings.LastIndex(s, "\n"); idx >= 0 {
-			s = s[:idx]
-		} else {
-			s = s[:len(s)-3]
-		}
-	}
-	s = strings.TrimSpace(s)
-	start := indexOfJSONArray(s)
-	if start >= 0 {
-		s = s[start:]
-	}
-	end := lastIndexOfJSONArray(s)
-	if end >= 0 {
-		s = s[:end+1]
-	}
-	return s
-}
-
-func fixJSONResponse(s string) string {
-	start := indexOfJSONArray(s)
-	if start < 0 {
-		return ""
-	}
-	s = s[start:]
-	depth := 0
-	inString := false
-	escaped := false
-	for i, c := range s {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if c == '\\' {
-			escaped = true
-			continue
-		}
-		if c == '"' {
-			inString = !inString
-			continue
-		}
-		if inString {
-			continue
-		}
-		switch c {
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				return s[:i+1]
-			}
-		}
-	}
-	return ""
-}
-
-func indexOfJSONArray(s string) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '[' {
-			for j := i + 1; j < len(s); j++ {
-				c := s[j]
-				if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
-					continue
-				}
-				if c == '{' || c == '"' || c == ']' {
-					return i
-				}
-				break
-			}
-		}
-	}
-	return -1
-}
-
-func lastIndexOfJSONArray(s string) int {
-	for i := len(s) - 1; i > 0; i-- {
-		if s[i] == ']' {
-			return i
-		}
-	}
-	return -1
 }
 
 func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) error {
@@ -884,11 +790,4 @@ func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) er
 	}
 
 	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

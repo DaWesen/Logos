@@ -118,6 +118,19 @@ spec:
         summary: "Outbox 投递失败率高（topic={{ $labels.topic }}）"
         description: "{{ $labels.topic }} 近 5 分钟投递失败率 {{ $value | humanizePercentage }}，域事件投递延迟将持续增大"
 
+    # LLM 结构化输出解析失败率过高：模型输出格式漂移，业务已降级为空结果（静默失败）
+    - alert: LLMParseFailureRateHigh
+      expr: |
+        sum by (module) (rate(logos_llm_parse_count_total{result="failed"}[10m]))
+          /
+        sum by (module) (rate(logos_llm_parse_count_total[10m])) > 0.2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "LLM 结构化输出解析失败率高（module={{ $labels.module }}）"
+        description: "{{ $labels.module }} 近 10 分钟解析失败率 {{ $value | humanizePercentage }}，业务已降级为空结果，请检查 prompt 或模型输出格式"
+
   - name: logos.resources
     interval: 30s
     rules:

@@ -10,6 +10,8 @@ import (
 	summarymodel "Logos/internal/service/ai/summary/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
+	"Logos/pkg/strutil"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -270,9 +272,13 @@ func (s *summaryServiceImpl) extractKeyPointsWithModel(ctx context.Context, chat
 	}
 
 	var points []string
-	if err := json.Unmarshal([]byte(trimJSON(response)), &points); err != nil {
+	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &points); err != nil {
+		obs.RecordLLMParse(ctx, "summary", "failed")
+		logger.Warn("关键要点解析失败，按纯文本处理",
+			logger.ErrorField(err))
 		return []string{response}, nil
 	}
+	obs.RecordLLMParse(ctx, "summary", "ok")
 	return points, nil
 }
 
@@ -289,9 +295,12 @@ func (s *summaryServiceImpl) extractParticipantsWithModel(ctx context.Context, c
 	}
 
 	var participants []string
-	if err := json.Unmarshal([]byte(trimJSON(response)), &participants); err != nil {
+	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &participants); err != nil {
+		obs.RecordLLMParse(ctx, "summary", "failed")
+		logger.Warn("参与者解析失败，返回空列表", logger.ErrorField(err))
 		return []string{}, nil
 	}
+	obs.RecordLLMParse(ctx, "summary", "ok")
 	return participants, nil
 }
 
@@ -313,9 +322,12 @@ func (s *summaryServiceImpl) extractTodosFromTextWithModel(ctx context.Context, 
 	}
 
 	var todos []TodoItem
-	if err := json.Unmarshal([]byte(trimJSON(response)), &todos); err != nil {
+	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &todos); err != nil {
+		obs.RecordLLMParse(ctx, "summary", "failed")
+		logger.Warn("待办事项解析失败，返回空列表", logger.ErrorField(err))
 		return []TodoItem{}, nil
 	}
+	obs.RecordLLMParse(ctx, "summary", "ok")
 	return todos, nil
 }
 
@@ -342,34 +354,13 @@ func (s *summaryServiceImpl) generateCandidatesWithModel(ctx context.Context, ch
 	}
 
 	var candidates []ReplyCandidate
-	if err := json.Unmarshal([]byte(trimJSON(response)), &candidates); err != nil {
+	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &candidates); err != nil {
+		obs.RecordLLMParse(ctx, "summary", "failed")
+		logger.Warn("回复候选解析失败，返回空列表", logger.ErrorField(err))
 		return []ReplyCandidate{}, nil
 	}
+	obs.RecordLLMParse(ctx, "summary", "ok")
 	return candidates, nil
-}
-
-func trimJSON(s string) string {
-	start := -1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '[' || s[i] == '{' {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return s
-	}
-	end := -1
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ']' || s[i] == '}' {
-			end = i
-			break
-		}
-	}
-	if end < 0 {
-		return s[start:]
-	}
-	return s[start : end+1]
 }
 
 func mustMarshal(v interface{}) string {

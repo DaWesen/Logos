@@ -10,6 +10,8 @@ import (
 	"Logos/internal/service/ai/moderation/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
+	"Logos/pkg/strutil"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -199,9 +201,14 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, 
 	}
 
 	var output moderationOutput
-	if err := json.Unmarshal([]byte(trimJSON(response)), &output); err != nil {
+	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &output); err != nil {
+		obs.RecordLLMParse(ctx, "moderation", "failed")
+		logger.Warn("审核结果解析失败，按通过处理",
+			logger.ErrorField(err),
+			logger.StringField("response", response))
 		return "passed", []string{}, map[string]float64{}, "none", nil
 	}
+	obs.RecordLLMParse(ctx, "moderation", "ok")
 
 	if output.Result == "" {
 		output.Result = "passed"
@@ -211,28 +218,4 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, 
 	}
 
 	return output.Result, output.Categories, output.Scores, output.Action, nil
-}
-
-func trimJSON(s string) string {
-	start := -1
-	for i := 0; i < len(s); i++ {
-		if s[i] == '{' {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return s
-	}
-	end := -1
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '}' {
-			end = i
-			break
-		}
-	}
-	if end < 0 {
-		return s[start:]
-	}
-	return s[start : end+1]
 }

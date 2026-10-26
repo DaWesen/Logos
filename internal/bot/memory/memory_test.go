@@ -151,22 +151,3 @@ func TestCleanupOldMemories_EmptyRepo(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
-
-func TestTrimJSON(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-	}{
-		{`{"a":1}`, `{"a":1}`},
-		{"  \n{\"a\":1}\n", `{"a":1}`},
-		{"前置文字 {\"a\":1} 后置文字", `{"a":1}`},
-		{"```json\n{\"a\":1}\n```", `{"a":1}`},
-		{"no json here", "no json here"},
-		{"{", "{"},
-	}
-	for _, tt := range tests {
-		if got := trimJSON(tt.in); got != tt.want {
-			t.Errorf("trimJSON(%q) = %q, want %q", tt.in, got, tt.want)
-		}
-	}
-}

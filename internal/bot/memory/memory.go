@@ -14,6 +14,8 @@ import (
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
+	"Logos/pkg/strutil"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -150,11 +152,13 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 	}
 
 	var result MemoryExtractionResult
-	cleanResp := trimJSON(resp)
+	cleanResp := strutil.ExtractJSONValue(resp)
 	if err := json.Unmarshal([]byte(cleanResp), &result); err != nil {
+		obs.RecordLLMParse(ctx, "memory", "failed")
 		logger.Warn("记忆提取结果解析失败", logger.ErrorField(err), logger.StringField("response", resp))
 		return
 	}
+	obs.RecordLLMParse(ctx, "memory", "ok")
 
 	for _, mem := range result.Memories {
 		if mem.Key == "" || mem.Value == "" {
@@ -334,14 +338,4 @@ func (m *MemoryManager) CleanupOldMemories(ctx context.Context, userID, botID st
 		}
 	}
 	return nil
-}
-
-func trimJSON(s string) string {
-	s = strings.TrimSpace(s)
-	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start >= 0 && end > start {
-		return s[start : end+1]
-	}
-	return s
 }

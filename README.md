@@ -474,6 +474,7 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 | `logos.outbox.dispatch.count` | Counter | `topic`、`result=sent/failed` | Outbox 投递成功/失败数 |
 | `logos.outbox.dispatch.duration` | Histogram | `topic`、`result` | Kafka 发送耗时 |
 | `logos.outbox.deadletter.count` | Counter | `topic` | Outbox 重试耗尽进入死信的域事件数 |
+| `logos.llm.parse.count` | Counter | `module`、`result=ok/failed` | AI 结构化输出解析成功/失败数（memory/moderation/summary/extraction） |
 
 配套告警规则见 `deployment/examples/prometheus-rules.yaml` 的 `logos.reliability` 组：
 
@@ -481,6 +482,7 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 - `KafkaConsumeFailureRateHigh`（warning）：消费失败率 > 5%，通常意味着下游 DB/Redis 异常
 - `OutboxDeadLetter`（critical）：域事件已停止投递，需人工确认后调用 `ReplayDeadLetters`
 - `OutboxDispatchFailureRateHigh`（warning）：投递失败率 > 10%，通常意味着 Kafka 抖动
+- `LLMParseFailureRateHigh`（warning）：LLM 输出解析失败率 > 20%，业务已在静默降级为空结果
 
 | 服务            | 地址                       | 说明       |
 | ------------- | ------------------------ | -------- |

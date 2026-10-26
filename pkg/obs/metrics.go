@@ -105,6 +105,37 @@ func RecordOutboxDeadLetter(ctx context.Context, topic string) {
 	}
 }
 
+// AI 结构化输出解析指标。
+// LLM 返回的 JSON 可能带围栏、夹杂解释或被截断，解析失败时调用方通常降级为
+// 空结果，属于静默失败；这里打点以便用告警兜住解析质量回退。
+var (
+	llmParseOnce    sync.Once
+	llmParseCounter metric.Int64Counter
+)
+
+func initLLMParseMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	llmParseCounter, _ = meter.Int64Counter(
+		"logos.llm.parse.count",
+		metric.WithDescription("LLM 结构化输出解析结果计数（result=ok/failed）"),
+	)
+}
+
+// RecordLLMParse 记录一次 LLM 结构化输出解析结果。
+// module 取 memory/moderation/summary/extraction，result 取 ok/failed。
+func RecordLLMParse(ctx context.Context, module, result string) {
+	llmParseOnce.Do(initLLMParseMetrics)
+	if llmParseCounter != nil {
+		llmParseCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("module", module),
+			attribute.String("result", result),
+		))
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.
