@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
@@ -11,6 +12,45 @@ import (
 
 	"google.golang.org/grpc/metadata"
 )
+
+func TestGetHistory_Ownership(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	// 他人会话：直接拒绝，且不得触达消息表
+	if _, _, err := svc.GetHistory(userCtx("alice"), "bot-owner", "conv-bob", 20, nil); err != ErrConversationNotFound {
+		t.Fatalf("越权读取历史应返回 ErrConversationNotFound，实际 %v", err)
+	}
+	if len(repo.messagesQueried) != 0 {
+		t.Fatalf("越权请求不应查询消息，实际查询 %v", repo.messagesQueried)
+	}
+
+	// 未认证
+	if _, _, err := svc.GetHistory(context.Background(), "bot-owner", "conv-history-alice", 20, nil); err != ErrConversationNotFound {
+		t.Fatalf("未认证读取历史应被拒绝，实际 %v", err)
+	}
+
+	// Bot 与会话不匹配：防止用别人的 BotID 套自己的会话
+	if _, _, err := svc.GetHistory(userCtx("alice"), "bot-other", "conv-history-alice", 20, nil); err != ErrConversationNotFound {
+		t.Fatalf("BotID 不匹配应被拒绝，实际 %v", err)
+	}
+
+	// 会话不存在
+	if _, _, err := svc.GetHistory(userCtx("alice"), "bot-owner", "not-exist", 20, nil); err != ErrConversationNotFound {
+		t.Fatalf("不存在的会话应返回 ErrConversationNotFound，实际 %v", err)
+	}
+
+	// 所有者 + Bot 匹配：放行
+	msgs, hasMore, err := svc.GetHistory(userCtx("alice"), "bot-owner", "conv-history-alice", 20, nil)
+	if err != nil {
+		t.Fatalf("所有者读取历史应成功，实际 %v", err)
+	}
+	if len(msgs) != 1 || hasMore {
+		t.Fatalf("返回结果不符：msgs=%d hasMore=%v", len(msgs), hasMore)
+	}
+	if len(repo.messagesQueried) != 1 {
+		t.Fatalf("应只查询一次消息，实际 %v", repo.messagesQueried)
+	}
+}
 
 // stubRepo 只实现归属校验用到的方法；其余方法由嵌入的 nil 接口兜底，
 // 一旦被测代码误调用未实现的方法会立刻 panic，避免测试静默通过。
@@ -27,6 +67,14 @@ type stubRepo struct {
 	updatedConvs   []*botmodel.Conversation
 	deletedPrompts []string
 	updatedPrompts []*botmodel.Prompt
+
+	messages        []*botmodel.Message
+	messagesQueried []string
+}
+
+func (r *stubRepo) GetMessages(_ context.Context, conversationID string, _ int, _ *time.Time) ([]*botmodel.Message, error) {
+	r.messagesQueried = append(r.messagesQueried, conversationID)
+	return r.messages, nil
 }
 
 func (r *stubRepo) GetBot(_ context.Context, id string) (*botmodel.Bot, error) {
@@ -98,8 +146,9 @@ func newOwnershipFixture() (*botServiceImpl, *stubRepo, *stubCache) {
 			"bot-withqq": {ID: "bot-withqq", UserID: "alice", QQNumber: "10001"},
 		},
 		conversations: map[string]*botmodel.Conversation{
-			"conv-alice": {ID: "conv-alice", UserID: "alice", Title: "old"},
-			"conv-bob":   {ID: "conv-bob", UserID: "bob", Title: "bob's"},
+			"conv-alice":         {ID: "conv-alice", UserID: "alice", Title: "old"},
+			"conv-bob":           {ID: "conv-bob", UserID: "bob", Title: "bob's"},
+			"conv-history-alice": {ID: "conv-history-alice", UserID: "alice", BotID: "bot-owner"},
 		},
 		prompts: map[string]*botmodel.Prompt{
 			"prompt-alice":  {ID: "prompt-alice", UserID: "alice", Name: "private"},
@@ -109,6 +158,7 @@ func newOwnershipFixture() (*botServiceImpl, *stubRepo, *stubCache) {
 		},
 	}
 	// 被测方法只依赖 repo 与 QQ 路由缓存（其余字段为 nil 时各分支均已做 nil 判断）
+	repo.messages = []*botmodel.Message{{ID: "m1", ConversationID: "conv-history-alice"}}
 	return &botServiceImpl{repo: repo, qqBindCache: c}, repo, c
 }
 

@@ -331,7 +331,8 @@ func (h *Handler) GetBotHistory(c *gin.Context) {
 		}
 	}
 
-	resp, err := h.BotClient.GetBotHistory(context.Background(), req)
+	// 透传 user_id，Bot 服务据此校验会话归属
+	resp, err := h.BotClient.GetBotHistory(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

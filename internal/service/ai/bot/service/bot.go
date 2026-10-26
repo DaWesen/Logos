@@ -1198,6 +1198,27 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 }
 
 func (s *botServiceImpl) GetHistory(ctx context.Context, botID, conversationID string, limit int, beforeTime *time.Time) ([]*botmodel.Message, bool, error) {
+	userID := userIDFromContext(ctx)
+	conversation, err := s.repo.GetConversation(ctx, conversationID)
+	if err != nil {
+		logger.Error("获取对话失败", logger.ErrorField(err))
+		return nil, false, ErrInternalServer
+	}
+	// 归属校验：历史记录含用户与 Bot 的完整对话，必须确认会话属于调用者，
+	// 且（会话已绑定 Bot 时）BotID 与请求一致，避免按他人会话 ID 拉取聊天记录
+	if conversation == nil {
+		return nil, false, ErrConversationNotFound
+	}
+	if userID == "" || conversation.UserID != userID ||
+		(conversation.BotID != "" && botID != "" && conversation.BotID != botID) {
+		logger.Warn("越权读取对话历史已拦截",
+			logger.StringField("conversation_id", conversationID),
+			logger.StringField("bot_id", botID),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", conversation.UserID))
+		return nil, false, ErrConversationNotFound
+	}
+
 	messages, err := s.repo.GetMessages(ctx, conversationID, limit, beforeTime)
 	if err != nil {
 		logger.Error("获取对话历史失败", logger.ErrorField(err))

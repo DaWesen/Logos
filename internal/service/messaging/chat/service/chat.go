@@ -747,21 +747,44 @@ func (s *ChatServiceImpl) getPrivateChatRecipient(chatID, senderID string) []str
 	return []string{}
 }
 
+// privateChatTarget 解析私聊 chatID 并校验发送者是否为会话参与者。
+// 支持 private_{a}_{b} 与 {a}_{b} 两种会话 ID 格式；单段 chatID 视为目标用户 ID（paired=false），
+// 由调用方与发送者创建会话，不存在越权。
+// chatID 由客户端传入，非参与者必须拒绝，否则可把消息注入任意两人的私聊会话。
+func privateChatTarget(chatID, senderID string) (userA, userB, target string, paired bool, err error) {
+	parts := strings.Split(chatID, "_")
+	switch {
+	case len(parts) == 3 && parts[0] == "private":
+		userA, userB = parts[1], parts[2]
+	case len(parts) == 2:
+		userA, userB = parts[0], parts[1]
+	default:
+		return "", "", chatID, false, nil
+	}
+	if userA != senderID && userB != senderID {
+		return "", "", "", false, fmt.Errorf("无权向该会话发送消息")
+	}
+	if userA == senderID {
+		return userA, userB, userB, true, nil
+	}
+	return userA, userB, userA, true, nil
+}
+
 func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error) {
 	var actualChatID string
 	var targetUserID string
 
 	if chatType == model.ChatTypePrivate {
-		parts := strings.Split(chatID, "_")
-		if len(parts) == 3 && parts[0] == "private" {
-			// 格式: private_{a}_{b}
-			if parts[1] == senderID {
-				targetUserID = parts[2]
-			} else {
-				targetUserID = parts[1]
-			}
-			// 确保 conversation 存在
-			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
+		userA, userB, target, paired, err := privateChatTarget(chatID, senderID)
+		if err != nil {
+			logger.Warn("越权向他人私聊会话发送消息已拦截",
+				logger.StringField("sender_id", senderID),
+				logger.StringField("chat_id", chatID))
+			return nil, nil, err
+		}
+		targetUserID = target
+		if paired {
+			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, userA, userB)
 			if err != nil {
 				logger.Error("获取或创建私聊会话失败", logger.ErrorField(err))
 				return nil, nil, err
@@ -771,22 +794,7 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 				logger.StringField("sender_id", senderID),
 				logger.StringField("target_user_id", targetUserID),
 				logger.StringField("conversation_id", actualChatID))
-		} else if len(parts) == 2 {
-			// 格式: {a}_{b}
-			if parts[0] == senderID {
-				targetUserID = parts[1]
-			} else {
-				targetUserID = parts[0]
-			}
-			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
-			if err != nil {
-				logger.Error("获取或创建私聊会话失败", logger.ErrorField(err))
-				return nil, nil, err
-			}
-			actualChatID = conv.ID
 		} else {
-			// 格式: 单个用户ID
-			targetUserID = chatID
 			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, senderID, targetUserID)
 			if err != nil {
 				logger.Error("获取或创建私聊会话失败", logger.ErrorField(err))
