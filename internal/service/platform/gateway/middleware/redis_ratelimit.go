@@ -15,6 +15,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 限流阈值：各层职责不同，阈值必须分层设置。
+// 若所有层使用同一个巨大阈值，实际生效的只有最宽松的那一层，其余形同虚设。
+const (
+	// globalRatePerMinute 单个接口（method + path）的全站上限，避免任一接口被整体打爆
+	globalRatePerMinute = 600
+)
+
 func RedisRateLimit(cache cache.Cache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if cache == nil {
@@ -45,7 +52,7 @@ func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cac
 		"global_api",
 		"sliding",
 		cache,
-		600000,
+		globalRatePerMinute,
 		time.Minute,
 	)
 
@@ -70,43 +77,39 @@ func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cac
 	return true
 }
 
+// 按接口危险程度分档：越贵/越敏感的操作阈值越低。
+// 这里的分档必须与全局、IP、突发三层错开，否则低档位永远不会先触发。
+func userRateLimit(path, method string) (int, time.Duration) {
+	switch {
+	case contains(path, "/auth/login"), contains(path, "/auth/register"):
+		return 5, time.Minute // 防撞库
+
+	case contains(path, "/question/ask"):
+		return 30, time.Minute // 触发 LLM 调用
+
+	case contains(path, "/extraction/"):
+		return 60, time.Minute // 文档解析/抽取，重计算
+
+	case contains(path, "/collection/tasks/") && (method == "POST" || method == "PUT"):
+		return 30, time.Minute // 创建/重跑后台任务
+
+	case contains(path, "/message/send"):
+		return 50, time.Minute // 写扩散到多个接收者
+
+	case contains(path, "/recommend"):
+		return 120, time.Minute // 推荐查询
+
+	default:
+		return 600, time.Minute // 常规读接口
+	}
+}
+
 func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) bool {
 	if userID == "" {
 		return true
 	}
 
-	var rate int
-	var window time.Duration
-
-	switch {
-	case contains(path, "/auth/login"), contains(path, "/auth/register"):
-		rate = 600000
-		window = time.Minute
-
-	case contains(path, "/question/ask"):
-		rate = 600000
-		window = time.Minute
-
-	case contains(path, "/extraction/"):
-		rate = 600000
-		window = time.Minute
-
-	case contains(path, "/collection/tasks/") && (c.Request.Method == "POST" || c.Request.Method == "PUT"):
-		rate = 600000
-		window = time.Minute
-
-	case contains(path, "/message/send"):
-		rate = 600000
-		window = time.Minute
-
-	case contains(path, "/recommend"):
-		rate = 600000
-		window = time.Minute
-
-	default:
-		rate = 600000
-		window = time.Minute
-	}
+	rate, window := userRateLimit(path, c.Request.Method)
 
 	userKey := fmt.Sprintf("user:%s:%s", userID, path)
 

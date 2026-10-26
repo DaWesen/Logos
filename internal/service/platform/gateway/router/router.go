@@ -57,8 +57,9 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 
 	redisCache := cache.NewRedisCache()
 	r.Use(middleware.RedisRateLimit(redisCache))
-	r.Use(middleware.IPBasedRateLimit(redisCache, 600000, time.Minute))
-	r.Use(middleware.BurstProtection(redisCache, 100000, 5*time.Minute))
+	// IP 层：单 IP 全接口合计 600 次/分钟；突发保护：单 IP 1000 次/5 分钟
+	r.Use(middleware.IPBasedRateLimit(redisCache, 600, time.Minute))
+	r.Use(middleware.BurstProtection(redisCache, 1000, 5*time.Minute))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "logos-gateway"})
