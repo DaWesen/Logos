@@ -23,10 +23,11 @@ func (h *Handler) Deposit(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.Deposit(context.Background(), &req)
 	if err != nil {
@@ -53,10 +54,11 @@ func (h *Handler) GetAccount(c *gin.Context) {
 
 	req := &pb.GetAccountRequest{}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.GetAccount(context.Background(), req)
 	if err != nil {
@@ -97,10 +99,11 @@ func (h *Handler) GetTransactions(c *gin.Context) {
 		PageSize: int32(pageSize),
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.GetTransactions(context.Background(), req)
 	if err != nil {
@@ -139,10 +142,11 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 		Item: item,
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.GetUsageStats(context.Background(), req)
 	if err != nil {
@@ -175,10 +179,11 @@ func (h *Handler) ConsumeModelCall(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.ConsumeModelCall(context.Background(), &req)
 	if err != nil {
@@ -209,10 +214,11 @@ func (h *Handler) ConsumeEmbedding(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.ConsumeEmbedding(context.Background(), &req)
 	if err != nil {
@@ -243,10 +249,11 @@ func (h *Handler) ConsumeStorage(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.ConsumeStorage(context.Background(), &req)
 	if err != nil {
@@ -277,10 +284,11 @@ func (h *Handler) ConsumeBandwidth(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.ConsumeBandwidth(context.Background(), &req)
 	if err != nil {
@@ -311,10 +319,11 @@ func (h *Handler) Withdraw(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.Withdraw(context.Background(), &req)
 	if err != nil {
@@ -345,10 +354,11 @@ func (h *Handler) Refund(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = userID
 
 	resp, err := h.BillingClient.Refund(context.Background(), &req)
 	if err != nil {

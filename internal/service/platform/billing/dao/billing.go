@@ -25,6 +25,9 @@ type BillingRepository interface {
 	GetTransaction(ctx context.Context, id string) (*model.Transaction, error)
 	ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error)
 
+	// 退款累计：按 metadata.original_transaction_id 汇总已退金额，防止重复退款超额
+	SumRefundedAmount(ctx context.Context, userID, originalTxID string) (float64, error)
+
 	// 消费扣减
 	ConsumeBalance(ctx context.Context, userID string, item int, amount float64, description string, metadata map[string]string) (*model.Transaction, error)
 
@@ -92,6 +95,17 @@ func (r *billingRepositoryImpl) GetTransaction(ctx context.Context, id string) (
 		return nil, nil
 	}
 	return &tx, err
+}
+
+func (r *billingRepositoryImpl) SumRefundedAmount(ctx context.Context, userID, originalTxID string) (float64, error) {
+	var total float64
+	err := r.db.WithContext(ctx).
+		Model(&model.Transaction{}).
+		Where("user_id = ? AND type = ?", userID, 4).
+		Where("metadata->>'original_transaction_id' = ?", originalTxID).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&total).Error
+	return total, err
 }
 
 func (r *billingRepositoryImpl) ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error) {

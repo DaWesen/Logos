@@ -329,10 +329,35 @@ func (s *billingServiceImpl) Refund(ctx context.Context, userID string, transact
 	if amount <= 0 {
 		return nil, errors.New("退款金额必须大于0")
 	}
+	if transactionID == "" {
+		return nil, errors.New("退款必须指定原始交易ID")
+	}
 
 	var resultTx *model.Transaction
 
 	err := s.repo.WithTransaction(ctx, func(txRepo dao.BillingRepository) error {
+		// 退款不是“凭空加钱”：必须校验原交易归属、类型与可退金额
+		original, err := txRepo.GetTransaction(ctx, transactionID)
+		if err != nil {
+			return err
+		}
+		if original == nil {
+			return errors.New("原始交易不存在")
+		}
+		if original.UserID != userID {
+			return errors.New("无权对他人交易发起退款")
+		}
+		if original.Type != 3 || original.Status != 2 {
+			return errors.New("仅成功的消费交易可退款")
+		}
+		refunded, err := txRepo.SumRefundedAmount(ctx, userID, transactionID)
+		if err != nil {
+			return err
+		}
+		if refunded+amount > original.Amount {
+			return fmt.Errorf("退款总额超出原交易金额（已退 %.6f / 原交易 %.6f）", refunded, original.Amount)
+		}
+
 		account, err := txRepo.GetAccountByUserID(ctx, userID)
 		if err != nil {
 			return err

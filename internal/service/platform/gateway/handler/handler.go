@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"Logos/config"
+	"Logos/internal/service/platform/gateway/model"
 	"Logos/internal/service/platform/gateway/websocket"
 	"Logos/pkg/auth"
 	"Logos/pkg/governance"
@@ -79,6 +80,18 @@ type Handler struct {
 
 func directDial(host string, port int) (*grpc.ClientConn, error) {
 	return grpcserver.NewDirectClientConn(host, port)
+}
+
+// requireUserID 强制要求经过认证的 user_id，缺失时直接返回 401。
+// 涉及资金/个人数据的接口必须以它为准，禁止沿用请求体里的 user_id，避免冒充他人操作。
+func (h *Handler) requireUserID(c *gin.Context) (string, bool) {
+	if value, exists := c.Get("user_id"); exists {
+		if uid, ok := value.(string); ok && uid != "" {
+			return uid, true
+		}
+	}
+	c.JSON(http.StatusUnauthorized, model.Error(401, "unauthenticated"))
+	return "", false
 }
 
 // withUserID 从 gin.Context 提取 user_id 并附加到 gRPC metadata，用于下游服务识别用户
