@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"Logos/config"
 	pb "Logos/proto_gen/moderation"
@@ -35,6 +36,11 @@ func (c *ModerationClient) ModerateContent(ctx context.Context, content, content
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Code != 0 表示审核侧未能给出判定（模型不可用/输出无法解析），
+	// 必须向上抛错而不是当作“通过”，否则审核防线会被静默绕过。
+	if resp.GetCode() != 0 {
+		return nil, fmt.Errorf("内容审核失败(code=%d): %s", resp.GetCode(), resp.GetMessage())
 	}
 
 	result := &ModerationResult{

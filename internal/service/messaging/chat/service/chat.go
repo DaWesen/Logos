@@ -537,7 +537,9 @@ func (s *ChatServiceImpl) moderateMessage(event *types.MessageEvent) {
 
 	rejected, err := s.moderationClient.ModerateContent(ctx, event.Content, event.ID, "text")
 	if err != nil {
-		logger.Debug("内容审核跳过", logger.ErrorField(err))
+		// 该路径是消息已落库后的补充审核，无法撤回；发送入口 SendMessage 已按
+		// 失败关闭策略拦截，这里只记录告警供排查审核服务可用性。
+		logger.Warn("补充审核调用失败，消息已发出无法撤回", logger.ErrorField(err))
 		return
 	}
 
@@ -856,8 +858,11 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		rejected, err := s.moderationClient.ModerateContent(ctx, content, actualChatID, "text")
 		cancel()
 		if err != nil {
-			logger.Warn("消息审核调用失败，放行消息", logger.ErrorField(err))
-		} else if rejected {
+			// 失败关闭：审核服务不可用时拒绝发送，避免未经审核的内容流入群聊
+			logger.Error("消息审核调用失败，按失败关闭策略拒绝发送", logger.ErrorField(err))
+			return nil, nil, types.ErrContentModerationUnavailable
+		}
+		if rejected {
 			return nil, nil, types.ErrContentRejected
 		}
 	}

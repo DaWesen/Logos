@@ -174,7 +174,8 @@ func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string,
 func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, cfg *ModelConfig) (string, []string, map[string]float64, string, error) {
 	chatModel, err := s.getChatModel(cfg)
 	if err != nil {
-		return "passed", []string{}, map[string]float64{}, "none", nil
+		logger.Error("审核模型不可用，按失败关闭策略拒绝", logger.ErrorField(err))
+		return "", nil, nil, "", fmt.Errorf("审核服务不可用: %w", err)
 	}
 
 	prompt := fmt.Sprintf(`请审核以下内容是否包含不当信息。请以JSON格式输出，包含：
@@ -203,15 +204,18 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, 
 	var output moderationOutput
 	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &output); err != nil {
 		obs.RecordLLMParse(ctx, "moderation", "failed")
-		logger.Warn("审核结果解析失败，按通过处理",
+		logger.Error("审核结果解析失败，按失败关闭策略拒绝",
 			logger.ErrorField(err),
 			logger.StringField("response", response))
-		return "passed", []string{}, map[string]float64{}, "none", nil
+		return "", nil, nil, "", fmt.Errorf("审核结果解析失败: %w", err)
 	}
 	obs.RecordLLMParse(ctx, "moderation", "ok")
 
+	// 成功解析但缺少审核结论，等价于没有给出判定，同样按失败关闭处理
 	if output.Result == "" {
-		output.Result = "passed"
+		logger.Error("审核结果缺少 result 字段，按失败关闭策略拒绝",
+			logger.StringField("response", response))
+		return "", nil, nil, "", fmt.Errorf("审核结果缺少 result 字段")
 	}
 	if output.Action == "" {
 		output.Action = "none"

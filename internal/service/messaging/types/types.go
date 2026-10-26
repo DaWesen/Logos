@@ -61,6 +61,9 @@ func (c ChatType) String() string {
 
 var (
 	ErrContentRejected = &MessagingError{Code: 50405, Message: "content rejected by moderation"}
+	// ErrContentModerationUnavailable 审核服务未能给出判定（模型不可用、输出无法解析、超时）。
+	// 采用失败关闭策略：宁可拒绝发送，也不让未经审核的内容流入群聊。
+	ErrContentModerationUnavailable = &MessagingError{Code: 50406, Message: "content moderation unavailable, please retry later"}
 )
 
 type MessagingError struct {
