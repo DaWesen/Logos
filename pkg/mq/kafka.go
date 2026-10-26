@@ -2,12 +2,14 @@ package mq
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"Logos/config"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -258,6 +260,82 @@ func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
 	}, nil
 }
 
+// deadLetterEnvelope 死信队列消息体：保留原始消息与失败原因，
+// 便于人工排查并原样回放到源 topic。
+type deadLetterEnvelope struct {
+	SourceTopic string          `json:"source_topic"`
+	Partition   int             `json:"partition"`
+	Offset      int64           `json:"offset"`
+	Key         string          `json:"key"`
+	Error       string          `json:"error"`
+	Value       json.RawMessage `json:"value"`
+}
+
+// buildDeadLetterPayload 构造死信消息体。
+// 原始负载是合法 JSON 时原样保留，便于排查后直接回放；
+// 非法 JSON 包装成字符串，保证死信体本身始终是合法 JSON。
+func buildDeadLetterPayload(msg *Message, cause error) ([]byte, error) {
+	value := json.RawMessage(msg.Value)
+	if !json.Valid(value) {
+		encoded, err := json.Marshal(string(msg.Value))
+		if err != nil {
+			return nil, err
+		}
+		value = encoded
+	}
+
+	errMsg := ""
+	if cause != nil {
+		errMsg = cause.Error()
+	}
+	return json.Marshal(deadLetterEnvelope{
+		SourceTopic: msg.Topic,
+		Partition:   msg.Partition,
+		Offset:      msg.Offset,
+		Key:         msg.Key,
+		Error:       errMsg,
+		Value:       value,
+	})
+}
+
+// publishDeadLetter 把毒丸消息原样转存到 <topic>.dlq。
+// 只有转存成功后才允许跳过该 offset，否则消息会随 offset 提交永久丢失。
+// 返回 false 表示三次尝试均失败，调用方需落原始消息日志以便人工恢复。
+func (c *Consumer) publishDeadLetter(msg *Message, cause error) bool {
+	producer := NewProducer()
+	if producer == nil {
+		return false
+	}
+
+	payload, err := buildDeadLetterPayload(msg, cause)
+	if err != nil {
+		logger.Error("构造死信消息体失败", logger.ErrorField(err))
+		return false
+	}
+
+	dlqTopic := msg.Topic + ".dlq"
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := producer.Send(ctx, dlqTopic, msg.Key, payload)
+		cancel()
+		if err == nil {
+			logger.Info("毒丸消息已转存死信队列",
+				logger.StringField("topic", msg.Topic),
+				logger.StringField("dlq_topic", dlqTopic),
+				logger.Int64Field("offset", msg.Offset))
+			return true
+		}
+		logger.Warn("毒丸消息转存死信队列失败",
+			logger.StringField("topic", msg.Topic),
+			logger.StringField("dlq_topic", dlqTopic),
+			logger.Int64Field("offset", msg.Offset),
+			logger.IntField("attempt", attempt),
+			logger.ErrorField(err))
+		time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+	}
+	return false
+}
+
 // Commit 提交指定消息的 offset。
 // 在 at-least-once 语义下，应由 Subscribe 在 handler 成功后调用。
 // 失败时不调用，下次 FetchMessage 会拉取到同一条消息重投。
@@ -274,6 +352,32 @@ func (c *Consumer) Commit(ctx context.Context, msg *Message) error {
 	})
 }
 
+// failureTracker 跟踪"同一条消息（topic + partition + offset）"的连续处理失败次数，
+// 用于判定毒丸消息：不同消息到达即重置计数。
+// record 返回该消息此前的连续失败次数（首次为 0）。
+type failureTracker struct {
+	topic     string
+	partition int
+	offset    int64
+	count     int
+}
+
+func (f *failureTracker) record(msg *Message) int {
+	if msg.Topic == f.topic && msg.Partition == f.partition && msg.Offset == f.offset {
+		f.count++
+	} else {
+		f.topic, f.partition, f.offset = msg.Topic, msg.Partition, msg.Offset
+		f.count = 0
+	}
+	return f.count
+}
+
+// reset 清零计数但保留消息定位：
+// 毒丸消息提交 offset 后再次被拉取到时，仍从第 1 次失败重新计数。
+func (f *failureTracker) reset() {
+	f.count = 0
+}
+
 func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error {
 	if c == nil || c.reader == nil {
 		return fmt.Errorf("consumer not initialized")
@@ -288,13 +392,7 @@ func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error 
 			// 确保退出时关闭读取器
 			_ = c.Close()
 		}()
-		// 记录上一条消息的定位与连续失败次数，用于毒丸判定
-		var (
-			lastTopic     string
-			lastPartition int
-			lastOffset    int64
-			failCount     int
-		)
+		var failures failureTracker
 
 		for {
 			select {
@@ -320,36 +418,43 @@ func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error 
 					continue
 				}
 				// 统计同一条消息（topic + partition + offset）的连续失败次数
-				if msg.Topic == lastTopic && msg.Partition == lastPartition && msg.Offset == lastOffset {
-					failCount++
-				} else {
-					lastTopic, lastPartition, lastOffset = msg.Topic, msg.Partition, msg.Offset
-					failCount = 0
-				}
+				failCount := failures.record(msg)
 
 				// handler 失败不提交 offset，下次循环会重新拉取到同一条消息（at-least-once 重投）
+				handlerStart := time.Now()
 				if err := handler(msg); err != nil {
+					obs.RecordKafkaConsume(ctx, msg.Topic, "failed", time.Since(handlerStart).Seconds())
 					logger.Warn("处理消息失败，不提交 offset 等待重投",
 						logger.ErrorField(err),
 						logger.StringField("topic", msg.Topic),
 						logger.Int64Field("offset", msg.Offset),
 						logger.IntField("fail_count", failCount+1))
-					// 连续失败达上限：判定为毒丸，强制提交以放行分区，并落 Error 日志便于告警介入
+					// 连续失败达上限：判定为毒丸。先转存死信队列再提交 offset，
+					// 避免“直接跳过”把消息永久丢弃；转存失败时落原始负载日志，保证可人工恢复。
 					if failCount+1 >= maxConsumerFailures {
-						logger.Error("消息连续处理失败达上限，跳过以避免阻塞分区",
+						logger.Error("消息连续处理失败达上限，转存死信队列后跳过",
 							logger.StringField("topic", msg.Topic),
 							logger.Int64Field("offset", msg.Offset),
 							logger.IntField("fail_count", failCount+1))
+						obs.RecordKafkaPoison(ctx, msg.Topic)
+						if !c.publishDeadLetter(msg, err) {
+							logger.Error("死信转存失败，原始消息已记录，需人工恢复",
+								logger.StringField("topic", msg.Topic),
+								logger.IntField("partition", msg.Partition),
+								logger.Int64Field("offset", msg.Offset),
+								logger.StringField("raw", string(msg.Value)))
+						}
 						if cerr := c.Commit(ctx, msg); cerr != nil {
 							logger.Warn("跳过毒丸消息时提交 offset 失败",
 								logger.ErrorField(cerr),
 								logger.StringField("topic", msg.Topic),
 								logger.Int64Field("offset", msg.Offset))
 						}
-						failCount = 0
+						failures.reset()
 					}
 					continue
 				}
+				obs.RecordKafkaConsume(ctx, msg.Topic, "ok", time.Since(handlerStart).Seconds())
 				// handler 成功后才提交 offset
 				if err := c.Commit(ctx, msg); err != nil {
 					logger.Warn("提交 offset 失败，下次可能重复消费",
