@@ -90,7 +90,8 @@ func (h *Handler) DeleteBot(c *gin.Context) {
 	}
 	id := c.Param("id")
 	req := &pb.DeleteBotRequest{BotId: id}
-	resp, err := h.BotClient.DeleteBot(context.Background(), req)
+	// 透传 user_id，Bot 服务据此做归属校验
+	resp, err := h.BotClient.DeleteBot(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -112,7 +113,8 @@ func (h *Handler) GetBot(c *gin.Context) {
 	}
 	id := c.Param("id")
 	req := &pb.GetBotRequest{BotId: id}
-	resp, err := h.BotClient.GetBot(context.Background(), req)
+	// 透传 user_id，Bot 服务据此做归属校验（非所有者按不存在返回）
+	resp, err := h.BotClient.GetBot(h.withUserID(c), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

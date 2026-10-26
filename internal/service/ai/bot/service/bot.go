@@ -19,6 +19,7 @@ import (
 	"Logos/internal/mcp_server"
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
+	"Logos/pkg/auth"
 	"Logos/pkg/cache"
 	"Logos/pkg/client"
 	"Logos/pkg/eino"
@@ -80,6 +81,17 @@ var (
 	ErrQQNumberDuplicate    = errors.New("该QQ号已被其他Bot绑定")
 )
 
+// userIDFromContext 从 gRPC metadata 中取当前调用方用户 ID。
+// Bot 服务所有面向用户的读/写/删入口都必须以此做归属校验；
+// 取不到时返回空串，调用方应视为未认证并拒绝访问。
+func userIDFromContext(ctx context.Context) string {
+	userID, err := auth.GetUserID(ctx)
+	if err != nil {
+		return ""
+	}
+	return userID
+}
+
 type BotService interface {
 	CreateBot(ctx context.Context, userID, name, description, avatar, botType, modelProvider, modelName, apiKey, baseURL, embeddingModel, systemPrompt string, config map[string]string) (*botmodel.Bot, error)
 	UpdateBot(ctx context.Context, userID, id, name, description, avatar, modelName, apiKey, baseURL, embeddingModel, systemPrompt string, config map[string]string, status string) (*botmodel.Bot, error)
@@ -133,6 +145,9 @@ type botServiceImpl struct {
 	semanticCache    *SemanticCache
 	compressor       *ConversationCompressor
 	planner          *planner.Planner
+	// qqBindCache QQ→Bot 路由缓存的注入点；为 nil 时使用全局 Redis 单例，
+	// 测试中注入内存实现即可在不启动 Redis 的情况下验证缓存维护逻辑
+	qqBindCache cache.Cache
 }
 
 func NewBotService(
@@ -346,6 +361,14 @@ func (s *botServiceImpl) UpdateBot(ctx context.Context, userID, id, name, descri
 	if bot == nil {
 		return nil, ErrBotNotFound
 	}
+	// 归属校验：只有 Bot 所有者可以修改，否则按“不存在”处理，避免暴露他人 Bot 是否存在
+	if userID == "" || bot.UserID != userID {
+		logger.Warn("越权更新 Bot 已拦截",
+			logger.StringField("bot_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", bot.UserID))
+		return nil, ErrBotNotFound
+	}
 
 	configChanged := false
 	if name != "" {
@@ -509,18 +532,34 @@ func (s *botServiceImpl) autoSaveToKnowledgeBase(bot *botmodel.Bot, userContent,
 func (s *botServiceImpl) DeleteBot(ctx context.Context, id string) error {
 	logger.Info("删除 Bot 请求", logger.StringField("id", id))
 
+	userID := userIDFromContext(ctx)
+
 	// 先获取 Bot，如果有 QQ 号则清除绑定，避免唯一索引冲突
 	bot, err := s.repo.GetBot(ctx, id)
 	if err != nil {
 		logger.Error("获取 Bot 失败", logger.ErrorField(err))
 		return ErrInternalServer
 	}
-	if bot != nil && bot.QQNumber != "" {
+	if bot == nil {
+		return nil
+	}
+	// 归属校验：非所有者删除按“不存在”处理，避免越权删除与探测
+	if userID == "" || bot.UserID != userID {
+		logger.Warn("越权删除 Bot 已拦截",
+			logger.StringField("bot_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", bot.UserID))
+		return ErrBotNotFound
+	}
+	if bot.QQNumber != "" {
+		qqNumber := bot.QQNumber
 		bot.QQNumber = ""
 		if err := s.repo.UpdateBot(ctx, bot); err != nil {
 			logger.Error("清除 Bot QQ 绑定失败", logger.ErrorField(err))
 			return ErrInternalServer
 		}
+		// 同步清理路由缓存，否则 QQ 消息会继续被路由到已删除的 Bot
+		s.removeQQBotCache(qqNumber)
 	}
 
 	if err := s.repo.DeleteBot(ctx, id); err != nil {
@@ -537,10 +576,23 @@ func (s *botServiceImpl) DeleteBot(ctx context.Context, id string) error {
 }
 
 func (s *botServiceImpl) GetBot(ctx context.Context, id string) (*botmodel.Bot, error) {
+	userID := userIDFromContext(ctx)
+
 	bot, err := s.repo.GetBot(ctx, id)
 	if err != nil {
 		logger.Error("获取 Bot 失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
+	}
+	if bot == nil {
+		return nil, nil
+	}
+	// 归属校验：Bot 详情含 APIKey/BaseURL 等敏感配置，非所有者一律按“不存在”返回
+	if userID == "" || bot.UserID != userID {
+		logger.Warn("越权读取 Bot 已拦截",
+			logger.StringField("bot_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", bot.UserID))
+		return nil, nil
 	}
 	return bot, nil
 }
@@ -626,6 +678,14 @@ func (s *botServiceImpl) UpdateConversation(ctx context.Context, id, title strin
 	if conversation == nil {
 		return nil, ErrConversationNotFound
 	}
+	userID := userIDFromContext(ctx)
+	if userID == "" || conversation.UserID != userID {
+		logger.Warn("越权更新对话已拦截",
+			logger.StringField("conversation_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", conversation.UserID))
+		return nil, ErrConversationNotFound
+	}
 
 	if title != "" {
 		conversation.Title = title
@@ -644,6 +704,23 @@ func (s *botServiceImpl) UpdateConversation(ctx context.Context, id, title strin
 func (s *botServiceImpl) DeleteConversation(ctx context.Context, id string) error {
 	logger.Info("删除对话请求", logger.StringField("id", id))
 
+	userID := userIDFromContext(ctx)
+	conversation, err := s.repo.GetConversation(ctx, id)
+	if err != nil {
+		logger.Error("获取对话失败", logger.ErrorField(err))
+		return ErrInternalServer
+	}
+	if conversation == nil {
+		return nil
+	}
+	if userID == "" || conversation.UserID != userID {
+		logger.Warn("越权删除对话已拦截",
+			logger.StringField("conversation_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", conversation.UserID))
+		return ErrConversationNotFound
+	}
+
 	if err := s.repo.DeleteConversation(ctx, id); err != nil {
 		logger.Error("删除对话失败", logger.ErrorField(err))
 		return ErrInternalServer
@@ -654,10 +731,21 @@ func (s *botServiceImpl) DeleteConversation(ctx context.Context, id string) erro
 }
 
 func (s *botServiceImpl) GetConversation(ctx context.Context, id string) (*botmodel.Conversation, error) {
+	userID := userIDFromContext(ctx)
 	conversation, err := s.repo.GetConversation(ctx, id)
 	if err != nil {
 		logger.Error("获取对话失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
+	}
+	if conversation == nil {
+		return nil, nil
+	}
+	if userID == "" || conversation.UserID != userID {
+		logger.Warn("越权读取对话已拦截",
+			logger.StringField("conversation_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", conversation.UserID))
+		return nil, nil
 	}
 	return conversation, nil
 }
@@ -1154,6 +1242,15 @@ func (s *botServiceImpl) UpdatePrompt(ctx context.Context, id, name, description
 	if prompt == nil {
 		return nil, ErrPromptNotFound
 	}
+	// 归属校验：预设/公开提示词对所有人生效，但只有创建者可以修改
+	userID := userIDFromContext(ctx)
+	if userID == "" || prompt.UserID != userID {
+		logger.Warn("越权更新提示词已拦截",
+			logger.StringField("prompt_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", prompt.UserID))
+		return nil, ErrPromptNotFound
+	}
 
 	if name != "" {
 		prompt.Name = name
@@ -1184,6 +1281,23 @@ func (s *botServiceImpl) UpdatePrompt(ctx context.Context, id, name, description
 func (s *botServiceImpl) DeletePrompt(ctx context.Context, id string) error {
 	logger.Info("删除提示词请求", logger.StringField("id", id))
 
+	userID := userIDFromContext(ctx)
+	prompt, err := s.repo.GetPrompt(ctx, id)
+	if err != nil {
+		logger.Error("获取提示词失败", logger.ErrorField(err))
+		return ErrInternalServer
+	}
+	if prompt == nil {
+		return nil
+	}
+	if userID == "" || prompt.UserID != userID {
+		logger.Warn("越权删除提示词已拦截",
+			logger.StringField("prompt_id", id),
+			logger.StringField("caller", userID),
+			logger.StringField("owner", prompt.UserID))
+		return ErrPromptNotFound
+	}
+
 	if err := s.repo.DeletePrompt(ctx, id); err != nil {
 		logger.Error("删除提示词失败", logger.ErrorField(err))
 		return ErrInternalServer
@@ -1194,12 +1308,25 @@ func (s *botServiceImpl) DeletePrompt(ctx context.Context, id string) error {
 }
 
 func (s *botServiceImpl) GetPrompt(ctx context.Context, id string) (*botmodel.Prompt, error) {
+	userID := userIDFromContext(ctx)
+
 	prompt, err := s.repo.GetPrompt(ctx, id)
 	if err != nil {
 		logger.Error("获取提示词失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
-	return prompt, nil
+	if prompt == nil {
+		return nil, nil
+	}
+	// 预设与公开提示词对所有登录用户可见，私有提示词仅创建者可读
+	if prompt.IsPreset || prompt.IsPublic || (userID != "" && prompt.UserID == userID) {
+		return prompt, nil
+	}
+	logger.Warn("越权读取提示词已拦截",
+		logger.StringField("prompt_id", id),
+		logger.StringField("caller", userID),
+		logger.StringField("owner", prompt.UserID))
+	return nil, nil
 }
 
 func (s *botServiceImpl) ListPrompts(ctx context.Context, userID, promptType string, isPreset, isPublic *bool, page, pageSize int) ([]*botmodel.Prompt, int64, error) {
@@ -1912,10 +2039,18 @@ func mergeAuthConfigToHeaders(headers map[string]string, authConfig map[string]s
 	return result
 }
 
+// getQQBindCache 返回 QQ→Bot 路由缓存，未注入时使用全局 Redis 单例
+func (s *botServiceImpl) getQQBindCache() cache.Cache {
+	if s.qqBindCache != nil {
+		return s.qqBindCache
+	}
+	return cache.NewRedisCache()
+}
+
 // updateQQBotCache 更新 QQ 号与 Bot ID 的绑定缓存
 // QQ Bridge 服务通过此缓存查找绑定了 QQ 号的 Bot
 func (s *botServiceImpl) updateQQBotCache(qqNumber, botID string) {
-	redis := cache.NewRedisCache()
+	redis := s.getQQBindCache()
 	ctx := context.Background()
 	key := fmt.Sprintf("qq:bot_bind:%s", qqNumber)
 	if err := redis.Set(ctx, key, botID, 0); err != nil {
@@ -1928,4 +2063,24 @@ func (s *botServiceImpl) updateQQBotCache(qqNumber, botID string) {
 			logger.StringField("qq_number", qqNumber),
 			logger.StringField("bot_id", botID))
 	}
+}
+
+// removeQQBotCache 清除 QQ→Bot 路由缓存。
+// Bot 删除后若不清除，QQ 消息仍会被路由到已删除的 Bot（消息丢失/报错）。
+func (s *botServiceImpl) removeQQBotCache(qqNumber string) {
+	redis := s.getQQBindCache()
+	if redis == nil {
+		logger.Warn("QQ-Bot绑定缓存不可用，跳过清理",
+			logger.StringField("qq_number", qqNumber))
+		return
+	}
+	ctx := context.Background()
+	key := fmt.Sprintf("qq:bot_bind:%s", qqNumber)
+	if err := redis.Delete(ctx, key); err != nil {
+		logger.Warn("清除QQ-Bot绑定缓存失败",
+			logger.StringField("qq_number", qqNumber),
+			logger.ErrorField(err))
+		return
+	}
+	logger.Info("QQ-Bot绑定缓存已清除", logger.StringField("qq_number", qqNumber))
 }
