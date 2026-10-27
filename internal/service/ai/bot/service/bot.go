@@ -1134,22 +1134,21 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		}, historyMessages...)
 	}
 
+	// 流式计费统一走 defer：客户端中途断开会让 onChunk 报错并提前返回，
+	// 但模型已经产生 token，必须在返回前结算；streamBiller 内部保证只扣一次。
+	var fullResponse strings.Builder
+	streamOnChunk := func(chunk string) error {
+		fullResponse.WriteString(chunk)
+		return onChunk(chunk)
+	}
+	deferredBill := s.streamBiller(ctx, userID, bot, usageRecorder, content, fullResponse.String)
+	defer deferredBill()
+
 	if len(historyMessages) == 0 {
 		logger.Warn("构建历史消息为空，使用简单对话")
-		var fullResponse strings.Builder
-		streamOnChunk := func(chunk string) error {
-			fullResponse.WriteString(chunk)
-			return onChunk(chunk)
-		}
 		if err := botAgent.ChatStream(ctx, content, streamOnChunk); err != nil {
 			logger.Error("Agent 流式调用失败", logger.ErrorField(err))
 			return "", ErrInternalServer
-		}
-
-		// 简单流式对话完成后按真实 token 用量计费
-		if s.billingService != nil {
-			inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
-			s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 		}
 
 		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
@@ -1159,21 +1158,9 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 
 	allMessages := historyMessages
 
-	var fullResponse strings.Builder
-	streamOnChunk := func(chunk string) error {
-		fullResponse.WriteString(chunk)
-		return onChunk(chunk)
-	}
-
 	if err := botAgent.ChatStreamWithHistory(ctx, allMessages, streamOnChunk); err != nil {
 		logger.Error("Agent 流式调用失败", logger.ErrorField(err))
 		return "", ErrInternalServer
-	}
-
-	// 流式调用完成后按真实 token 用量计费
-	if s.billingService != nil {
-		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
-		s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
 	}
 
 	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
@@ -1452,16 +1439,13 @@ func (s *botServiceImpl) ChatWithCoordinatorStream(ctx context.Context, userID, 
 		fullResponse.WriteString(chunk)
 		return onChunk(chunk)
 	}
+	// 同 SendMessageStream：中断也要结算，且只结算一次
+	deferredBill := s.streamBiller(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, usageRecorder, content, fullResponse.String)
+	defer deferredBill()
 
 	if err := coord.ChatStream(ctx, content, wrappedOnChunk); err != nil {
 		logger.Error("Coordinator 流式调用失败", logger.ErrorField(err))
 		return ErrInternalServer
-	}
-
-	// 流式调用完成后按真实 token 用量计费
-	if s.billingService != nil {
-		inputTokens, outputTokens, tokenSource := tokenUsage(usageRecorder, content, fullResponse.String())
-		s.doBilling(ctx, userID, &botmodel.Bot{Provider: "platform", Model: "coordinator"}, inputTokens, outputTokens, tokenSource)
 	}
 
 	return nil
@@ -1862,6 +1846,40 @@ func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botm
 	}
 	logger.Info("计费成功", logger.Float64Field("cost", cost))
 	return cost
+}
+
+// streamBiller 返回流式会话的计费闭包，保证「一次会话只结算一次」。
+//
+// 流式过程中客户端断开会让 onChunk 返回错误，此时模型已经产生了 token，
+// 必须在返回前照常结算，否则用户可以靠中断请求免费使用；而正常结束与
+// 异常路径都可能触发它，所以用 sync.Once 去重，避免重复扣费。
+//
+// 既没有模型输出也没有 usage 时（模型调用尚未开始，例如 Agent 初始化失败），
+// 直接跳过，避免为一次没有发生的调用扣费。
+func (s *botServiceImpl) streamBiller(
+	ctx context.Context,
+	userID string,
+	bot *botmodel.Bot,
+	recorder *eino.UsageRecorder,
+	inputText string,
+	outputText func() string,
+) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if s.billingService == nil {
+				return
+			}
+			output := outputText()
+			if _, calls := recorder.Snapshot(); calls == 0 && output == "" {
+				logger.Info("流式会话未产生模型输出，跳计费",
+					logger.StringField("userID", userID))
+				return
+			}
+			inputTokens, outputTokens, tokenSource := tokenUsage(recorder, inputText, output)
+			s.doBilling(ctx, userID, bot, inputTokens, outputTokens, tokenSource)
+		})
+	}
 }
 
 type knowledgeSearchAdapter struct {

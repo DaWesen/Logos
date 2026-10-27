@@ -99,7 +99,7 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - 完整的计费记录与余额管理
 - 多 Provider 计费支持（DeepSeek/OpenAI/Claude 等），根据模型名称自动推断 Provider
 - **按真实 token 用量计费**：由 eino 采集模型响应里的 `ResponseMeta.Usage`（prompt/completion tokens），一次请求内的多轮调用（ReAct、Planner、反思）累计后按模型单价结算；供应商未返回 usage 时才回退本地估算，并在交易 metadata 用 `token_source`（`eino` / `estimate` / `client`）标记来源；估算占比经 `logos.llm.token_source.count` 指标统计，超过 20% 触发 `LLMTokenUsageEstimateRateHigh` 告警
-- **计费不随请求取消**：用户中途断开连接/切换会话会取消请求 ctx，计费使用 `context.WithoutCancel` 剥离取消信号并单独限时，避免已产生的 token 漏计
+- **计费不随请求取消**：用户中途断开连接/切换会话会取消请求 ctx，计费使用 `context.WithoutCancel` 剥离取消信号并单独限时；流式会话即使因客户端中断提前返回，也按已消耗 token（真实 usage 优先）结算，`sync.Once` 保证一次会话只扣一次
 - 交易记录正确展示金额与时间（兼容 proto Timestamp 对象格式）
 
 ### 系统监控

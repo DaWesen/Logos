@@ -83,3 +83,44 @@ func TestDoBilling_BillsEvenIfRequestContextCancelled(t *testing.T) {
 		t.Errorf("cost = %v, want 0.001", cost)
 	}
 }
+
+// 模型调用尚未发生（无输出、无 usage）时不应扣费。
+func TestStreamBiller_SkipsWhenNothingHappened(t *testing.T) {
+	stub := &stubBillingService{}
+	svc := &botServiceImpl{billingService: stub}
+	ctx, recorder := eino.WithUsageRecorder(context.Background())
+
+	bill := svc.streamBiller(ctx, "user-1", &botmodel.Bot{ID: "bot-1", Model: "m"}, recorder, "问题", func() string { return "" })
+	bill()
+
+	if stub.calls != 0 {
+		t.Fatalf("billing calls = %d, want 0", stub.calls)
+	}
+}
+
+// 客户端中断导致流式提前返回：已产生的 token 仍要结算，且只扣一次。
+func TestStreamBiller_BillsOnceOnAbort(t *testing.T) {
+	ctx, recorder := eino.WithUsageRecorder(context.Background())
+	eino.RecordUsageFrom(ctx, &schema.Message{
+		ResponseMeta: &schema.ResponseMeta{
+			Usage: &schema.TokenUsage{PromptTokens: 40, CompletionTokens: 12, TotalTokens: 52},
+		},
+	})
+
+	stub := &stubBillingService{}
+	svc := &botServiceImpl{billingService: stub}
+
+	bill := svc.streamBiller(ctx, "user-1", &botmodel.Bot{ID: "bot-1", Model: "m"}, recorder, "问题", func() string { return "半句话" })
+	bill() // 中断路径
+	bill() // 正常路径重复触发
+
+	if stub.calls != 1 {
+		t.Fatalf("billing calls = %d, want 1（同一会话只结算一次）", stub.calls)
+	}
+	if stub.tokens != 52 {
+		t.Errorf("tokens = %d, want 52", stub.tokens)
+	}
+	if stub.metadata["token_source"] != eino.UsageSourceEino {
+		t.Errorf("token_source = %q, want %q", stub.metadata["token_source"], eino.UsageSourceEino)
+	}
+}
