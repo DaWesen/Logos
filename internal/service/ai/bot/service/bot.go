@@ -24,6 +24,7 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
 	"Logos/pkg/strutil"
 
@@ -1819,7 +1820,10 @@ func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botm
 		return 0
 	}
 
-	billingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// 计费不能随请求一起被取消：用户中途关闭页面/切换会话会取消请求 ctx，
+	// 此时模型调用已经产生 token，若沿用原 ctx 会漏计费。WithoutCancel 保留
+	// ctx 中的值（trace/日志字段）但剥离取消信号，仅受本地超时约束。
+	billingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
 	provider := bot.Provider
@@ -1851,6 +1855,7 @@ func (s *botServiceImpl) doBilling(ctx context.Context, userID string, bot *botm
 		"output_tokens": fmt.Sprintf("%d", outputTokens),
 		"token_source":  tokenSource,
 	})
+	obs.RecordTokenSource(ctx, tokenSource)
 	if err != nil {
 		logger.Warn("计费调用失败，继续处理", logger.ErrorField(err))
 		return 0

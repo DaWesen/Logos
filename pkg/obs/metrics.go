@@ -136,6 +136,33 @@ func RecordLLMParse(ctx context.Context, module, result string) {
 	}
 }
 
+// Token 用量来源指标：区分供应商返回的真实 usage 与本地估算。
+// estimate 占比高说明上游没有返回 usage（如部分 OpenAI 兼容网关的流式响应），
+// 计费精度下降，需要告警兜住。
+var (
+	tokenSourceOnce    sync.Once
+	tokenSourceCounter metric.Int64Counter
+)
+
+func initTokenSourceMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	tokenSourceCounter, _ = meter.Int64Counter(
+		"logos.llm.token_source.count",
+		metric.WithDescription("模型调用 token 用量来源计数（source=eino/estimate/client）"),
+	)
+}
+
+// RecordTokenSource 记录一次计费的 token 用量来源。
+func RecordTokenSource(ctx context.Context, source string) {
+	tokenSourceOnce.Do(initTokenSourceMetrics)
+	if tokenSourceCounter != nil {
+		tokenSourceCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("source", source)))
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.

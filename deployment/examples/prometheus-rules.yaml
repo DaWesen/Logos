@@ -131,6 +131,19 @@ spec:
         summary: "LLM 结构化输出解析失败率高（module={{ $labels.module }}）"
         description: "{{ $labels.module }} 近 10 分钟解析失败率 {{ $value | humanizePercentage }}，业务已降级为空结果，请检查 prompt 或模型输出格式"
 
+    # Token 用量退化为本地估算的比例过高：上游未返回 usage，计费精度下降
+    - alert: LLMTokenUsageEstimateRateHigh
+      expr: |
+        sum(rate(logos_llm_token_source_count_total{source="estimate"}[15m]))
+          /
+        sum(rate(logos_llm_token_source_count_total[15m])) > 0.2
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Token 用量估算占比过高"
+        description: "近 15 分钟 {{ $value | humanizePercentage }} 的计费使用本地估算而非供应商真实 usage，请检查上游模型是否返回 usage（流式需 stream_options.include_usage）"
+
   - name: logos.resources
     interval: 30s
     rules:
