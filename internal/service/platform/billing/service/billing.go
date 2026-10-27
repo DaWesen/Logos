@@ -2,9 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -21,9 +26,49 @@ var (
 	ErrAccountNotFound  = errors.New("account not found")
 	ErrInsufficientFund = errors.New("insufficient fund")
 	ErrInternalServer   = errors.New("internal server error")
+
+	ErrPaymentNotConfigured  = errors.New("payment callback secret is not configured")
+	ErrPaymentInvalidRequest = errors.New("invalid payment request")
+	ErrPaymentSignature      = errors.New("invalid payment signature")
+	ErrPaymentTimestamp      = errors.New("payment callback timestamp out of range")
+	ErrPaymentAmountMismatch = errors.New("payment amount mismatch")
+	ErrPaymentOrderNotFound  = errors.New("payment order not found")
+	ErrPaymentOrderExpired   = errors.New("payment order expired")
+	ErrPaymentOrderClosed    = errors.New("payment order is not payable")
+
+	errPaymentAlreadyPaid = errors.New("payment order already paid")
 )
 
+// 支付单参数
+const (
+	paymentOrderTTL       = 30 * time.Minute
+	paymentCallbackWindow = 5 * time.Minute
+	minPaymentAmount      = 0.01
+	maxPaymentAmount      = 100000.0
+)
+
+// PaymentCallback 支付渠道回调参数
+type PaymentCallback struct {
+	OrderID   string
+	TradeNo   string
+	Amount    float64
+	Timestamp int64
+	Nonce     string
+	Signature string
+	Metadata  map[string]string
+}
+
+var allowedPaymentMethods = map[string]bool{
+	"alipay": true,
+	"wechat": true,
+	"stripe": true,
+	"mock":   true,
+}
+
 type BillingService interface {
+	CreatePaymentOrder(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.PaymentOrder, error)
+	GetPaymentOrder(ctx context.Context, userID, orderID string) (*model.PaymentOrder, error)
+	ConfirmPayment(ctx context.Context, callback PaymentCallback) (*model.PaymentOrder, error)
 	Deposit(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.Transaction, error)
 	Withdraw(ctx context.Context, userID string, amount float64, withdrawMethod string, metadata map[string]string) (*model.Transaction, error)
 	GetAccount(ctx context.Context, userID string) (*model.Account, error)
@@ -38,12 +83,13 @@ type BillingService interface {
 }
 
 type billingServiceImpl struct {
-	repo       dao.BillingRepository
-	outboxRepo outbox.OutboxRepository
+	repo          dao.BillingRepository
+	outboxRepo    outbox.OutboxRepository
+	paymentSecret string
 }
 
-func NewBillingService(repo dao.BillingRepository, outboxRepo outbox.OutboxRepository) BillingService {
-	return &billingServiceImpl{repo: repo, outboxRepo: outboxRepo}
+func NewBillingService(repo dao.BillingRepository, outboxRepo outbox.OutboxRepository, paymentSecret string) BillingService {
+	return &billingServiceImpl{repo: repo, outboxRepo: outboxRepo, paymentSecret: paymentSecret}
 }
 
 func (s *billingServiceImpl) Deposit(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.Transaction, error) {
@@ -51,52 +97,19 @@ func (s *billingServiceImpl) Deposit(ctx context.Context, userID string, amount 
 		logger.StringField("userID", userID),
 		logger.Float64Field("amount", amount))
 
+	if amount <= 0 {
+		return nil, errors.New("充值金额必须大于0")
+	}
+
 	var resultTx *model.Transaction
 
 	err := s.repo.WithTransaction(ctx, func(txRepo dao.BillingRepository) error {
-		account, err := txRepo.GetAccountByUserID(ctx, userID)
+		tx, err := s.creditAccountInTx(ctx, txRepo, userID, amount, "账户充值", metadata, "deposit", nil)
 		if err != nil {
 			return err
 		}
-
-		if account == nil {
-			account = &model.Account{
-				UserID:  userID,
-				Balance: 0,
-				Usage:   map[string]string{},
-			}
-			if err = txRepo.CreateAccount(ctx, account); err != nil {
-				return err
-			}
-		}
-
-		balanceBefore := account.Balance
-		account.Balance += amount
-		if err = txRepo.UpdateAccount(ctx, account); err != nil {
-			return err
-		}
-
-		tx := &model.Transaction{
-			UserID:        userID,
-			AccountID:     account.ID,
-			Type:          1,
-			Item:          0,
-			Amount:        amount,
-			BalanceBefore: balanceBefore,
-			BalanceAfter:  account.Balance,
-			Description:   "账户充值",
-			Status:        2,
-			Metadata:      model.JSONMap(metadata),
-		}
-		if err = txRepo.CreateTransaction(ctx, tx); err != nil {
-			return err
-		}
-
 		resultTx = tx
-
-		return s.saveBillingEventToOutbox(ctx, txRepo.DB(), "deposit", userID, tx.ID, map[string]string{
-			"amount": fmt.Sprintf("%.6f", amount),
-		})
+		return nil
 	})
 
 	if err != nil {
@@ -109,6 +122,213 @@ func (s *billingServiceImpl) Deposit(ctx context.Context, userID string, amount 
 		logger.Float64Field("amount", amount))
 
 	return resultTx, nil
+}
+
+// creditAccountInTx 在同一事务内给账户加钱并落交易流水。
+// 仅由内部充值（Deposit）与验签通过的支付回调（ConfirmPayment）调用，普通用户无法直接触达。
+func (s *billingServiceImpl) creditAccountInTx(ctx context.Context, txRepo dao.BillingRepository, userID string, amount float64, description string, metadata map[string]string, eventAction string, extraEvent map[string]string) (*model.Transaction, error) {
+	account, err := txRepo.GetAccountByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if account == nil {
+		account = &model.Account{
+			UserID:  userID,
+			Balance: 0,
+			Usage:   map[string]string{},
+		}
+		if err = txRepo.CreateAccount(ctx, account); err != nil {
+			return nil, err
+		}
+	}
+
+	balanceBefore := account.Balance
+	account.Balance += amount
+	if err = txRepo.UpdateAccount(ctx, account); err != nil {
+		return nil, err
+	}
+
+	tx := &model.Transaction{
+		UserID:        userID,
+		AccountID:     account.ID,
+		Type:          1,
+		Item:          0,
+		Amount:        amount,
+		BalanceBefore: balanceBefore,
+		BalanceAfter:  account.Balance,
+		Description:   description,
+		Status:        2,
+		Metadata:      model.JSONMap(metadata),
+	}
+	if err = txRepo.CreateTransaction(ctx, tx); err != nil {
+		return nil, err
+	}
+
+	eventMeta := map[string]string{
+		"amount": fmt.Sprintf("%.6f", amount),
+	}
+	maps.Copy(eventMeta, extraEvent)
+	if err = s.saveBillingEventToOutbox(ctx, txRepo.DB(), eventAction, userID, tx.ID, eventMeta); err != nil {
+		return nil, err
+	}
+
+	return tx, nil
+}
+
+func (s *billingServiceImpl) CreatePaymentOrder(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.PaymentOrder, error) {
+	if userID == "" {
+		return nil, ErrPaymentInvalidRequest
+	}
+	if amount < minPaymentAmount || amount > maxPaymentAmount {
+		return nil, fmt.Errorf("%w: amount must be between %.2f and %.2f", ErrPaymentInvalidRequest, minPaymentAmount, maxPaymentAmount)
+	}
+	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
+	if !allowedPaymentMethods[paymentMethod] {
+		return nil, fmt.Errorf("%w: unsupported payment method %q", ErrPaymentInvalidRequest, paymentMethod)
+	}
+
+	order := &model.PaymentOrder{
+		UserID:        userID,
+		Amount:        amount,
+		PaymentMethod: paymentMethod,
+		Status:        0,
+		Metadata:      model.JSONMap(metadata),
+		ExpiresAt:     time.Now().Add(paymentOrderTTL),
+	}
+	if err := s.repo.CreatePaymentOrder(ctx, order); err != nil {
+		logger.Error("创建支付单失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	logger.Info("创建支付单成功",
+		logger.StringField("orderID", order.ID),
+		logger.StringField("userID", userID),
+		logger.Float64Field("amount", amount))
+
+	return order, nil
+}
+
+func (s *billingServiceImpl) GetPaymentOrder(ctx context.Context, userID, orderID string) (*model.PaymentOrder, error) {
+	if orderID == "" {
+		return nil, ErrPaymentInvalidRequest
+	}
+
+	order, err := s.repo.GetPaymentOrder(ctx, orderID)
+	if err != nil {
+		logger.Error("查询支付单失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+	// 不区分“不存在”与“不属于当前用户”，避免泄露订单号是否有效
+	if order == nil || order.UserID != userID {
+		return nil, ErrPaymentOrderNotFound
+	}
+	return order, nil
+}
+
+// ConfirmPayment 处理支付渠道回调：验签 -> 校验金额/时效 -> 幂等入账。
+func (s *billingServiceImpl) ConfirmPayment(ctx context.Context, callback PaymentCallback) (*model.PaymentOrder, error) {
+	if s.paymentSecret == "" {
+		logger.Error("支付回调密钥未配置，拒绝处理回调")
+		return nil, ErrPaymentNotConfigured
+	}
+	if callback.OrderID == "" || callback.TradeNo == "" || callback.Nonce == "" || callback.Signature == "" || callback.Amount <= 0 {
+		return nil, ErrPaymentInvalidRequest
+	}
+	if delta := time.Since(time.Unix(callback.Timestamp, 0)); delta > paymentCallbackWindow || delta < -paymentCallbackWindow {
+		return nil, ErrPaymentTimestamp
+	}
+	if !s.verifyPaymentSignature(callback) {
+		logger.Warn("支付回调验签失败",
+			logger.StringField("orderID", callback.OrderID),
+			logger.StringField("tradeNo", callback.TradeNo))
+		return nil, ErrPaymentSignature
+	}
+
+	order, err := s.repo.GetPaymentOrder(ctx, callback.OrderID)
+	if err != nil {
+		logger.Error("查询支付单失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+	if order == nil {
+		return nil, ErrPaymentOrderNotFound
+	}
+	// 已支付：直接返回成功，保证重复回调不重复入账
+	if order.Status == 1 {
+		return order, nil
+	}
+	if order.Status != 0 {
+		return nil, ErrPaymentOrderClosed
+	}
+	if !order.ExpiresAt.IsZero() && time.Now().After(order.ExpiresAt) {
+		return nil, ErrPaymentOrderExpired
+	}
+	if math.Abs(order.Amount-callback.Amount) > 1e-6 {
+		logger.Warn("支付回调金额与订单不一致",
+			logger.StringField("orderID", order.ID),
+			logger.Float64Field("orderAmount", order.Amount),
+			logger.Float64Field("callbackAmount", callback.Amount))
+		return nil, ErrPaymentAmountMismatch
+	}
+
+	paidAt := time.Now()
+	metadata := map[string]string{
+		"payment_order_id": order.ID,
+		"trade_no":         callback.TradeNo,
+		"payment_method":   order.PaymentMethod,
+	}
+	maps.Copy(metadata, callback.Metadata)
+
+	err = s.repo.WithTransaction(ctx, func(txRepo dao.BillingRepository) error {
+		// 条件更新：只有 pending -> paid 成功的那一次回调才入账
+		updated, err := txRepo.MarkPaymentOrderPaid(ctx, order.ID, callback.TradeNo, callback.Nonce, paidAt)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return errPaymentAlreadyPaid
+		}
+
+		_, err = s.creditAccountInTx(ctx, txRepo, order.UserID, order.Amount,
+			"账户充值（支付单 "+order.ID+"）", metadata, "payment_paid", map[string]string{
+				"payment_order_id": order.ID,
+				"trade_no":         callback.TradeNo,
+			})
+		return err
+	})
+
+	if errors.Is(err, errPaymentAlreadyPaid) {
+		// 并发/重复回调：以数据库中的最终状态为准
+		if latest, getErr := s.repo.GetPaymentOrder(ctx, order.ID); getErr == nil && latest != nil {
+			return latest, nil
+		}
+		return order, nil
+	}
+	if err != nil {
+		logger.Error("支付回调入账失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+
+	order.Status = 1
+	order.TradeNo = callback.TradeNo
+	order.PaidAt = &paidAt
+
+	logger.Info("支付单入账成功",
+		logger.StringField("orderID", order.ID),
+		logger.StringField("userID", order.UserID),
+		logger.Float64Field("amount", order.Amount))
+
+	return order, nil
+}
+
+// verifyPaymentSignature 校验 HMAC-SHA256 签名，签名串字段顺序固定。
+func (s *billingServiceImpl) verifyPaymentSignature(callback PaymentCallback) bool {
+	payload := fmt.Sprintf("order_id=%s&trade_no=%s&amount=%.2f&timestamp=%d&nonce=%s",
+		callback.OrderID, callback.TradeNo, callback.Amount, callback.Timestamp, callback.Nonce)
+	mac := hmac.New(sha256.New, []byte(s.paymentSecret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(strings.ToLower(callback.Signature))) == 1
 }
 
 func (s *billingServiceImpl) GetAccount(ctx context.Context, userID string) (*model.Account, error) {
@@ -645,7 +865,7 @@ func (s *billingServiceImpl) saveBillingEventToOutbox(ctx context.Context, txDB 
 
 func (s *billingServiceImpl) WithTransaction(ctx context.Context, fn func(txService BillingService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.BillingRepository) error {
-		txService := &billingServiceImpl{repo: txRepo, outboxRepo: s.outboxRepo}
+		txService := &billingServiceImpl{repo: txRepo, outboxRepo: s.outboxRepo, paymentSecret: s.paymentSecret}
 		return fn(txService)
 	})
 }

@@ -18,24 +18,31 @@ var (
 
 // Config 应用配置结构体
 type Config struct {
-	Ports         Ports         `mapstructure:"ports"`
-	Services      Services      `mapstructure:"services"`
-	Database      Database      `mapstructure:"database"`
-	Redis         Redis         `mapstructure:"redis"`
-	Kafka         Kafka         `mapstructure:"kafka"`
-	Elasticsearch Elasticsearch `mapstructure:"elasticsearch"`
-	Neo4j         Neo4j         `mapstructure:"neo4j"`
-	Milvus        Milvus        `mapstructure:"milvus"`
-	Minio         Minio         `mapstructure:"minio"`
-	Log           Log           `mapstructure:"log"`
-	JWT           JWT           `mapstructure:"jwt"`
-	Tracing       Tracing       `mapstructure:"tracing"`
+	Ports            Ports            `mapstructure:"ports"`
+	Services         Services         `mapstructure:"services"`
+	Database         Database         `mapstructure:"database"`
+	Redis            Redis            `mapstructure:"redis"`
+	Kafka            Kafka            `mapstructure:"kafka"`
+	Elasticsearch    Elasticsearch    `mapstructure:"elasticsearch"`
+	Neo4j            Neo4j            `mapstructure:"neo4j"`
+	Milvus           Milvus           `mapstructure:"milvus"`
+	Minio            Minio            `mapstructure:"minio"`
+	Log              Log              `mapstructure:"log"`
+	JWT              JWT              `mapstructure:"jwt"`
+	Tracing          Tracing          `mapstructure:"tracing"`
 	Etcd             Etcd             `mapstructure:"etcd"`
 	GRPC             GRPC             `mapstructure:"grpc"`
 	Eino             Eino             `mapstructure:"eino"`
 	QQBridge         QQBridge         `mapstructure:"qqbridge"`
 	ServiceDiscovery ServiceDiscovery `mapstructure:"service_discovery"`
 	Gateway          GatewayCfg       `mapstructure:"gateway"`
+	Payment          Payment          `mapstructure:"payment"`
+}
+
+// Payment 支付配置
+type Payment struct {
+	// CallbackSecret 支付渠道回调验签密钥（HMAC-SHA256），为空时拒绝所有回调（fail closed）
+	CallbackSecret string `mapstructure:"callback_secret"`
 }
 
 // ServiceDiscovery 服务发现配置（多节点水平扩展）
@@ -45,10 +52,10 @@ type ServiceDiscovery struct {
 
 // GatewayCfg 网关配置（多节点广播）
 type GatewayCfg struct {
-	NodeID          string `mapstructure:"node_id"`
-	PubSubChannel  string `mapstructure:"pubsub_channel"`
-	EnableBroadcast bool   `mapstructure:"enable_broadcast"`
-	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	NodeID          string   `mapstructure:"node_id"`
+	PubSubChannel   string   `mapstructure:"pubsub_channel"`
+	EnableBroadcast bool     `mapstructure:"enable_broadcast"`
+	AllowedOrigins  []string `mapstructure:"allowed_origins"`
 }
 
 // Ports 服务端口配置
@@ -302,6 +309,7 @@ func bindEnvVars() {
 		{"LOGOS_NODE_ID", "gateway.node_id"},
 		{"LOGOS_WS_PUBSUB_CHANNEL", "gateway.pubsub_channel"},
 		{"LOGOS_WS_BROADCAST_ENABLED", "gateway.enable_broadcast"},
+		{"PAYMENT_CALLBACK_SECRET", "payment.callback_secret"},
 	}
 
 	for _, b := range envBindings {
@@ -423,6 +431,9 @@ func overrideFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("LOGOS_WS_ALLOWED_ORIGINS"); v != "" {
 		cfg.Gateway.AllowedOrigins = splitAndTrim(v)
+	}
+	if v := os.Getenv("PAYMENT_CALLBACK_SECRET"); v != "" {
+		cfg.Payment.CallbackSecret = v
 	}
 }
 

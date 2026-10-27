@@ -187,6 +187,59 @@ func (BillingItem) EnumDescriptor() ([]byte, []int) {
 	return file_idl_platform_billing_proto_rawDescGZIP(), []int{2}
 }
 
+// 支付单状态
+type PaymentOrderStatus int32
+
+const (
+	PaymentOrderStatus_PAYMENT_ORDER_STATUS_PENDING PaymentOrderStatus = 0
+	PaymentOrderStatus_PAYMENT_ORDER_STATUS_PAID    PaymentOrderStatus = 1
+	PaymentOrderStatus_PAYMENT_ORDER_STATUS_FAILED  PaymentOrderStatus = 2
+	PaymentOrderStatus_PAYMENT_ORDER_STATUS_EXPIRED PaymentOrderStatus = 3
+)
+
+// Enum value maps for PaymentOrderStatus.
+var (
+	PaymentOrderStatus_name = map[int32]string{
+		0: "PAYMENT_ORDER_STATUS_PENDING",
+		1: "PAYMENT_ORDER_STATUS_PAID",
+		2: "PAYMENT_ORDER_STATUS_FAILED",
+		3: "PAYMENT_ORDER_STATUS_EXPIRED",
+	}
+	PaymentOrderStatus_value = map[string]int32{
+		"PAYMENT_ORDER_STATUS_PENDING": 0,
+		"PAYMENT_ORDER_STATUS_PAID":    1,
+		"PAYMENT_ORDER_STATUS_FAILED":  2,
+		"PAYMENT_ORDER_STATUS_EXPIRED": 3,
+	}
+)
+
+func (x PaymentOrderStatus) Enum() *PaymentOrderStatus {
+	p := new(PaymentOrderStatus)
+	*p = x
+	return p
+}
+
+func (x PaymentOrderStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PaymentOrderStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_idl_platform_billing_proto_enumTypes[3].Descriptor()
+}
+
+func (PaymentOrderStatus) Type() protoreflect.EnumType {
+	return &file_idl_platform_billing_proto_enumTypes[3]
+}
+
+func (x PaymentOrderStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PaymentOrderStatus.Descriptor instead.
+func (PaymentOrderStatus) EnumDescriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{3}
+}
+
 // 账户
 type Account struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -413,7 +466,522 @@ func (x *Transaction) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// 充值请求
+// 支付单
+type PaymentOrder struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Amount        float64                `protobuf:"fixed64,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	PaymentMethod string                 `protobuf:"bytes,4,opt,name=payment_method,json=paymentMethod,proto3" json:"payment_method,omitempty"`
+	Status        PaymentOrderStatus     `protobuf:"varint,5,opt,name=status,proto3,enum=platform.billing.PaymentOrderStatus" json:"status,omitempty"`
+	TradeNo       string                 `protobuf:"bytes,6,opt,name=trade_no,json=tradeNo,proto3" json:"trade_no,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	PaidAt        *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=paid_at,json=paidAt,proto3" json:"paid_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PaymentOrder) Reset() {
+	*x = PaymentOrder{}
+	mi := &file_idl_platform_billing_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PaymentOrder) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PaymentOrder) ProtoMessage() {}
+
+func (x *PaymentOrder) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PaymentOrder.ProtoReflect.Descriptor instead.
+func (*PaymentOrder) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PaymentOrder) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *PaymentOrder) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *PaymentOrder) GetAmount() float64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+func (x *PaymentOrder) GetPaymentMethod() string {
+	if x != nil {
+		return x.PaymentMethod
+	}
+	return ""
+}
+
+func (x *PaymentOrder) GetStatus() PaymentOrderStatus {
+	if x != nil {
+		return x.Status
+	}
+	return PaymentOrderStatus_PAYMENT_ORDER_STATUS_PENDING
+}
+
+func (x *PaymentOrder) GetTradeNo() string {
+	if x != nil {
+		return x.TradeNo
+	}
+	return ""
+}
+
+func (x *PaymentOrder) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *PaymentOrder) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *PaymentOrder) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *PaymentOrder) GetPaidAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PaidAt
+	}
+	return nil
+}
+
+// 创建支付单请求
+type CreatePaymentOrderRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Amount        float64                `protobuf:"fixed64,2,opt,name=amount,proto3" json:"amount,omitempty"`
+	PaymentMethod string                 `protobuf:"bytes,3,opt,name=payment_method,json=paymentMethod,proto3" json:"payment_method,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePaymentOrderRequest) Reset() {
+	*x = CreatePaymentOrderRequest{}
+	mi := &file_idl_platform_billing_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePaymentOrderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePaymentOrderRequest) ProtoMessage() {}
+
+func (x *CreatePaymentOrderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePaymentOrderRequest.ProtoReflect.Descriptor instead.
+func (*CreatePaymentOrderRequest) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CreatePaymentOrderRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *CreatePaymentOrderRequest) GetAmount() float64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+func (x *CreatePaymentOrderRequest) GetPaymentMethod() string {
+	if x != nil {
+		return x.PaymentMethod
+	}
+	return ""
+}
+
+func (x *CreatePaymentOrderRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// 创建支付单响应
+type CreatePaymentOrderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *PaymentOrder          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePaymentOrderResponse) Reset() {
+	*x = CreatePaymentOrderResponse{}
+	mi := &file_idl_platform_billing_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePaymentOrderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePaymentOrderResponse) ProtoMessage() {}
+
+func (x *CreatePaymentOrderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePaymentOrderResponse.ProtoReflect.Descriptor instead.
+func (*CreatePaymentOrderResponse) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *CreatePaymentOrderResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreatePaymentOrderResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CreatePaymentOrderResponse) GetData() *PaymentOrder {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 查询支付单请求
+type GetPaymentOrderRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	OrderId       string                 `protobuf:"bytes,2,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPaymentOrderRequest) Reset() {
+	*x = GetPaymentOrderRequest{}
+	mi := &file_idl_platform_billing_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPaymentOrderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPaymentOrderRequest) ProtoMessage() {}
+
+func (x *GetPaymentOrderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPaymentOrderRequest.ProtoReflect.Descriptor instead.
+func (*GetPaymentOrderRequest) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetPaymentOrderRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *GetPaymentOrderRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+// 查询支付单响应
+type GetPaymentOrderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *PaymentOrder          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPaymentOrderResponse) Reset() {
+	*x = GetPaymentOrderResponse{}
+	mi := &file_idl_platform_billing_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPaymentOrderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPaymentOrderResponse) ProtoMessage() {}
+
+func (x *GetPaymentOrderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPaymentOrderResponse.ProtoReflect.Descriptor instead.
+func (*GetPaymentOrderResponse) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *GetPaymentOrderResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *GetPaymentOrderResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *GetPaymentOrderResponse) GetData() *PaymentOrder {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 支付回调请求（由支付渠道服务端调用，需签名校验）
+type ConfirmPaymentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	TradeNo       string                 `protobuf:"bytes,2,opt,name=trade_no,json=tradeNo,proto3" json:"trade_no,omitempty"`
+	Amount        float64                `protobuf:"fixed64,3,opt,name=amount,proto3" json:"amount,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Nonce         string                 `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Signature     string                 `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfirmPaymentRequest) Reset() {
+	*x = ConfirmPaymentRequest{}
+	mi := &file_idl_platform_billing_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfirmPaymentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfirmPaymentRequest) ProtoMessage() {}
+
+func (x *ConfirmPaymentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfirmPaymentRequest.ProtoReflect.Descriptor instead.
+func (*ConfirmPaymentRequest) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ConfirmPaymentRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *ConfirmPaymentRequest) GetTradeNo() string {
+	if x != nil {
+		return x.TradeNo
+	}
+	return ""
+}
+
+func (x *ConfirmPaymentRequest) GetAmount() float64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+func (x *ConfirmPaymentRequest) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ConfirmPaymentRequest) GetNonce() string {
+	if x != nil {
+		return x.Nonce
+	}
+	return ""
+}
+
+func (x *ConfirmPaymentRequest) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *ConfirmPaymentRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+// 支付回调响应
+type ConfirmPaymentResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Data          *PaymentOrder          `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfirmPaymentResponse) Reset() {
+	*x = ConfirmPaymentResponse{}
+	mi := &file_idl_platform_billing_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfirmPaymentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfirmPaymentResponse) ProtoMessage() {}
+
+func (x *ConfirmPaymentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_platform_billing_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfirmPaymentResponse.ProtoReflect.Descriptor instead.
+func (*ConfirmPaymentResponse) Descriptor() ([]byte, []int) {
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ConfirmPaymentResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *ConfirmPaymentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ConfirmPaymentResponse) GetData() *PaymentOrder {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+// 充值请求（仅限内部/管理端使用，普通用户必须走支付单流程）
 type DepositRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
@@ -426,7 +994,7 @@ type DepositRequest struct {
 
 func (x *DepositRequest) Reset() {
 	*x = DepositRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[2]
+	mi := &file_idl_platform_billing_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -438,7 +1006,7 @@ func (x *DepositRequest) String() string {
 func (*DepositRequest) ProtoMessage() {}
 
 func (x *DepositRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[2]
+	mi := &file_idl_platform_billing_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -451,7 +1019,7 @@ func (x *DepositRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DepositRequest.ProtoReflect.Descriptor instead.
 func (*DepositRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{2}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DepositRequest) GetUserId() string {
@@ -494,7 +1062,7 @@ type DepositResponse struct {
 
 func (x *DepositResponse) Reset() {
 	*x = DepositResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[3]
+	mi := &file_idl_platform_billing_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -506,7 +1074,7 @@ func (x *DepositResponse) String() string {
 func (*DepositResponse) ProtoMessage() {}
 
 func (x *DepositResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[3]
+	mi := &file_idl_platform_billing_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -519,7 +1087,7 @@ func (x *DepositResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DepositResponse.ProtoReflect.Descriptor instead.
 func (*DepositResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{3}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DepositResponse) GetCode() int32 {
@@ -553,7 +1121,7 @@ type GetAccountRequest struct {
 
 func (x *GetAccountRequest) Reset() {
 	*x = GetAccountRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[4]
+	mi := &file_idl_platform_billing_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -565,7 +1133,7 @@ func (x *GetAccountRequest) String() string {
 func (*GetAccountRequest) ProtoMessage() {}
 
 func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[4]
+	mi := &file_idl_platform_billing_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -578,7 +1146,7 @@ func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{4}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetAccountRequest) GetUserId() string {
@@ -600,7 +1168,7 @@ type GetAccountResponse struct {
 
 func (x *GetAccountResponse) Reset() {
 	*x = GetAccountResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[5]
+	mi := &file_idl_platform_billing_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -612,7 +1180,7 @@ func (x *GetAccountResponse) String() string {
 func (*GetAccountResponse) ProtoMessage() {}
 
 func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[5]
+	mi := &file_idl_platform_billing_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -625,7 +1193,7 @@ func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{5}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetAccountResponse) GetCode() int32 {
@@ -664,7 +1232,7 @@ type GetTransactionsRequest struct {
 
 func (x *GetTransactionsRequest) Reset() {
 	*x = GetTransactionsRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[6]
+	mi := &file_idl_platform_billing_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -676,7 +1244,7 @@ func (x *GetTransactionsRequest) String() string {
 func (*GetTransactionsRequest) ProtoMessage() {}
 
 func (x *GetTransactionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[6]
+	mi := &file_idl_platform_billing_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -689,7 +1257,7 @@ func (x *GetTransactionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTransactionsRequest.ProtoReflect.Descriptor instead.
 func (*GetTransactionsRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{6}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetTransactionsRequest) GetUserId() string {
@@ -747,7 +1315,7 @@ type GetTransactionsResponse struct {
 
 func (x *GetTransactionsResponse) Reset() {
 	*x = GetTransactionsResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[7]
+	mi := &file_idl_platform_billing_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -759,7 +1327,7 @@ func (x *GetTransactionsResponse) String() string {
 func (*GetTransactionsResponse) ProtoMessage() {}
 
 func (x *GetTransactionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[7]
+	mi := &file_idl_platform_billing_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -772,7 +1340,7 @@ func (x *GetTransactionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTransactionsResponse.ProtoReflect.Descriptor instead.
 func (*GetTransactionsResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{7}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *GetTransactionsResponse) GetCode() int32 {
@@ -816,7 +1384,7 @@ type GetUsageStatsRequest struct {
 
 func (x *GetUsageStatsRequest) Reset() {
 	*x = GetUsageStatsRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[8]
+	mi := &file_idl_platform_billing_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -828,7 +1396,7 @@ func (x *GetUsageStatsRequest) String() string {
 func (*GetUsageStatsRequest) ProtoMessage() {}
 
 func (x *GetUsageStatsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[8]
+	mi := &file_idl_platform_billing_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -841,7 +1409,7 @@ func (x *GetUsageStatsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageStatsRequest.ProtoReflect.Descriptor instead.
 func (*GetUsageStatsRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{8}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetUsageStatsRequest) GetUserId() string {
@@ -884,7 +1452,7 @@ type GetUsageStatsResponse struct {
 
 func (x *GetUsageStatsResponse) Reset() {
 	*x = GetUsageStatsResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[9]
+	mi := &file_idl_platform_billing_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -896,7 +1464,7 @@ func (x *GetUsageStatsResponse) String() string {
 func (*GetUsageStatsResponse) ProtoMessage() {}
 
 func (x *GetUsageStatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[9]
+	mi := &file_idl_platform_billing_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -909,7 +1477,7 @@ func (x *GetUsageStatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUsageStatsResponse.ProtoReflect.Descriptor instead.
 func (*GetUsageStatsResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{9}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetUsageStatsResponse) GetCode() int32 {
@@ -947,7 +1515,7 @@ type ConsumeModelCallRequest struct {
 
 func (x *ConsumeModelCallRequest) Reset() {
 	*x = ConsumeModelCallRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[10]
+	mi := &file_idl_platform_billing_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -959,7 +1527,7 @@ func (x *ConsumeModelCallRequest) String() string {
 func (*ConsumeModelCallRequest) ProtoMessage() {}
 
 func (x *ConsumeModelCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[10]
+	mi := &file_idl_platform_billing_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -972,7 +1540,7 @@ func (x *ConsumeModelCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeModelCallRequest.ProtoReflect.Descriptor instead.
 func (*ConsumeModelCallRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{10}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ConsumeModelCallRequest) GetUserId() string {
@@ -1022,7 +1590,7 @@ type ConsumeModelCallResponse struct {
 
 func (x *ConsumeModelCallResponse) Reset() {
 	*x = ConsumeModelCallResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[11]
+	mi := &file_idl_platform_billing_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1034,7 +1602,7 @@ func (x *ConsumeModelCallResponse) String() string {
 func (*ConsumeModelCallResponse) ProtoMessage() {}
 
 func (x *ConsumeModelCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[11]
+	mi := &file_idl_platform_billing_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1615,7 @@ func (x *ConsumeModelCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeModelCallResponse.ProtoReflect.Descriptor instead.
 func (*ConsumeModelCallResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{11}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ConsumeModelCallResponse) GetCode() int32 {
@@ -1084,7 +1652,7 @@ type WithdrawRequest struct {
 
 func (x *WithdrawRequest) Reset() {
 	*x = WithdrawRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[12]
+	mi := &file_idl_platform_billing_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +1664,7 @@ func (x *WithdrawRequest) String() string {
 func (*WithdrawRequest) ProtoMessage() {}
 
 func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[12]
+	mi := &file_idl_platform_billing_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +1677,7 @@ func (x *WithdrawRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawRequest.ProtoReflect.Descriptor instead.
 func (*WithdrawRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{12}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *WithdrawRequest) GetUserId() string {
@@ -1152,7 +1720,7 @@ type WithdrawResponse struct {
 
 func (x *WithdrawResponse) Reset() {
 	*x = WithdrawResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[13]
+	mi := &file_idl_platform_billing_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1164,7 +1732,7 @@ func (x *WithdrawResponse) String() string {
 func (*WithdrawResponse) ProtoMessage() {}
 
 func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[13]
+	mi := &file_idl_platform_billing_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1177,7 +1745,7 @@ func (x *WithdrawResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WithdrawResponse.ProtoReflect.Descriptor instead.
 func (*WithdrawResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{13}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *WithdrawResponse) GetCode() int32 {
@@ -1215,7 +1783,7 @@ type RefundRequest struct {
 
 func (x *RefundRequest) Reset() {
 	*x = RefundRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[14]
+	mi := &file_idl_platform_billing_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1227,7 +1795,7 @@ func (x *RefundRequest) String() string {
 func (*RefundRequest) ProtoMessage() {}
 
 func (x *RefundRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[14]
+	mi := &file_idl_platform_billing_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1240,7 +1808,7 @@ func (x *RefundRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefundRequest.ProtoReflect.Descriptor instead.
 func (*RefundRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{14}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RefundRequest) GetUserId() string {
@@ -1290,7 +1858,7 @@ type RefundResponse struct {
 
 func (x *RefundResponse) Reset() {
 	*x = RefundResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[15]
+	mi := &file_idl_platform_billing_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1302,7 +1870,7 @@ func (x *RefundResponse) String() string {
 func (*RefundResponse) ProtoMessage() {}
 
 func (x *RefundResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[15]
+	mi := &file_idl_platform_billing_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1315,7 +1883,7 @@ func (x *RefundResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefundResponse.ProtoReflect.Descriptor instead.
 func (*RefundResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{15}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *RefundResponse) GetCode() int32 {
@@ -1354,7 +1922,7 @@ type ConsumeEmbeddingRequest struct {
 
 func (x *ConsumeEmbeddingRequest) Reset() {
 	*x = ConsumeEmbeddingRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[16]
+	mi := &file_idl_platform_billing_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1366,7 +1934,7 @@ func (x *ConsumeEmbeddingRequest) String() string {
 func (*ConsumeEmbeddingRequest) ProtoMessage() {}
 
 func (x *ConsumeEmbeddingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[16]
+	mi := &file_idl_platform_billing_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1379,7 +1947,7 @@ func (x *ConsumeEmbeddingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeEmbeddingRequest.ProtoReflect.Descriptor instead.
 func (*ConsumeEmbeddingRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{16}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ConsumeEmbeddingRequest) GetUserId() string {
@@ -1436,7 +2004,7 @@ type ConsumeEmbeddingResponse struct {
 
 func (x *ConsumeEmbeddingResponse) Reset() {
 	*x = ConsumeEmbeddingResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[17]
+	mi := &file_idl_platform_billing_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1448,7 +2016,7 @@ func (x *ConsumeEmbeddingResponse) String() string {
 func (*ConsumeEmbeddingResponse) ProtoMessage() {}
 
 func (x *ConsumeEmbeddingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[17]
+	mi := &file_idl_platform_billing_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1461,7 +2029,7 @@ func (x *ConsumeEmbeddingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeEmbeddingResponse.ProtoReflect.Descriptor instead.
 func (*ConsumeEmbeddingResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{17}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ConsumeEmbeddingResponse) GetCode() int32 {
@@ -1498,7 +2066,7 @@ type ConsumeStorageRequest struct {
 
 func (x *ConsumeStorageRequest) Reset() {
 	*x = ConsumeStorageRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[18]
+	mi := &file_idl_platform_billing_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1510,7 +2078,7 @@ func (x *ConsumeStorageRequest) String() string {
 func (*ConsumeStorageRequest) ProtoMessage() {}
 
 func (x *ConsumeStorageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[18]
+	mi := &file_idl_platform_billing_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1523,7 +2091,7 @@ func (x *ConsumeStorageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeStorageRequest.ProtoReflect.Descriptor instead.
 func (*ConsumeStorageRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{18}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ConsumeStorageRequest) GetUserId() string {
@@ -1566,7 +2134,7 @@ type ConsumeStorageResponse struct {
 
 func (x *ConsumeStorageResponse) Reset() {
 	*x = ConsumeStorageResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[19]
+	mi := &file_idl_platform_billing_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1578,7 +2146,7 @@ func (x *ConsumeStorageResponse) String() string {
 func (*ConsumeStorageResponse) ProtoMessage() {}
 
 func (x *ConsumeStorageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[19]
+	mi := &file_idl_platform_billing_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1591,7 +2159,7 @@ func (x *ConsumeStorageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeStorageResponse.ProtoReflect.Descriptor instead.
 func (*ConsumeStorageResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{19}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ConsumeStorageResponse) GetCode() int32 {
@@ -1628,7 +2196,7 @@ type ConsumeBandwidthRequest struct {
 
 func (x *ConsumeBandwidthRequest) Reset() {
 	*x = ConsumeBandwidthRequest{}
-	mi := &file_idl_platform_billing_proto_msgTypes[20]
+	mi := &file_idl_platform_billing_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1640,7 +2208,7 @@ func (x *ConsumeBandwidthRequest) String() string {
 func (*ConsumeBandwidthRequest) ProtoMessage() {}
 
 func (x *ConsumeBandwidthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[20]
+	mi := &file_idl_platform_billing_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1653,7 +2221,7 @@ func (x *ConsumeBandwidthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeBandwidthRequest.ProtoReflect.Descriptor instead.
 func (*ConsumeBandwidthRequest) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{20}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ConsumeBandwidthRequest) GetUserId() string {
@@ -1696,7 +2264,7 @@ type ConsumeBandwidthResponse struct {
 
 func (x *ConsumeBandwidthResponse) Reset() {
 	*x = ConsumeBandwidthResponse{}
-	mi := &file_idl_platform_billing_proto_msgTypes[21]
+	mi := &file_idl_platform_billing_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1708,7 +2276,7 @@ func (x *ConsumeBandwidthResponse) String() string {
 func (*ConsumeBandwidthResponse) ProtoMessage() {}
 
 func (x *ConsumeBandwidthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_platform_billing_proto_msgTypes[21]
+	mi := &file_idl_platform_billing_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1721,7 +2289,7 @@ func (x *ConsumeBandwidthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConsumeBandwidthResponse.ProtoReflect.Descriptor instead.
 func (*ConsumeBandwidthResponse) Descriptor() ([]byte, []int) {
-	return file_idl_platform_billing_proto_rawDescGZIP(), []int{21}
+	return file_idl_platform_billing_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ConsumeBandwidthResponse) GetCode() int32 {
@@ -1782,7 +2350,58 @@ const file_idl_platform_billing_proto_rawDesc = "" +
 	"created_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf1\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x81\x04\n" +
+	"\fPaymentOrder\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x16\n" +
+	"\x06amount\x18\x03 \x01(\x01R\x06amount\x12%\n" +
+	"\x0epayment_method\x18\x04 \x01(\tR\rpaymentMethod\x12<\n" +
+	"\x06status\x18\x05 \x01(\x0e2$.platform.billing.PaymentOrderStatusR\x06status\x12\x19\n" +
+	"\btrade_no\x18\x06 \x01(\tR\atradeNo\x12H\n" +
+	"\bmetadata\x18\a \x03(\v2,.platform.billing.PaymentOrder.MetadataEntryR\bmetadata\x129\n" +
+	"\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"expires_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x123\n" +
+	"\apaid_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\x06paidAt\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x87\x02\n" +
+	"\x19CreatePaymentOrderRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x16\n" +
+	"\x06amount\x18\x02 \x01(\x01R\x06amount\x12%\n" +
+	"\x0epayment_method\x18\x03 \x01(\tR\rpaymentMethod\x12U\n" +
+	"\bmetadata\x18\x04 \x03(\v29.platform.billing.CreatePaymentOrderRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"~\n" +
+	"\x1aCreatePaymentOrderResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x122\n" +
+	"\x04data\x18\x03 \x01(\v2\x1e.platform.billing.PaymentOrderR\x04data\"L\n" +
+	"\x16GetPaymentOrderRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x19\n" +
+	"\border_id\x18\x02 \x01(\tR\aorderId\"{\n" +
+	"\x17GetPaymentOrderResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x122\n" +
+	"\x04data\x18\x03 \x01(\v2\x1e.platform.billing.PaymentOrderR\x04data\"\xc7\x02\n" +
+	"\x15ConfirmPaymentRequest\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x19\n" +
+	"\btrade_no\x18\x02 \x01(\tR\atradeNo\x12\x16\n" +
+	"\x06amount\x18\x03 \x01(\x01R\x06amount\x12\x1c\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05nonce\x18\x05 \x01(\tR\x05nonce\x12\x1c\n" +
+	"\tsignature\x18\x06 \x01(\tR\tsignature\x12Q\n" +
+	"\bmetadata\x18\a \x03(\v25.platform.billing.ConfirmPaymentRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"z\n" +
+	"\x16ConfirmPaymentResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x122\n" +
+	"\x04data\x18\x03 \x01(\v2\x1e.platform.billing.PaymentOrderR\x04data\"\xf1\x01\n" +
 	"\x0eDepositRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x16\n" +
 	"\x06amount\x18\x02 \x01(\x01R\x06amount\x12%\n" +
@@ -1925,8 +2544,17 @@ const file_idl_platform_billing_proto_rawDesc = "" +
 	"\x17BILLING_ITEM_MODEL_CALL\x10\x01\x12\x18\n" +
 	"\x14BILLING_ITEM_STORAGE\x10\x02\x12\x1a\n" +
 	"\x16BILLING_ITEM_BANDWIDTH\x10\x03\x12\x1a\n" +
-	"\x16BILLING_ITEM_EMBEDDING\x10\x042\xc9\a\n" +
-	"\x0eBillingService\x12N\n" +
+	"\x16BILLING_ITEM_EMBEDDING\x10\x04*\x98\x01\n" +
+	"\x12PaymentOrderStatus\x12 \n" +
+	"\x1cPAYMENT_ORDER_STATUS_PENDING\x10\x00\x12\x1d\n" +
+	"\x19PAYMENT_ORDER_STATUS_PAID\x10\x01\x12\x1f\n" +
+	"\x1bPAYMENT_ORDER_STATUS_FAILED\x10\x02\x12 \n" +
+	"\x1cPAYMENT_ORDER_STATUS_EXPIRED\x10\x032\x87\n" +
+	"\n" +
+	"\x0eBillingService\x12o\n" +
+	"\x12CreatePaymentOrder\x12+.platform.billing.CreatePaymentOrderRequest\x1a,.platform.billing.CreatePaymentOrderResponse\x12f\n" +
+	"\x0fGetPaymentOrder\x12(.platform.billing.GetPaymentOrderRequest\x1a).platform.billing.GetPaymentOrderResponse\x12c\n" +
+	"\x0eConfirmPayment\x12'.platform.billing.ConfirmPaymentRequest\x1a(.platform.billing.ConfirmPaymentResponse\x12N\n" +
 	"\aDeposit\x12 .platform.billing.DepositRequest\x1a!.platform.billing.DepositResponse\x12Q\n" +
 	"\bWithdraw\x12!.platform.billing.WithdrawRequest\x1a\".platform.billing.WithdrawResponse\x12W\n" +
 	"\n" +
@@ -1951,99 +2579,126 @@ func file_idl_platform_billing_proto_rawDescGZIP() []byte {
 	return file_idl_platform_billing_proto_rawDescData
 }
 
-var file_idl_platform_billing_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_idl_platform_billing_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_idl_platform_billing_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_idl_platform_billing_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_idl_platform_billing_proto_goTypes = []any{
-	(TransactionType)(0),             // 0: platform.billing.TransactionType
-	(TransactionStatus)(0),           // 1: platform.billing.TransactionStatus
-	(BillingItem)(0),                 // 2: platform.billing.BillingItem
-	(*Account)(nil),                  // 3: platform.billing.Account
-	(*Transaction)(nil),              // 4: platform.billing.Transaction
-	(*DepositRequest)(nil),           // 5: platform.billing.DepositRequest
-	(*DepositResponse)(nil),          // 6: platform.billing.DepositResponse
-	(*GetAccountRequest)(nil),        // 7: platform.billing.GetAccountRequest
-	(*GetAccountResponse)(nil),       // 8: platform.billing.GetAccountResponse
-	(*GetTransactionsRequest)(nil),   // 9: platform.billing.GetTransactionsRequest
-	(*GetTransactionsResponse)(nil),  // 10: platform.billing.GetTransactionsResponse
-	(*GetUsageStatsRequest)(nil),     // 11: platform.billing.GetUsageStatsRequest
-	(*GetUsageStatsResponse)(nil),    // 12: platform.billing.GetUsageStatsResponse
-	(*ConsumeModelCallRequest)(nil),  // 13: platform.billing.ConsumeModelCallRequest
-	(*ConsumeModelCallResponse)(nil), // 14: platform.billing.ConsumeModelCallResponse
-	(*WithdrawRequest)(nil),          // 15: platform.billing.WithdrawRequest
-	(*WithdrawResponse)(nil),         // 16: platform.billing.WithdrawResponse
-	(*RefundRequest)(nil),            // 17: platform.billing.RefundRequest
-	(*RefundResponse)(nil),           // 18: platform.billing.RefundResponse
-	(*ConsumeEmbeddingRequest)(nil),  // 19: platform.billing.ConsumeEmbeddingRequest
-	(*ConsumeEmbeddingResponse)(nil), // 20: platform.billing.ConsumeEmbeddingResponse
-	(*ConsumeStorageRequest)(nil),    // 21: platform.billing.ConsumeStorageRequest
-	(*ConsumeStorageResponse)(nil),   // 22: platform.billing.ConsumeStorageResponse
-	(*ConsumeBandwidthRequest)(nil),  // 23: platform.billing.ConsumeBandwidthRequest
-	(*ConsumeBandwidthResponse)(nil), // 24: platform.billing.ConsumeBandwidthResponse
-	nil,                              // 25: platform.billing.Account.UsageEntry
-	nil,                              // 26: platform.billing.Transaction.MetadataEntry
-	nil,                              // 27: platform.billing.DepositRequest.MetadataEntry
-	nil,                              // 28: platform.billing.GetUsageStatsResponse.StatsEntry
-	nil,                              // 29: platform.billing.ConsumeModelCallRequest.MetadataEntry
-	nil,                              // 30: platform.billing.WithdrawRequest.MetadataEntry
-	nil,                              // 31: platform.billing.RefundRequest.MetadataEntry
-	nil,                              // 32: platform.billing.ConsumeEmbeddingRequest.MetadataEntry
-	nil,                              // 33: platform.billing.ConsumeStorageRequest.MetadataEntry
-	nil,                              // 34: platform.billing.ConsumeBandwidthRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),    // 35: google.protobuf.Timestamp
+	(TransactionType)(0),               // 0: platform.billing.TransactionType
+	(TransactionStatus)(0),             // 1: platform.billing.TransactionStatus
+	(BillingItem)(0),                   // 2: platform.billing.BillingItem
+	(PaymentOrderStatus)(0),            // 3: platform.billing.PaymentOrderStatus
+	(*Account)(nil),                    // 4: platform.billing.Account
+	(*Transaction)(nil),                // 5: platform.billing.Transaction
+	(*PaymentOrder)(nil),               // 6: platform.billing.PaymentOrder
+	(*CreatePaymentOrderRequest)(nil),  // 7: platform.billing.CreatePaymentOrderRequest
+	(*CreatePaymentOrderResponse)(nil), // 8: platform.billing.CreatePaymentOrderResponse
+	(*GetPaymentOrderRequest)(nil),     // 9: platform.billing.GetPaymentOrderRequest
+	(*GetPaymentOrderResponse)(nil),    // 10: platform.billing.GetPaymentOrderResponse
+	(*ConfirmPaymentRequest)(nil),      // 11: platform.billing.ConfirmPaymentRequest
+	(*ConfirmPaymentResponse)(nil),     // 12: platform.billing.ConfirmPaymentResponse
+	(*DepositRequest)(nil),             // 13: platform.billing.DepositRequest
+	(*DepositResponse)(nil),            // 14: platform.billing.DepositResponse
+	(*GetAccountRequest)(nil),          // 15: platform.billing.GetAccountRequest
+	(*GetAccountResponse)(nil),         // 16: platform.billing.GetAccountResponse
+	(*GetTransactionsRequest)(nil),     // 17: platform.billing.GetTransactionsRequest
+	(*GetTransactionsResponse)(nil),    // 18: platform.billing.GetTransactionsResponse
+	(*GetUsageStatsRequest)(nil),       // 19: platform.billing.GetUsageStatsRequest
+	(*GetUsageStatsResponse)(nil),      // 20: platform.billing.GetUsageStatsResponse
+	(*ConsumeModelCallRequest)(nil),    // 21: platform.billing.ConsumeModelCallRequest
+	(*ConsumeModelCallResponse)(nil),   // 22: platform.billing.ConsumeModelCallResponse
+	(*WithdrawRequest)(nil),            // 23: platform.billing.WithdrawRequest
+	(*WithdrawResponse)(nil),           // 24: platform.billing.WithdrawResponse
+	(*RefundRequest)(nil),              // 25: platform.billing.RefundRequest
+	(*RefundResponse)(nil),             // 26: platform.billing.RefundResponse
+	(*ConsumeEmbeddingRequest)(nil),    // 27: platform.billing.ConsumeEmbeddingRequest
+	(*ConsumeEmbeddingResponse)(nil),   // 28: platform.billing.ConsumeEmbeddingResponse
+	(*ConsumeStorageRequest)(nil),      // 29: platform.billing.ConsumeStorageRequest
+	(*ConsumeStorageResponse)(nil),     // 30: platform.billing.ConsumeStorageResponse
+	(*ConsumeBandwidthRequest)(nil),    // 31: platform.billing.ConsumeBandwidthRequest
+	(*ConsumeBandwidthResponse)(nil),   // 32: platform.billing.ConsumeBandwidthResponse
+	nil,                                // 33: platform.billing.Account.UsageEntry
+	nil,                                // 34: platform.billing.Transaction.MetadataEntry
+	nil,                                // 35: platform.billing.PaymentOrder.MetadataEntry
+	nil,                                // 36: platform.billing.CreatePaymentOrderRequest.MetadataEntry
+	nil,                                // 37: platform.billing.ConfirmPaymentRequest.MetadataEntry
+	nil,                                // 38: platform.billing.DepositRequest.MetadataEntry
+	nil,                                // 39: platform.billing.GetUsageStatsResponse.StatsEntry
+	nil,                                // 40: platform.billing.ConsumeModelCallRequest.MetadataEntry
+	nil,                                // 41: platform.billing.WithdrawRequest.MetadataEntry
+	nil,                                // 42: platform.billing.RefundRequest.MetadataEntry
+	nil,                                // 43: platform.billing.ConsumeEmbeddingRequest.MetadataEntry
+	nil,                                // 44: platform.billing.ConsumeStorageRequest.MetadataEntry
+	nil,                                // 45: platform.billing.ConsumeBandwidthRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),      // 46: google.protobuf.Timestamp
 }
 var file_idl_platform_billing_proto_depIdxs = []int32{
-	25, // 0: platform.billing.Account.usage:type_name -> platform.billing.Account.UsageEntry
-	35, // 1: platform.billing.Account.created_at:type_name -> google.protobuf.Timestamp
-	35, // 2: platform.billing.Account.updated_at:type_name -> google.protobuf.Timestamp
+	33, // 0: platform.billing.Account.usage:type_name -> platform.billing.Account.UsageEntry
+	46, // 1: platform.billing.Account.created_at:type_name -> google.protobuf.Timestamp
+	46, // 2: platform.billing.Account.updated_at:type_name -> google.protobuf.Timestamp
 	0,  // 3: platform.billing.Transaction.type:type_name -> platform.billing.TransactionType
 	2,  // 4: platform.billing.Transaction.item:type_name -> platform.billing.BillingItem
 	1,  // 5: platform.billing.Transaction.status:type_name -> platform.billing.TransactionStatus
-	26, // 6: platform.billing.Transaction.metadata:type_name -> platform.billing.Transaction.MetadataEntry
-	35, // 7: platform.billing.Transaction.created_at:type_name -> google.protobuf.Timestamp
-	27, // 8: platform.billing.DepositRequest.metadata:type_name -> platform.billing.DepositRequest.MetadataEntry
-	4,  // 9: platform.billing.DepositResponse.data:type_name -> platform.billing.Transaction
-	3,  // 10: platform.billing.GetAccountResponse.data:type_name -> platform.billing.Account
-	0,  // 11: platform.billing.GetTransactionsRequest.type:type_name -> platform.billing.TransactionType
-	35, // 12: platform.billing.GetTransactionsRequest.start_time:type_name -> google.protobuf.Timestamp
-	35, // 13: platform.billing.GetTransactionsRequest.end_time:type_name -> google.protobuf.Timestamp
-	4,  // 14: platform.billing.GetTransactionsResponse.transactions:type_name -> platform.billing.Transaction
-	2,  // 15: platform.billing.GetUsageStatsRequest.item:type_name -> platform.billing.BillingItem
-	35, // 16: platform.billing.GetUsageStatsRequest.start_time:type_name -> google.protobuf.Timestamp
-	35, // 17: platform.billing.GetUsageStatsRequest.end_time:type_name -> google.protobuf.Timestamp
-	28, // 18: platform.billing.GetUsageStatsResponse.stats:type_name -> platform.billing.GetUsageStatsResponse.StatsEntry
-	29, // 19: platform.billing.ConsumeModelCallRequest.metadata:type_name -> platform.billing.ConsumeModelCallRequest.MetadataEntry
-	30, // 20: platform.billing.WithdrawRequest.metadata:type_name -> platform.billing.WithdrawRequest.MetadataEntry
-	4,  // 21: platform.billing.WithdrawResponse.data:type_name -> platform.billing.Transaction
-	31, // 22: platform.billing.RefundRequest.metadata:type_name -> platform.billing.RefundRequest.MetadataEntry
-	4,  // 23: platform.billing.RefundResponse.data:type_name -> platform.billing.Transaction
-	32, // 24: platform.billing.ConsumeEmbeddingRequest.metadata:type_name -> platform.billing.ConsumeEmbeddingRequest.MetadataEntry
-	33, // 25: platform.billing.ConsumeStorageRequest.metadata:type_name -> platform.billing.ConsumeStorageRequest.MetadataEntry
-	34, // 26: platform.billing.ConsumeBandwidthRequest.metadata:type_name -> platform.billing.ConsumeBandwidthRequest.MetadataEntry
-	5,  // 27: platform.billing.BillingService.Deposit:input_type -> platform.billing.DepositRequest
-	15, // 28: platform.billing.BillingService.Withdraw:input_type -> platform.billing.WithdrawRequest
-	7,  // 29: platform.billing.BillingService.GetAccount:input_type -> platform.billing.GetAccountRequest
-	9,  // 30: platform.billing.BillingService.GetTransactions:input_type -> platform.billing.GetTransactionsRequest
-	11, // 31: platform.billing.BillingService.GetUsageStats:input_type -> platform.billing.GetUsageStatsRequest
-	13, // 32: platform.billing.BillingService.ConsumeModelCall:input_type -> platform.billing.ConsumeModelCallRequest
-	19, // 33: platform.billing.BillingService.ConsumeEmbedding:input_type -> platform.billing.ConsumeEmbeddingRequest
-	17, // 34: platform.billing.BillingService.Refund:input_type -> platform.billing.RefundRequest
-	21, // 35: platform.billing.BillingService.ConsumeStorage:input_type -> platform.billing.ConsumeStorageRequest
-	23, // 36: platform.billing.BillingService.ConsumeBandwidth:input_type -> platform.billing.ConsumeBandwidthRequest
-	6,  // 37: platform.billing.BillingService.Deposit:output_type -> platform.billing.DepositResponse
-	16, // 38: platform.billing.BillingService.Withdraw:output_type -> platform.billing.WithdrawResponse
-	8,  // 39: platform.billing.BillingService.GetAccount:output_type -> platform.billing.GetAccountResponse
-	10, // 40: platform.billing.BillingService.GetTransactions:output_type -> platform.billing.GetTransactionsResponse
-	12, // 41: platform.billing.BillingService.GetUsageStats:output_type -> platform.billing.GetUsageStatsResponse
-	14, // 42: platform.billing.BillingService.ConsumeModelCall:output_type -> platform.billing.ConsumeModelCallResponse
-	20, // 43: platform.billing.BillingService.ConsumeEmbedding:output_type -> platform.billing.ConsumeEmbeddingResponse
-	18, // 44: platform.billing.BillingService.Refund:output_type -> platform.billing.RefundResponse
-	22, // 45: platform.billing.BillingService.ConsumeStorage:output_type -> platform.billing.ConsumeStorageResponse
-	24, // 46: platform.billing.BillingService.ConsumeBandwidth:output_type -> platform.billing.ConsumeBandwidthResponse
-	37, // [37:47] is the sub-list for method output_type
-	27, // [27:37] is the sub-list for method input_type
-	27, // [27:27] is the sub-list for extension type_name
-	27, // [27:27] is the sub-list for extension extendee
-	0,  // [0:27] is the sub-list for field type_name
+	34, // 6: platform.billing.Transaction.metadata:type_name -> platform.billing.Transaction.MetadataEntry
+	46, // 7: platform.billing.Transaction.created_at:type_name -> google.protobuf.Timestamp
+	3,  // 8: platform.billing.PaymentOrder.status:type_name -> platform.billing.PaymentOrderStatus
+	35, // 9: platform.billing.PaymentOrder.metadata:type_name -> platform.billing.PaymentOrder.MetadataEntry
+	46, // 10: platform.billing.PaymentOrder.created_at:type_name -> google.protobuf.Timestamp
+	46, // 11: platform.billing.PaymentOrder.expires_at:type_name -> google.protobuf.Timestamp
+	46, // 12: platform.billing.PaymentOrder.paid_at:type_name -> google.protobuf.Timestamp
+	36, // 13: platform.billing.CreatePaymentOrderRequest.metadata:type_name -> platform.billing.CreatePaymentOrderRequest.MetadataEntry
+	6,  // 14: platform.billing.CreatePaymentOrderResponse.data:type_name -> platform.billing.PaymentOrder
+	6,  // 15: platform.billing.GetPaymentOrderResponse.data:type_name -> platform.billing.PaymentOrder
+	37, // 16: platform.billing.ConfirmPaymentRequest.metadata:type_name -> platform.billing.ConfirmPaymentRequest.MetadataEntry
+	6,  // 17: platform.billing.ConfirmPaymentResponse.data:type_name -> platform.billing.PaymentOrder
+	38, // 18: platform.billing.DepositRequest.metadata:type_name -> platform.billing.DepositRequest.MetadataEntry
+	5,  // 19: platform.billing.DepositResponse.data:type_name -> platform.billing.Transaction
+	4,  // 20: platform.billing.GetAccountResponse.data:type_name -> platform.billing.Account
+	0,  // 21: platform.billing.GetTransactionsRequest.type:type_name -> platform.billing.TransactionType
+	46, // 22: platform.billing.GetTransactionsRequest.start_time:type_name -> google.protobuf.Timestamp
+	46, // 23: platform.billing.GetTransactionsRequest.end_time:type_name -> google.protobuf.Timestamp
+	5,  // 24: platform.billing.GetTransactionsResponse.transactions:type_name -> platform.billing.Transaction
+	2,  // 25: platform.billing.GetUsageStatsRequest.item:type_name -> platform.billing.BillingItem
+	46, // 26: platform.billing.GetUsageStatsRequest.start_time:type_name -> google.protobuf.Timestamp
+	46, // 27: platform.billing.GetUsageStatsRequest.end_time:type_name -> google.protobuf.Timestamp
+	39, // 28: platform.billing.GetUsageStatsResponse.stats:type_name -> platform.billing.GetUsageStatsResponse.StatsEntry
+	40, // 29: platform.billing.ConsumeModelCallRequest.metadata:type_name -> platform.billing.ConsumeModelCallRequest.MetadataEntry
+	41, // 30: platform.billing.WithdrawRequest.metadata:type_name -> platform.billing.WithdrawRequest.MetadataEntry
+	5,  // 31: platform.billing.WithdrawResponse.data:type_name -> platform.billing.Transaction
+	42, // 32: platform.billing.RefundRequest.metadata:type_name -> platform.billing.RefundRequest.MetadataEntry
+	5,  // 33: platform.billing.RefundResponse.data:type_name -> platform.billing.Transaction
+	43, // 34: platform.billing.ConsumeEmbeddingRequest.metadata:type_name -> platform.billing.ConsumeEmbeddingRequest.MetadataEntry
+	44, // 35: platform.billing.ConsumeStorageRequest.metadata:type_name -> platform.billing.ConsumeStorageRequest.MetadataEntry
+	45, // 36: platform.billing.ConsumeBandwidthRequest.metadata:type_name -> platform.billing.ConsumeBandwidthRequest.MetadataEntry
+	7,  // 37: platform.billing.BillingService.CreatePaymentOrder:input_type -> platform.billing.CreatePaymentOrderRequest
+	9,  // 38: platform.billing.BillingService.GetPaymentOrder:input_type -> platform.billing.GetPaymentOrderRequest
+	11, // 39: platform.billing.BillingService.ConfirmPayment:input_type -> platform.billing.ConfirmPaymentRequest
+	13, // 40: platform.billing.BillingService.Deposit:input_type -> platform.billing.DepositRequest
+	23, // 41: platform.billing.BillingService.Withdraw:input_type -> platform.billing.WithdrawRequest
+	15, // 42: platform.billing.BillingService.GetAccount:input_type -> platform.billing.GetAccountRequest
+	17, // 43: platform.billing.BillingService.GetTransactions:input_type -> platform.billing.GetTransactionsRequest
+	19, // 44: platform.billing.BillingService.GetUsageStats:input_type -> platform.billing.GetUsageStatsRequest
+	21, // 45: platform.billing.BillingService.ConsumeModelCall:input_type -> platform.billing.ConsumeModelCallRequest
+	27, // 46: platform.billing.BillingService.ConsumeEmbedding:input_type -> platform.billing.ConsumeEmbeddingRequest
+	25, // 47: platform.billing.BillingService.Refund:input_type -> platform.billing.RefundRequest
+	29, // 48: platform.billing.BillingService.ConsumeStorage:input_type -> platform.billing.ConsumeStorageRequest
+	31, // 49: platform.billing.BillingService.ConsumeBandwidth:input_type -> platform.billing.ConsumeBandwidthRequest
+	8,  // 50: platform.billing.BillingService.CreatePaymentOrder:output_type -> platform.billing.CreatePaymentOrderResponse
+	10, // 51: platform.billing.BillingService.GetPaymentOrder:output_type -> platform.billing.GetPaymentOrderResponse
+	12, // 52: platform.billing.BillingService.ConfirmPayment:output_type -> platform.billing.ConfirmPaymentResponse
+	14, // 53: platform.billing.BillingService.Deposit:output_type -> platform.billing.DepositResponse
+	24, // 54: platform.billing.BillingService.Withdraw:output_type -> platform.billing.WithdrawResponse
+	16, // 55: platform.billing.BillingService.GetAccount:output_type -> platform.billing.GetAccountResponse
+	18, // 56: platform.billing.BillingService.GetTransactions:output_type -> platform.billing.GetTransactionsResponse
+	20, // 57: platform.billing.BillingService.GetUsageStats:output_type -> platform.billing.GetUsageStatsResponse
+	22, // 58: platform.billing.BillingService.ConsumeModelCall:output_type -> platform.billing.ConsumeModelCallResponse
+	28, // 59: platform.billing.BillingService.ConsumeEmbedding:output_type -> platform.billing.ConsumeEmbeddingResponse
+	26, // 60: platform.billing.BillingService.Refund:output_type -> platform.billing.RefundResponse
+	30, // 61: platform.billing.BillingService.ConsumeStorage:output_type -> platform.billing.ConsumeStorageResponse
+	32, // 62: platform.billing.BillingService.ConsumeBandwidth:output_type -> platform.billing.ConsumeBandwidthResponse
+	50, // [50:63] is the sub-list for method output_type
+	37, // [37:50] is the sub-list for method input_type
+	37, // [37:37] is the sub-list for extension type_name
+	37, // [37:37] is the sub-list for extension extendee
+	0,  // [0:37] is the sub-list for field type_name
 }
 
 func init() { file_idl_platform_billing_proto_init() }
@@ -2056,8 +2711,8 @@ func file_idl_platform_billing_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_idl_platform_billing_proto_rawDesc), len(file_idl_platform_billing_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   32,
+			NumEnums:      4,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

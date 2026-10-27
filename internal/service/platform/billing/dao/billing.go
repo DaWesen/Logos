@@ -28,6 +28,12 @@ type BillingRepository interface {
 	// 退款累计：按 metadata.original_transaction_id 汇总已退金额，防止重复退款超额
 	SumRefundedAmount(ctx context.Context, userID, originalTxID string) (float64, error)
 
+	// 支付单
+	CreatePaymentOrder(ctx context.Context, order *model.PaymentOrder) error
+	GetPaymentOrder(ctx context.Context, id string) (*model.PaymentOrder, error)
+	// MarkPaymentOrderPaid 条件更新：仅当订单仍为 pending 时置为 paid，返回是否更新成功（用于幂等入账）
+	MarkPaymentOrderPaid(ctx context.Context, id, tradeNo, nonce string, paidAt time.Time) (bool, error)
+
 	// 消费扣减
 	ConsumeBalance(ctx context.Context, userID string, item int, amount float64, description string, metadata map[string]string) (*model.Transaction, error)
 
@@ -106,6 +112,38 @@ func (r *billingRepositoryImpl) SumRefundedAmount(ctx context.Context, userID, o
 		Select("COALESCE(SUM(amount), 0)").
 		Scan(&total).Error
 	return total, err
+}
+
+func (r *billingRepositoryImpl) CreatePaymentOrder(ctx context.Context, order *model.PaymentOrder) error {
+	if order.ID == "" {
+		order.ID = uuid.NewString()
+	}
+	return r.db.WithContext(ctx).Create(order).Error
+}
+
+func (r *billingRepositoryImpl) GetPaymentOrder(ctx context.Context, id string) (*model.PaymentOrder, error) {
+	var order model.PaymentOrder
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &order, err
+}
+
+func (r *billingRepositoryImpl) MarkPaymentOrderPaid(ctx context.Context, id, tradeNo, nonce string, paidAt time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&model.PaymentOrder{}).
+		Where("id = ? AND status = ?", id, 0).
+		Updates(map[string]interface{}{
+			"status":         1,
+			"trade_no":       tradeNo,
+			"callback_nonce": nonce,
+			"paid_at":        paidAt,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (r *billingRepositoryImpl) ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error) {

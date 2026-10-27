@@ -286,6 +286,9 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	api.GET("/auth/check-username", h.CheckUsername)
 	api.POST("/auth/check-username", h.CheckUsername)
 
+	// 支付渠道回调：公开路由，安全性依赖服务端 HMAC 验签，不走用户认证
+	api.POST("/billing/payment-callback", h.PaymentCallback)
+
 	// 需要认证的接口
 	authApi := api.Group("")
 	authApi.Use(middleware.Auth())
@@ -415,7 +418,8 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		// 计费相关
 		billing := authApi.Group("/billing")
 		{
-			billing.POST("/deposit", h.Deposit)
+			billing.POST("/payments", h.CreatePaymentOrder)
+			billing.GET("/payments/:id", h.GetPaymentOrder)
 			billing.POST("/withdraw", h.Withdraw)
 			billing.POST("/refund", h.Refund)
 			billing.GET("/account", h.GetAccount)

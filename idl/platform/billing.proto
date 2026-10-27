@@ -59,7 +59,75 @@ message Transaction {
   google.protobuf.Timestamp created_at = 12;
 }
 
-// 充值请求
+// 支付单状态
+enum PaymentOrderStatus {
+  PAYMENT_ORDER_STATUS_PENDING = 0;
+  PAYMENT_ORDER_STATUS_PAID = 1;
+  PAYMENT_ORDER_STATUS_FAILED = 2;
+  PAYMENT_ORDER_STATUS_EXPIRED = 3;
+}
+
+// 支付单
+message PaymentOrder {
+  string id = 1;
+  string user_id = 2;
+  double amount = 3;
+  string payment_method = 4;
+  PaymentOrderStatus status = 5;
+  string trade_no = 6;
+  map<string, string> metadata = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  google.protobuf.Timestamp paid_at = 10;
+}
+
+// 创建支付单请求
+message CreatePaymentOrderRequest {
+  string user_id = 1;
+  double amount = 2;
+  string payment_method = 3;
+  map<string, string> metadata = 4;
+}
+
+// 创建支付单响应
+message CreatePaymentOrderResponse {
+  int32 code = 1;
+  string message = 2;
+  PaymentOrder data = 3;
+}
+
+// 查询支付单请求
+message GetPaymentOrderRequest {
+  string user_id = 1;
+  string order_id = 2;
+}
+
+// 查询支付单响应
+message GetPaymentOrderResponse {
+  int32 code = 1;
+  string message = 2;
+  PaymentOrder data = 3;
+}
+
+// 支付回调请求（由支付渠道服务端调用，需签名校验）
+message ConfirmPaymentRequest {
+  string order_id = 1;
+  string trade_no = 2;
+  double amount = 3;
+  int64 timestamp = 4;
+  string nonce = 5;
+  string signature = 6;
+  map<string, string> metadata = 7;
+}
+
+// 支付回调响应
+message ConfirmPaymentResponse {
+  int32 code = 1;
+  string message = 2;
+  PaymentOrder data = 3;
+}
+
+// 充值请求（仅限内部/管理端使用，普通用户必须走支付单流程）
 message DepositRequest {
   string user_id = 1;
   double amount = 2;
@@ -215,7 +283,16 @@ message ConsumeBandwidthResponse {
 
 // 计费服务
 service BillingService {
-  // 充值
+  // 创建支付单（用户下单，不直接入账）
+  rpc CreatePaymentOrder(CreatePaymentOrderRequest) returns (CreatePaymentOrderResponse);
+
+  // 查询支付单（仅限本人）
+  rpc GetPaymentOrder(GetPaymentOrderRequest) returns (GetPaymentOrderResponse);
+
+  // 支付回调（支付渠道服务端调用，验签通过后幂等入账）
+  rpc ConfirmPayment(ConfirmPaymentRequest) returns (ConfirmPaymentResponse);
+
+  // 充值（仅限内部/管理端调用，普通用户不开放）
   rpc Deposit(DepositRequest) returns (DepositResponse);
   
   // 提现

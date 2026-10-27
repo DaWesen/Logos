@@ -46,7 +46,7 @@ func main() {
 		producer = mq.NewProducer()
 	}
 
-	billingService := service.NewBillingService(repo, outboxRepo)
+	billingService := service.NewBillingService(repo, outboxRepo, cfg.Payment.CallbackSecret)
 
 	if producer != nil {
 		relay := outbox.NewRelay(db, producer)

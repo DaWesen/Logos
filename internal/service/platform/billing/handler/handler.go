@@ -104,6 +104,86 @@ func convertModelTransactionToProtoTransaction(mt *model.Transaction) *pb.Transa
 	}
 }
 
+func convertModelPaymentOrderToProtoPaymentOrder(mo *model.PaymentOrder) *pb.PaymentOrder {
+	if mo == nil {
+		return nil
+	}
+
+	order := &pb.PaymentOrder{
+		Id:            mo.ID,
+		UserId:        mo.UserID,
+		Amount:        mo.Amount,
+		PaymentMethod: mo.PaymentMethod,
+		Status:        pb.PaymentOrderStatus(mo.Status),
+		TradeNo:       mo.TradeNo,
+		Metadata:      map[string]string(mo.Metadata),
+		CreatedAt:     timestamppb.New(mo.CreatedAt),
+		ExpiresAt:     timestamppb.New(mo.ExpiresAt),
+	}
+	if mo.PaidAt != nil {
+		order.PaidAt = timestamppb.New(*mo.PaidAt)
+	}
+	return order
+}
+
+func (s *BillingServiceImpl) CreatePaymentOrder(ctx context.Context, req *pb.CreatePaymentOrderRequest) (*pb.CreatePaymentOrderResponse, error) {
+	resp := &pb.CreatePaymentOrderResponse{}
+
+	order, err := s.BillingService.CreatePaymentOrder(ctx, req.UserId, req.Amount, req.PaymentMethod, req.Metadata)
+	if err != nil {
+		logger.Warn("创建支付单失败", logger.ErrorField(err))
+		resp.Code = 1
+		resp.Message = err.Error()
+		return resp, nil
+	}
+
+	resp.Code = 0
+	resp.Message = "success"
+	resp.Data = convertModelPaymentOrderToProtoPaymentOrder(order)
+	return resp, nil
+}
+
+func (s *BillingServiceImpl) GetPaymentOrder(ctx context.Context, req *pb.GetPaymentOrderRequest) (*pb.GetPaymentOrderResponse, error) {
+	resp := &pb.GetPaymentOrderResponse{}
+
+	order, err := s.BillingService.GetPaymentOrder(ctx, req.UserId, req.OrderId)
+	if err != nil {
+		resp.Code = 1
+		resp.Message = err.Error()
+		return resp, nil
+	}
+
+	resp.Code = 0
+	resp.Message = "success"
+	resp.Data = convertModelPaymentOrderToProtoPaymentOrder(order)
+	return resp, nil
+}
+
+func (s *BillingServiceImpl) ConfirmPayment(ctx context.Context, req *pb.ConfirmPaymentRequest) (*pb.ConfirmPaymentResponse, error) {
+	resp := &pb.ConfirmPaymentResponse{}
+
+	order, err := s.BillingService.ConfirmPayment(ctx, service.PaymentCallback{
+		OrderID:   req.OrderId,
+		TradeNo:   req.TradeNo,
+		Amount:    req.Amount,
+		Timestamp: req.Timestamp,
+		Nonce:     req.Nonce,
+		Signature: req.Signature,
+		Metadata:  req.Metadata,
+	})
+	if err != nil {
+		logger.Warn("支付回调处理失败", logger.ErrorField(err))
+		resp.Code = 1
+		resp.Message = err.Error()
+		return resp, nil
+	}
+
+	resp.Code = 0
+	resp.Message = "success"
+	resp.Data = convertModelPaymentOrderToProtoPaymentOrder(order)
+	return resp, nil
+}
+
 func (s *BillingServiceImpl) Deposit(ctx context.Context, req *pb.DepositRequest) (*pb.DepositResponse, error) {
 	resp := &pb.DepositResponse{}
 

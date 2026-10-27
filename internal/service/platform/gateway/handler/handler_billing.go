@@ -10,13 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *Handler) Deposit(c *gin.Context) {
+func (h *Handler) CreatePaymentOrder(c *gin.Context) {
 	if h.BillingClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
 		return
 	}
 
-	var req pb.DepositRequest
+	var req pb.CreatePaymentOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
@@ -28,18 +28,79 @@ func (h *Handler) Deposit(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.Deposit(c.Request.Context(), &req)
+	resp, err := h.BillingClient.CreatePaymentOrder(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-
-	statusCode := 200
 	if resp.Code != 0 {
-		statusCode = int(resp.Code)
+		c.JSON(http.StatusBadRequest, model.Error(http.StatusBadRequest, resp.Message))
+		return
 	}
-	c.JSON(statusCode, model.Response{
-		Code:    statusCode,
+
+	c.JSON(http.StatusOK, model.Response{
+		Code:    0,
+		Message: resp.Message,
+		Data:    resp.Data,
+	})
+}
+
+func (h *Handler) GetPaymentOrder(c *gin.Context) {
+	if h.BillingClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
+
+	resp, err := h.BillingClient.GetPaymentOrder(c.Request.Context(), &pb.GetPaymentOrderRequest{
+		UserId:  userID,
+		OrderId: c.Param("id"),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if resp.Code != 0 {
+		c.JSON(http.StatusNotFound, model.Error(http.StatusNotFound, resp.Message))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Response{
+		Code:    0,
+		Message: resp.Message,
+		Data:    resp.Data,
+	})
+}
+
+// PaymentCallback 支付渠道回调：公开路由，安全性完全依赖服务端验签。
+func (h *Handler) PaymentCallback(c *gin.Context) {
+	if h.BillingClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+
+	var req pb.ConfirmPaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+
+	resp, err := h.BillingClient.ConfirmPayment(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if resp.Code != 0 {
+		c.JSON(http.StatusBadRequest, model.Error(http.StatusBadRequest, resp.Message))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Response{
+		Code:    0,
 		Message: resp.Message,
 		Data:    resp.Data,
 	})
