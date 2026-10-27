@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -23,7 +22,7 @@ func (h *Handler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.Search(context.Background(), &req)
+	resp, err := h.SearchClient.Search(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -49,7 +48,7 @@ func (h *Handler) AddDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.AddDocument(context.Background(), &req)
+	resp, err := h.SearchClient.AddDocument(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -71,7 +70,7 @@ func (h *Handler) UpdateDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.UpdateDocument(context.Background(), &req)
+	resp, err := h.SearchClient.UpdateDocument(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -93,7 +92,7 @@ func (h *Handler) DeleteDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.DeleteDocument(context.Background(), &req)
+	resp, err := h.SearchClient.DeleteDocument(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -111,7 +110,7 @@ func (h *Handler) GetDocument(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.GetDocument(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.SearchClient.GetDocument(c.Request.Context(), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -133,7 +132,7 @@ func (h *Handler) BatchAddDocuments(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.BatchAddDocuments(context.Background(), &req)
+	resp, err := h.SearchClient.BatchAddDocuments(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -155,7 +154,7 @@ func (h *Handler) BatchDeleteDocuments(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.SearchClient.BatchDeleteDocuments(context.Background(), &req)
+	resp, err := h.SearchClient.BatchDeleteDocuments(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -174,7 +173,7 @@ func (h *Handler) CreateIndex(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.CreateIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	resp, err := h.SearchClient.CreateIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -193,7 +192,7 @@ func (h *Handler) DeleteIndex(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.DeleteIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	resp, err := h.SearchClient.DeleteIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -212,7 +211,7 @@ func (h *Handler) RefreshIndex(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.RefreshIndex(context.Background(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	resp, err := h.SearchClient.RefreshIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -229,7 +228,7 @@ func (h *Handler) GetIndexStats(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.GetIndexStats(context.Background(), &pb.EmptyReq{})
+	resp, err := h.SearchClient.GetIndexStats(c.Request.Context(), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

@@ -94,9 +94,11 @@ func (h *Handler) requireUserID(c *gin.Context) (string, bool) {
 	return "", false
 }
 
-// withUserID 从 gin.Context 提取 user_id 并附加到 gRPC metadata，用于下游服务识别用户
+// withUserID 从 gin.Context 提取 user_id 并附加到 gRPC metadata，用于下游服务识别用户。
+// 基座必须用请求上下文：认证中间件已把身份写进 c.Request.Context()，
+// 这样客户端断开/超时会随链路取消下游调用，trace 也不会断链。
 func (h *Handler) withUserID(c *gin.Context) context.Context {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	if userID, exists := c.Get("user_id"); exists {
 		if uid, ok := userID.(string); ok {
 			ctx = auth.AttachUserToContext(ctx, uid, "")

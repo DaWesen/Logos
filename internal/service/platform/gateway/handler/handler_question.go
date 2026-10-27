@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -23,7 +22,7 @@ func (h *Handler) AskQuestion(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.QuestionClient.AskQuestion(context.Background(), &req)
+	resp, err := h.QuestionClient.AskQuestion(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -51,7 +50,7 @@ func (h *Handler) BatchAskQuestions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.QuestionClient.BatchAskQuestions(context.Background(), &req)
+	resp, err := h.QuestionClient.BatchAskQuestions(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -84,7 +83,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 		Page:     int32(page),
 		PageSize: int32(pageSize),
 	}
-	resp, err := h.QuestionClient.GetHistory(context.Background(), req)
+	resp, err := h.QuestionClient.GetHistory(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -109,7 +108,7 @@ func (h *Handler) SubmitFeedback(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.QuestionClient.SubmitFeedback(context.Background(), &req)
+	resp, err := h.QuestionClient.SubmitFeedback(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -127,7 +126,7 @@ func (h *Handler) GetRecommendedQuestions(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.QuestionClient.GetRecommendedQuestions(context.Background(), &pb.GetRecommendedQuestionsReq{UserId: userID})
+	resp, err := h.QuestionClient.GetRecommendedQuestions(c.Request.Context(), &pb.GetRecommendedQuestionsReq{UserId: userID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

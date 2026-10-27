@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -22,7 +21,7 @@ func (h *Handler) ConnectIM(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.Connect(context.Background(), &req)
+	resp, err := h.IMClient.Connect(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -40,7 +39,7 @@ func (h *Handler) DisconnectIM(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.Disconnect(context.Background(), &req)
+	resp, err := h.IMClient.Disconnect(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -58,7 +57,7 @@ func (h *Handler) GetOnlineStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.GetOnlineStatus(context.Background(), &req)
+	resp, err := h.IMClient.GetOnlineStatus(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -76,7 +75,7 @@ func (h *Handler) SetOnlineStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.SetOnlineStatus(context.Background(), &req)
+	resp, err := h.IMClient.SetOnlineStatus(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -94,7 +93,7 @@ func (h *Handler) HeartbeatIM(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.Heartbeat(context.Background(), &req)
+	resp, err := h.IMClient.Heartbeat(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -112,7 +111,7 @@ func (h *Handler) SendTypingStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.SendTypingStatus(context.Background(), &req)
+	resp, err := h.IMClient.SendTypingStatus(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -130,7 +129,7 @@ func (h *Handler) BroadcastIMMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.BroadcastMessage(context.Background(), &req)
+	resp, err := h.IMClient.BroadcastMessage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -148,7 +147,7 @@ func (h *Handler) SyncOfflineMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.IMClient.SyncOfflineMessages(context.Background(), &req)
+	resp, err := h.IMClient.SyncOfflineMessages(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -166,7 +165,7 @@ func (h *Handler) StreamMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	stream, err := h.IMClient.StreamMessages(context.Background(), &req)
+	stream, err := h.IMClient.StreamMessages(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

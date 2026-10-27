@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 
@@ -40,7 +39,7 @@ func (h *Handler) BindQQ(c *gin.Context) {
 
 	// 检查该QQ号是否已被其他用户绑定
 	redis := cache.NewRedisCache()
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	existingBindKey := fmt.Sprintf("qq:user_bind:%s", req.QQNumber)
 	existingUID, err := redis.Get(ctx, existingBindKey)
 	if err == nil && existingUID != "" && existingUID != uid {
@@ -87,7 +86,7 @@ func (h *Handler) UnbindQQ(c *gin.Context) {
 	}
 
 	redis := cache.NewRedisCache()
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	// 查找该用户绑定的QQ号
 	reverseKey := fmt.Sprintf("qq:user_reverse:%s", uid)
@@ -127,7 +126,7 @@ func (h *Handler) GetQQBind(c *gin.Context) {
 	}
 
 	redis := cache.NewRedisCache()
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	reverseKey := fmt.Sprintf("qq:user_reverse:%s", uid)
 	qqNumber, err := redis.Get(ctx, reverseKey)

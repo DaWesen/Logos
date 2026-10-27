@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -27,7 +26,7 @@ func (h *Handler) RecordMetric(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MonitoringClient.RecordMetric(context.Background(), &req)
+	resp, err := h.MonitoringClient.RecordMetric(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -49,7 +48,7 @@ func (h *Handler) BatchRecordMetric(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MonitoringClient.BatchRecordMetric(context.Background(), &req)
+	resp, err := h.MonitoringClient.BatchRecordMetric(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -72,7 +71,7 @@ func (h *Handler) QueryMetrics(c *gin.Context) {
 		StartTime:   mustAtoi64(c.DefaultQuery("start_time", "0")),
 		EndTime:     mustAtoi64(c.DefaultQuery("end_time", "0")),
 	}
-	resp, err := h.MonitoringClient.QueryMetrics(context.Background(), req)
+	resp, err := h.MonitoringClient.QueryMetrics(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -94,7 +93,7 @@ func (h *Handler) RecordLog(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MonitoringClient.RecordLog(context.Background(), &req)
+	resp, err := h.MonitoringClient.RecordLog(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -116,7 +115,7 @@ func (h *Handler) BatchRecordLog(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MonitoringClient.BatchRecordLog(context.Background(), &req)
+	resp, err := h.MonitoringClient.BatchRecordLog(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -152,7 +151,7 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 		req.Query = &query
 	}
 
-	resp, err := h.MonitoringClient.QueryLogs(context.Background(), req)
+	resp, err := h.MonitoringClient.QueryLogs(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -188,7 +187,7 @@ func (h *Handler) QueryAlerts(c *gin.Context) {
 		req.Resolved = &resolved
 	}
 
-	resp, err := h.MonitoringClient.QueryAlerts(context.Background(), req)
+	resp, err := h.MonitoringClient.QueryAlerts(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -206,7 +205,7 @@ func (h *Handler) ResolveAlert(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.MonitoringClient.ResolveAlert(context.Background(), &pb.GetByAlertIdReq{AlertId: alertId})
+	resp, err := h.MonitoringClient.ResolveAlert(c.Request.Context(), &pb.GetByAlertIdReq{AlertId: alertId})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -228,7 +227,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MonitoringClient.UpdateServiceStatus(context.Background(), &req)
+	resp, err := h.MonitoringClient.UpdateServiceStatus(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -246,7 +245,7 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.MonitoringClient.GetServiceStatus(context.Background(), &pb.GetByServiceNameReq{ServiceName: serviceName})
+	resp, err := h.MonitoringClient.GetServiceStatus(c.Request.Context(), &pb.GetByServiceNameReq{ServiceName: serviceName})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -273,7 +272,7 @@ func (h *Handler) ListServiceStatuses(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
-	resp, err := h.MonitoringClient.ListServiceStatus(context.Background(), &pb.EmptyReq{})
+	resp, err := h.MonitoringClient.ListServiceStatus(c.Request.Context(), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return

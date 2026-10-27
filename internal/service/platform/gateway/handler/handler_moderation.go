@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -20,7 +19,7 @@ func (h *Handler) Translate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ModerationClient.Translate(context.Background(), &req)
+	resp, err := h.ModerationClient.Translate(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -42,7 +41,7 @@ func (h *Handler) ModerateContent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ModerationClient.ModerateContent(context.Background(), &req)
+	resp, err := h.ModerationClient.ModerateContent(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -60,7 +59,7 @@ func (h *Handler) GetModerationRecords(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ModerationClient.GetModerationRecords(context.Background(), &req)
+	resp, err := h.ModerationClient.GetModerationRecords(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

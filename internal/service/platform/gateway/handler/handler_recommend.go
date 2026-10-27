@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -32,7 +31,7 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 		req.Type = &recType
 	}
 
-	resp, err := h.RecommendClient.GetRecommendations(context.Background(), req)
+	resp, err := h.RecommendClient.GetRecommendations(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -66,7 +65,7 @@ func (h *Handler) GetRelatedRecommendations(c *gin.Context) {
 		req.Type = &recType
 	}
 
-	resp, err := h.RecommendClient.GetRelatedRecommendations(context.Background(), req)
+	resp, err := h.RecommendClient.GetRelatedRecommendations(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -91,7 +90,7 @@ func (h *Handler) SubmitRecommendFeedback(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.RecommendClient.SubmitFeedback(context.Background(), &req)
+	resp, err := h.RecommendClient.SubmitFeedback(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -117,7 +116,7 @@ func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 		Page:     int32(page),
 		PageSize: int32(pageSize),
 	}
-	resp, err := h.RecommendClient.GetRecommendationHistory(context.Background(), req)
+	resp, err := h.RecommendClient.GetRecommendationHistory(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -142,7 +141,7 @@ func (h *Handler) BatchGetRecommendations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.RecommendClient.BatchGetRecommendations(context.Background(), &req)
+	resp, err := h.RecommendClient.BatchGetRecommendations(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

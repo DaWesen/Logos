@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -22,7 +21,7 @@ func (h *Handler) CreateTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ExtractionClient.CreateTask(context.Background(), &req)
+	resp, err := h.ExtractionClient.CreateTask(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -39,7 +38,7 @@ func (h *Handler) ListTasks(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.ListTasks(context.Background(), &pb.EmptyReq{})
+	resp, err := h.ExtractionClient.ListTasks(c.Request.Context(), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -57,7 +56,7 @@ func (h *Handler) GetTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.GetTask(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.ExtractionClient.GetTask(c.Request.Context(), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -80,7 +79,7 @@ func (h *Handler) UpdateTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ExtractionClient.UpdateTask(context.Background(), &req)
+	resp, err := h.ExtractionClient.UpdateTask(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -98,7 +97,7 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.DeleteTask(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.ExtractionClient.DeleteTask(c.Request.Context(), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -117,7 +116,7 @@ func (h *Handler) ExecuteTask(c *gin.Context) {
 		return
 	}
 	req := &pb.ExecuteExtractionTaskReq{TaskId: taskID}
-	resp, err := h.ExtractionClient.ExecuteTask(context.Background(), req)
+	resp, err := h.ExtractionClient.ExecuteTask(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -135,7 +134,7 @@ func (h *Handler) CancelTask(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.CancelTask(context.Background(), &pb.CancelByTaskIdReq{TaskId: taskID})
+	resp, err := h.ExtractionClient.CancelTask(c.Request.Context(), &pb.CancelByTaskIdReq{TaskId: taskID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -157,7 +156,7 @@ func (h *Handler) ExtractFromText(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ExtractionClient.ExtractFromText(context.Background(), &req)
+	resp, err := h.ExtractionClient.ExtractFromText(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -179,7 +178,7 @@ func (h *Handler) GetResults(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.ListExtractionResults(context.Background(), &pb.GetByTaskIdReq{TaskId: taskID})
+	resp, err := h.ExtractionClient.ListExtractionResults(c.Request.Context(), &pb.GetByTaskIdReq{TaskId: taskID})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -197,7 +196,7 @@ func (h *Handler) GetResult(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.ExtractionClient.GetExtractionResult(context.Background(), &pb.GetByIdReq{Id: id})
+	resp, err := h.ExtractionClient.GetExtractionResult(c.Request.Context(), &pb.GetByIdReq{Id: id})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

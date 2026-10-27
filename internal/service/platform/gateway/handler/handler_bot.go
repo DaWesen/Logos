@@ -3,7 +3,6 @@ package handler
 import (
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,7 +33,7 @@ func (h *Handler) CreateBot(c *gin.Context) {
 		req.UserId, _ = userID.(string)
 	}
 
-	resp, err := h.BotClient.CreateBot(context.Background(), &req)
+	resp, err := h.BotClient.CreateBot(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -67,7 +66,7 @@ func (h *Handler) UpdateBot(c *gin.Context) {
 		req.UserId, _ = userID.(string)
 	}
 
-	resp, err := h.BotClient.UpdateBot(context.Background(), &req)
+	resp, err := h.BotClient.UpdateBot(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -170,7 +169,7 @@ func (h *Handler) ListBots(c *gin.Context) {
 		req.UserId, _ = userID.(string)
 	}
 
-	resp, err := h.BotClient.ListBots(context.Background(), req)
+	resp, err := h.BotClient.ListBots(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -205,7 +204,7 @@ func (h *Handler) SendBotMessage(c *gin.Context) {
 	}
 
 	var header metadata.MD
-	resp, err := h.BotClient.SendBotMessage(context.Background(), &req, grpc.Header(&header))
+	resp, err := h.BotClient.SendBotMessage(c.Request.Context(), &req, grpc.Header(&header))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -364,7 +363,7 @@ func (h *Handler) GetUserMemory(c *gin.Context) {
 		BotId:  botID,
 	}
 
-	resp, err := h.BotClient.GetUserMemory(context.Background(), req)
+	resp, err := h.BotClient.GetUserMemory(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -394,7 +393,7 @@ func (h *Handler) SetUserMemory(c *gin.Context) {
 		req.UserId, _ = userID.(string)
 	}
 
-	resp, err := h.BotClient.SetUserMemory(context.Background(), &req)
+	resp, err := h.BotClient.SetUserMemory(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -430,7 +429,7 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 		Key:    key,
 	}
 
-	resp, err := h.BotClient.DeleteUserMemory(context.Background(), req)
+	resp, err := h.BotClient.DeleteUserMemory(c.Request.Context(), req)
 	if err != nil {
 		logger.Error("删除记忆gRPC调用失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))

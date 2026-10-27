@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -84,7 +83,7 @@ func (h *Handler) SummarizeMessages(c *gin.Context) {
 		ModelConfig:       toProtoModelConfig(req.ModelConfig),
 	}
 
-	resp, err := h.SummaryClient.SummarizeMessages(context.Background(), pbReq)
+	resp, err := h.SummaryClient.SummarizeMessages(c.Request.Context(), pbReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -118,7 +117,7 @@ func (h *Handler) GenerateReplyCandidates(c *gin.Context) {
 		ModelConfig:       toProtoModelConfig(req.ModelConfig),
 	}
 
-	resp, err := h.SummaryClient.GenerateReplyCandidates(context.Background(), pbReq)
+	resp, err := h.SummaryClient.GenerateReplyCandidates(c.Request.Context(), pbReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -145,7 +144,7 @@ func (h *Handler) ExtractTodos(c *gin.Context) {
 		ModelConfig:  toProtoModelConfig(req.ModelConfig),
 	}
 
-	resp, err := h.SummaryClient.ExtractTodos(context.Background(), pbReq)
+	resp, err := h.SummaryClient.ExtractTodos(c.Request.Context(), pbReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

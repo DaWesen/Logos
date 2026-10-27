@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -23,7 +22,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.SendMessage(context.Background(), &req)
+	resp, err := h.MessageClient.SendMessage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -45,7 +44,7 @@ func (h *Handler) BatchSendMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.BatchSendMessage(context.Background(), &req)
+	resp, err := h.MessageClient.BatchSendMessage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -67,7 +66,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.Subscribe(context.Background(), &req)
+	resp, err := h.MessageClient.Subscribe(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -89,7 +88,7 @@ func (h *Handler) ConsumeMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.ConsumeMessages(context.Background(), &req)
+	resp, err := h.MessageClient.ConsumeMessages(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -111,7 +110,7 @@ func (h *Handler) AcknowledgeMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.AcknowledgeMessage(context.Background(), &req)
+	resp, err := h.MessageClient.AcknowledgeMessage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -133,7 +132,7 @@ func (h *Handler) BatchAcknowledgeMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.BatchAcknowledgeMessages(context.Background(), &req)
+	resp, err := h.MessageClient.BatchAcknowledgeMessages(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -150,7 +149,7 @@ func (h *Handler) GetMessageStats(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.MessageClient.GetMessageStats(context.Background(), &pb.EmptyReq{})
+	resp, err := h.MessageClient.GetMessageStats(c.Request.Context(), &pb.EmptyReq{})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -172,7 +171,7 @@ func (h *Handler) CreateTopic(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.CreateTopic(context.Background(), &req)
+	resp, err := h.MessageClient.CreateTopic(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -191,7 +190,7 @@ func (h *Handler) DeleteTopic(c *gin.Context) {
 		return
 	}
 	req := &pb.GetByTopicReq{Topic: pb.Topic(topicID)}
-	resp, err := h.MessageClient.DeleteTopic(context.Background(), req)
+	resp, err := h.MessageClient.DeleteTopic(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -213,7 +212,7 @@ func (h *Handler) ClearMessages(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.MessageClient.ClearMessages(context.Background(), &req)
+	resp, err := h.MessageClient.ClearMessages(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -29,7 +28,7 @@ func (h *Handler) Deposit(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.Deposit(context.Background(), &req)
+	resp, err := h.BillingClient.Deposit(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -60,7 +59,7 @@ func (h *Handler) GetAccount(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.GetAccount(context.Background(), req)
+	resp, err := h.BillingClient.GetAccount(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -105,7 +104,7 @@ func (h *Handler) GetTransactions(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.GetTransactions(context.Background(), req)
+	resp, err := h.BillingClient.GetTransactions(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -148,7 +147,7 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.GetUsageStats(context.Background(), req)
+	resp, err := h.BillingClient.GetUsageStats(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -190,7 +189,7 @@ func (h *Handler) ConsumeModelCall(c *gin.Context) {
 	}
 	req.Metadata["token_source"] = "client"
 
-	resp, err := h.BillingClient.ConsumeModelCall(context.Background(), &req)
+	resp, err := h.BillingClient.ConsumeModelCall(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -225,7 +224,7 @@ func (h *Handler) ConsumeEmbedding(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.ConsumeEmbedding(context.Background(), &req)
+	resp, err := h.BillingClient.ConsumeEmbedding(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -260,7 +259,7 @@ func (h *Handler) ConsumeStorage(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.ConsumeStorage(context.Background(), &req)
+	resp, err := h.BillingClient.ConsumeStorage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -295,7 +294,7 @@ func (h *Handler) ConsumeBandwidth(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.ConsumeBandwidth(context.Background(), &req)
+	resp, err := h.BillingClient.ConsumeBandwidth(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -330,7 +329,7 @@ func (h *Handler) Withdraw(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.Withdraw(context.Background(), &req)
+	resp, err := h.BillingClient.Withdraw(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -365,7 +364,7 @@ func (h *Handler) Refund(c *gin.Context) {
 	}
 	req.UserId = userID
 
-	resp, err := h.BillingClient.Refund(context.Background(), &req)
+	resp, err := h.BillingClient.Refund(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
