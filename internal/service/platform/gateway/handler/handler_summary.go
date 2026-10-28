@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"Logos/internal/service/platform/gateway/model"
-	pb "Logos/proto_gen/summary"
 	chatpb "Logos/proto_gen/chat"
+	pb "Logos/proto_gen/summary"
 
 	"github.com/gin-gonic/gin"
 )

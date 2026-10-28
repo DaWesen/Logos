@@ -45,11 +45,11 @@ func routeToService(path string) string {
 }
 
 type metricsReporter struct {
-	client    *client.MonitoringClient
-	mu        sync.Mutex
-	requests  map[string]*requestStats
-	interval  time.Duration
-	stopCh    chan struct{}
+	client   *client.MonitoringClient
+	mu       sync.Mutex
+	requests map[string]*requestStats
+	interval time.Duration
+	stopCh   chan struct{}
 }
 
 type requestStats struct {
@@ -118,9 +118,9 @@ func (r *metricsReporter) flush() {
 
 	// 按 service 聚合
 	type svcAgg struct {
-		count       int64
-		errors      int64
-		totalLatMs  int64
+		count      int64
+		errors     int64
+		totalLatMs int64
 	}
 	aggByService := map[string]*svcAgg{}
 

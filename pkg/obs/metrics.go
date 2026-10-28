@@ -215,6 +215,32 @@ func RecordPaymentOrderReaped(ctx context.Context, count int64) {
 	}
 }
 
+// 回收失败指标：回收器静默失败会让 pending 订单持续堆积，
+// 单靠业务日志很难发现，这里单独计数并用告警兜住。
+var (
+	paymentReapFailOnce    sync.Once
+	paymentReapFailCounter metric.Int64Counter
+)
+
+func initPaymentReapFailMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	paymentReapFailCounter, _ = meter.Int64Counter(
+		"logos.payment.reap.failure.count",
+		metric.WithDescription("后台回收过期支付单失败次数"),
+	)
+}
+
+// RecordPaymentReapFailure 记录一次批量回收失败。
+func RecordPaymentReapFailure(ctx context.Context) {
+	paymentReapFailOnce.Do(initPaymentReapFailMetrics)
+	if paymentReapFailCounter != nil {
+		paymentReapFailCounter.Add(ctx, 1)
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.

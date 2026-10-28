@@ -148,6 +148,17 @@ spec:
   - name: logos.payment
     interval: 30s
     rules:
+    # 后台回收持续失败：pending 订单会不断堆积，订单状态统计失真
+    - alert: PaymentOrderReapFailing
+      expr: |
+        sum(rate(logos_payment_reap_failure_count_total[15m])) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "过期支付单回收持续失败"
+        description: "近 15 分钟后台回收器一直失败（数据库异常或 SQL 超时），pending 支付单不会被回收，请检查 billing 服务日志"
+
     # 回调失败率过高：可能是验签密钥不一致、渠道重复推送过期订单，或伪造回调攻击
     - alert: PaymentCallbackFailureRateHigh
       expr: |

@@ -94,7 +94,8 @@ func (r *PaymentOrderReaper) Stop() {
 func (r *PaymentOrderReaper) reapOnce(ctx context.Context) {
 	reaped, err := r.repo.ExpirePendingOrders(ctx, time.Now(), r.batch)
 	if err != nil {
-		// 回收失败不影响支付主链路，下一周期重试即可
+		// 回收失败不影响支付主链路，下一周期重试即可；但失败会让 pending 订单堆积，需要可观测
+		obs.RecordPaymentReapFailure(ctx)
 		logger.Warn("回收过期支付单失败", logger.ErrorField(err))
 		return
 	}

@@ -3,8 +3,8 @@ package handler
 import (
 	"net/http"
 
-	pbContact "Logos/proto_gen/contact"
 	"Logos/pkg/logger"
+	pbContact "Logos/proto_gen/contact"
 
 	"github.com/gin-gonic/gin"
 )

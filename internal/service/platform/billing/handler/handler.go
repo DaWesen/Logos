@@ -161,6 +161,32 @@ func (s *BillingServiceImpl) GetPaymentOrder(ctx context.Context, req *pb.GetPay
 	return resp, nil
 }
 
+func (s *BillingServiceImpl) ListPaymentOrders(ctx context.Context, req *pb.ListPaymentOrdersRequest) (*pb.ListPaymentOrdersResponse, error) {
+	resp := &pb.ListPaymentOrdersResponse{}
+
+	var status *int
+	if req.Status != nil {
+		v := int(*req.Status)
+		status = &v
+	}
+
+	orders, total, err := s.BillingService.ListPaymentOrders(ctx, req.UserId, status, int(req.Page), int(req.PageSize))
+	if err != nil {
+		logger.Error("获取支付单列表失败", logger.ErrorField(err))
+		resp.Code = 1
+		resp.Message = err.Error()
+		return resp, nil
+	}
+
+	resp.Code = 0
+	resp.Message = "success"
+	resp.Total = int32(total)
+	for _, order := range orders {
+		resp.Orders = append(resp.Orders, convertModelPaymentOrderToProtoPaymentOrder(order))
+	}
+	return resp, nil
+}
+
 func (s *BillingServiceImpl) ConfirmPayment(ctx context.Context, req *pb.ConfirmPaymentRequest) (*pb.ConfirmPaymentResponse, error) {
 	resp := &pb.ConfirmPaymentResponse{}
 

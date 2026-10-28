@@ -419,6 +419,7 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		billing := authApi.Group("/billing")
 		{
 			billing.POST("/payments", h.CreatePaymentOrder)
+			billing.GET("/payments", h.ListPaymentOrders)
 			billing.GET("/payments/:id", h.GetPaymentOrder)
 			billing.POST("/withdraw", h.Withdraw)
 			billing.POST("/refund", h.Refund)

@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	BillingService_CreatePaymentOrder_FullMethodName = "/platform.billing.BillingService/CreatePaymentOrder"
 	BillingService_GetPaymentOrder_FullMethodName    = "/platform.billing.BillingService/GetPaymentOrder"
+	BillingService_ListPaymentOrders_FullMethodName  = "/platform.billing.BillingService/ListPaymentOrders"
 	BillingService_ConfirmPayment_FullMethodName     = "/platform.billing.BillingService/ConfirmPayment"
 	BillingService_Deposit_FullMethodName            = "/platform.billing.BillingService/Deposit"
 	BillingService_Withdraw_FullMethodName           = "/platform.billing.BillingService/Withdraw"
@@ -44,6 +45,8 @@ type BillingServiceClient interface {
 	CreatePaymentOrder(ctx context.Context, in *CreatePaymentOrderRequest, opts ...grpc.CallOption) (*CreatePaymentOrderResponse, error)
 	// 查询支付单（仅限本人）
 	GetPaymentOrder(ctx context.Context, in *GetPaymentOrderRequest, opts ...grpc.CallOption) (*GetPaymentOrderResponse, error)
+	// 查询支付单列表（仅限本人，按创建时间倒序）
+	ListPaymentOrders(ctx context.Context, in *ListPaymentOrdersRequest, opts ...grpc.CallOption) (*ListPaymentOrdersResponse, error)
 	// 支付回调（支付渠道服务端调用，验签通过后幂等入账）
 	ConfirmPayment(ctx context.Context, in *ConfirmPaymentRequest, opts ...grpc.CallOption) (*ConfirmPaymentResponse, error)
 	// 充值（仅限内部/管理端调用，普通用户不开放）
@@ -90,6 +93,16 @@ func (c *billingServiceClient) GetPaymentOrder(ctx context.Context, in *GetPayme
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetPaymentOrderResponse)
 	err := c.cc.Invoke(ctx, BillingService_GetPaymentOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *billingServiceClient) ListPaymentOrders(ctx context.Context, in *ListPaymentOrdersRequest, opts ...grpc.CallOption) (*ListPaymentOrdersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPaymentOrdersResponse)
+	err := c.cc.Invoke(ctx, BillingService_ListPaymentOrders_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +229,8 @@ type BillingServiceServer interface {
 	CreatePaymentOrder(context.Context, *CreatePaymentOrderRequest) (*CreatePaymentOrderResponse, error)
 	// 查询支付单（仅限本人）
 	GetPaymentOrder(context.Context, *GetPaymentOrderRequest) (*GetPaymentOrderResponse, error)
+	// 查询支付单列表（仅限本人，按创建时间倒序）
+	ListPaymentOrders(context.Context, *ListPaymentOrdersRequest) (*ListPaymentOrdersResponse, error)
 	// 支付回调（支付渠道服务端调用，验签通过后幂等入账）
 	ConfirmPayment(context.Context, *ConfirmPaymentRequest) (*ConfirmPaymentResponse, error)
 	// 充值（仅限内部/管理端调用，普通用户不开放）
@@ -253,6 +268,9 @@ func (UnimplementedBillingServiceServer) CreatePaymentOrder(context.Context, *Cr
 }
 func (UnimplementedBillingServiceServer) GetPaymentOrder(context.Context, *GetPaymentOrderRequest) (*GetPaymentOrderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPaymentOrder not implemented")
+}
+func (UnimplementedBillingServiceServer) ListPaymentOrders(context.Context, *ListPaymentOrdersRequest) (*ListPaymentOrdersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPaymentOrders not implemented")
 }
 func (UnimplementedBillingServiceServer) ConfirmPayment(context.Context, *ConfirmPaymentRequest) (*ConfirmPaymentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfirmPayment not implemented")
@@ -340,6 +358,24 @@ func _BillingService_GetPaymentOrder_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BillingServiceServer).GetPaymentOrder(ctx, req.(*GetPaymentOrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _BillingService_ListPaymentOrders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPaymentOrdersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BillingServiceServer).ListPaymentOrders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BillingService_ListPaymentOrders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BillingServiceServer).ListPaymentOrders(ctx, req.(*ListPaymentOrdersRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -556,6 +592,10 @@ var BillingService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPaymentOrder",
 			Handler:    _BillingService_GetPaymentOrder_Handler,
+		},
+		{
+			MethodName: "ListPaymentOrders",
+			Handler:    _BillingService_ListPaymentOrders_Handler,
 		},
 		{
 			MethodName: "ConfirmPayment",

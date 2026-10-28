@@ -37,6 +37,8 @@ type BillingRepository interface {
 	MarkPaymentOrderExpired(ctx context.Context, id string, now time.Time) (bool, error)
 	// ExpirePendingOrders 批量回收已过期仍为 pending 的支付单，返回本次回收条数
 	ExpirePendingOrders(ctx context.Context, before time.Time, limit int) (int64, error)
+	// ListPaymentOrders 分页查询用户支付单（按创建时间倒序），status 为 nil 表示不过滤
+	ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error)
 
 	// 消费扣减
 	ConsumeBalance(ctx context.Context, userID string, item int, amount float64, description string, metadata map[string]string) (*model.Transaction, error)
@@ -183,6 +185,31 @@ func (r *billingRepositoryImpl) ExpirePendingOrders(ctx context.Context, before 
 		return 0, res.Error
 	}
 	return res.RowsAffected, nil
+}
+
+// ListPaymentOrders 强制按 user_id 过滤（不提供"查全站订单"的隐式行为），
+// 排序使用 (created_at, id) 保证同毫秒创建时翻页不会重复或漏单。
+func (r *billingRepositoryImpl) ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error) {
+	var orders []*model.PaymentOrder
+	var total int64
+	offset := (page - 1) * pageSize
+
+	db := r.db.WithContext(ctx).
+		Model(&model.PaymentOrder{}).
+		Where("user_id = ?", userID)
+	if status != nil {
+		db = db.Where("status = ?", *status)
+	}
+
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := db.Offset(offset).Limit(pageSize).
+		Order("created_at DESC, id DESC").
+		Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
 }
 
 func (r *billingRepositoryImpl) ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error) {

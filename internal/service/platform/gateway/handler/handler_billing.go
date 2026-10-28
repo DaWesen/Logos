@@ -76,6 +76,63 @@ func (h *Handler) GetPaymentOrder(c *gin.Context) {
 	})
 }
 
+// ListPaymentOrders 查询本人支付单列表（按创建时间倒序）；
+// 分页参数非法时按默认值处理，status 显式传入时必须是合法枚举。
+func (h *Handler) ListPaymentOrders(c *gin.Context) {
+	if h.BillingClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
+
+	req := &pb.ListPaymentOrdersRequest{
+		UserId:   userID,
+		Page:     int32(atoiOrZero(c.Query("page"))),
+		PageSize: int32(atoiOrZero(c.Query("page_size"))),
+	}
+
+	if raw := c.Query("status"); raw != "" {
+		status, err := strconv.Atoi(raw)
+		if err != nil || status < 0 || status > 3 {
+			c.JSON(http.StatusBadRequest, model.BadRequest("invalid status"))
+			return
+		}
+		enum := pb.PaymentOrderStatus(status)
+		req.Status = &enum
+	}
+
+	resp, err := h.BillingClient.ListPaymentOrders(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if resp.Code != 0 {
+		c.JSON(http.StatusBadRequest, model.Error(http.StatusBadRequest, resp.Message))
+		return
+	}
+
+	c.JSON(http.StatusOK, model.Response{
+		Code:    0,
+		Message: resp.Message,
+		Data: gin.H{
+			"orders": resp.Orders,
+			"total":  resp.Total,
+		},
+	})
+}
+
+func atoiOrZero(s string) int {
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 // PaymentCallback 支付渠道回调：公开路由，安全性完全依赖服务端验签。
 func (h *Handler) PaymentCallback(c *gin.Context) {
 	if h.BillingClient == nil {

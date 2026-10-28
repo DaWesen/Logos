@@ -22,6 +22,7 @@ type fakeBillingClient struct {
 
 	createOrder func(ctx context.Context, in *pb.CreatePaymentOrderRequest) (*pb.CreatePaymentOrderResponse, error)
 	getOrder    func(ctx context.Context, in *pb.GetPaymentOrderRequest) (*pb.GetPaymentOrderResponse, error)
+	listOrders  func(ctx context.Context, in *pb.ListPaymentOrdersRequest) (*pb.ListPaymentOrdersResponse, error)
 	confirm     func(ctx context.Context, in *pb.ConfirmPaymentRequest) (*pb.ConfirmPaymentResponse, error)
 }
 
@@ -31,6 +32,10 @@ func (f *fakeBillingClient) CreatePaymentOrder(ctx context.Context, in *pb.Creat
 
 func (f *fakeBillingClient) GetPaymentOrder(ctx context.Context, in *pb.GetPaymentOrderRequest, _ ...grpc.CallOption) (*pb.GetPaymentOrderResponse, error) {
 	return f.getOrder(ctx, in)
+}
+
+func (f *fakeBillingClient) ListPaymentOrders(ctx context.Context, in *pb.ListPaymentOrdersRequest, _ ...grpc.CallOption) (*pb.ListPaymentOrdersResponse, error) {
+	return f.listOrders(ctx, in)
 }
 
 func (f *fakeBillingClient) ConfirmPayment(ctx context.Context, in *pb.ConfirmPaymentRequest, _ ...grpc.CallOption) (*pb.ConfirmPaymentResponse, error) {
@@ -53,6 +58,7 @@ func newBillingTestRouter(userID string, client pb.BillingServiceClient) *gin.En
 		c.Next()
 	})
 	api.POST("/billing/payments", h.CreatePaymentOrder)
+	api.GET("/billing/payments", h.ListPaymentOrders)
 	api.GET("/billing/payments/:id", h.GetPaymentOrder)
 	api.POST("/billing/payment-callback", h.PaymentCallback)
 	return r
@@ -206,6 +212,73 @@ func TestGetPaymentOrder_NotFound(t *testing.T) {
 	}
 	if gotUserID != "user-1" || gotOrderID != "order-1" {
 		t.Fatalf("下游收到 user_id=%q order_id=%q, want user-1/order-1", gotUserID, gotOrderID)
+	}
+}
+
+// 列表接口同样以认证身份为准，分页与状态过滤必须原样下发。
+func TestListPaymentOrders_InjectsUserIDAndFiltersStatus(t *testing.T) {
+	var got *pb.ListPaymentOrdersRequest
+	client := &fakeBillingClient{
+		listOrders: func(_ context.Context, in *pb.ListPaymentOrdersRequest) (*pb.ListPaymentOrdersResponse, error) {
+			got = in
+			return &pb.ListPaymentOrdersResponse{
+				Code:    0,
+				Message: "success",
+				Total:   1,
+				Orders:  []*pb.PaymentOrder{{Id: "order-1", UserId: in.GetUserId()}},
+			}, nil
+		},
+	}
+	router := newBillingTestRouter("user-1", client)
+
+	status, resp := doBillingRequest(t, router, http.MethodGet,
+		"/api/v1/billing/payments?status=1&page=2&page_size=10&user_id=attacker", "")
+
+	if status != http.StatusOK {
+		t.Fatalf("HTTP 状态码 = %d, want 200", status)
+	}
+	if got.GetUserId() != "user-1" {
+		t.Fatalf("下游收到 user_id = %q, want user-1", got.GetUserId())
+	}
+	if got.Status == nil || got.GetStatus() != pb.PaymentOrderStatus_PAYMENT_ORDER_STATUS_PAID {
+		t.Fatalf("状态过滤 = %v, want PAID", got.Status)
+	}
+	if got.GetPage() != 2 || got.GetPageSize() != 10 {
+		t.Fatalf("分页 = page %d size %d, want 2/10", got.GetPage(), got.GetPageSize())
+	}
+
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("响应 data 类型异常: %T", resp.Data)
+	}
+	if data["total"] != float64(1) {
+		t.Fatalf("total = %v, want 1", data["total"])
+	}
+	if orders, ok := data["orders"].([]interface{}); !ok || len(orders) != 1 {
+		t.Fatalf("orders = %v, want 1 条", data["orders"])
+	}
+}
+
+func TestListPaymentOrders_RejectsInvalidStatus(t *testing.T) {
+	called := false
+	client := &fakeBillingClient{
+		listOrders: func(_ context.Context, _ *pb.ListPaymentOrdersRequest) (*pb.ListPaymentOrdersResponse, error) {
+			called = true
+			return &pb.ListPaymentOrdersResponse{Code: 0}, nil
+		},
+	}
+	router := newBillingTestRouter("user-1", client)
+
+	status, resp := doBillingRequest(t, router, http.MethodGet, "/api/v1/billing/payments?status=9", "")
+
+	if status != http.StatusBadRequest {
+		t.Fatalf("HTTP 状态码 = %d, want 400", status)
+	}
+	if resp.Code != http.StatusBadRequest {
+		t.Fatalf("业务码 = %d, want 400", resp.Code)
+	}
+	if called {
+		t.Fatal("非法状态不应调用下游服务")
 	}
 }
 

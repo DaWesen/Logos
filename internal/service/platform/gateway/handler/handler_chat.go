@@ -228,10 +228,10 @@ func (h *Handler) TranslateChatMessage(c *gin.Context) {
 	}
 
 	var req struct {
-		Content    string `json:"content"`
-		SourceLang string `json:"source_lang"`
-		TargetLang string `json:"target_lang" binding:"required"`
-		MessageID  string `json:"message_id,omitempty"`
+		Content     string `json:"content"`
+		SourceLang  string `json:"source_lang"`
+		TargetLang  string `json:"target_lang" binding:"required"`
+		MessageID   string `json:"message_id,omitempty"`
 		ModelConfig struct {
 			Provider string `json:"provider"`
 			Model    string `json:"model"`

@@ -75,6 +75,7 @@ var defaultPaymentMethodsSet = func() map[string]bool {
 type BillingService interface {
 	CreatePaymentOrder(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.PaymentOrder, error)
 	GetPaymentOrder(ctx context.Context, userID, orderID string) (*model.PaymentOrder, error)
+	ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error)
 	ConfirmPayment(ctx context.Context, callback PaymentCallback) (*model.PaymentOrder, error)
 	Deposit(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.Transaction, error)
 	Withdraw(ctx context.Context, userID string, amount float64, withdrawMethod string, metadata map[string]string) (*model.Transaction, error)
@@ -275,6 +276,34 @@ func (s *billingServiceImpl) GetPaymentOrder(ctx context.Context, userID, orderI
 	}
 	s.expireIfNeeded(ctx, order)
 	return order, nil
+}
+
+// ListPaymentOrders 分页查询本人支付单。
+// 分页参数由服务端收敛（page>=1、pageSize<=100），避免调用方传入大 pageSize 拉全表；
+// 列表中 pending 单的过期状态可能滞后于查询，最多滞后一个回收周期。
+func (s *billingServiceImpl) ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error) {
+	if userID == "" {
+		return nil, 0, ErrPaymentInvalidRequest
+	}
+	if status != nil && (*status < 0 || *status > 3) {
+		return nil, 0, ErrPaymentInvalidRequest
+	}
+	if page <= 0 {
+		page = 1
+	}
+	switch {
+	case pageSize <= 0:
+		pageSize = 20
+	case pageSize > 100:
+		pageSize = 100
+	}
+
+	orders, total, err := s.repo.ListPaymentOrders(ctx, userID, status, page, pageSize)
+	if err != nil {
+		logger.Error("查询支付单列表失败", logger.ErrorField(err))
+		return nil, 0, ErrInternalServer
+	}
+	return orders, total, nil
 }
 
 // ConfirmPayment 处理支付渠道回调：验签 -> 校验金额/时效 -> 幂等入账。
@@ -948,7 +977,13 @@ func (s *billingServiceImpl) saveBillingEventToOutbox(ctx context.Context, txDB 
 
 func (s *billingServiceImpl) WithTransaction(ctx context.Context, fn func(txService BillingService) error) error {
 	return s.repo.WithTransaction(ctx, func(txRepo dao.BillingRepository) error {
-		txService := &billingServiceImpl{repo: txRepo, outboxRepo: s.outboxRepo, paymentSecret: s.paymentSecret}
-		return fn(txService)
+		return fn(s.withRepo(txRepo))
 	})
+}
+
+// withRepo 复制当前服务配置并替换仓储，避免事务内实例漏带白名单/限额等配置。
+func (s *billingServiceImpl) withRepo(repo dao.BillingRepository) *billingServiceImpl {
+	clone := *s
+	clone.repo = repo
+	return &clone
 }

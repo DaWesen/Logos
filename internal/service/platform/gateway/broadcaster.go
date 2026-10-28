@@ -23,12 +23,12 @@ const (
 // BroadcastMessage 跨节点广播消息体
 type BroadcastMessage struct {
 	SourceNodeID    string   `json:"source_node_id"`              // 发送节点 ID，用于回环过滤
-	TargetMode      string   `json:"target_mode"`                  // 见 TargetMode* 常量
-	TargetUserID    string   `json:"target_user_id,omitempty"`     // TargetMode = user / session
-	TargetSessionID string   `json:"target_session_id,omitempty"`   // TargetMode = session
-	TargetUserIDs   []string `json:"target_user_ids,omitempty"`     // TargetMode = users
-	ExceptUserID    string   `json:"except_user_id,omitempty"`      // TargetMode = broadcast
-	Payload         []byte   `json:"payload"`                       // 原始消息字节，不在 broadcaster 层反序列化
+	TargetMode      string   `json:"target_mode"`                 // 见 TargetMode* 常量
+	TargetUserID    string   `json:"target_user_id,omitempty"`    // TargetMode = user / session
+	TargetSessionID string   `json:"target_session_id,omitempty"` // TargetMode = session
+	TargetUserIDs   []string `json:"target_user_ids,omitempty"`   // TargetMode = users
+	ExceptUserID    string   `json:"except_user_id,omitempty"`    // TargetMode = broadcast
+	Payload         []byte   `json:"payload"`                     // 原始消息字节，不在 broadcaster 层反序列化
 }
 
 // MessageHandler 远端消息处理回调，由 UnifiedConnectionManager 注入
@@ -47,9 +47,9 @@ type Broadcaster struct {
 	channel string
 	rdb     *redis.Client
 
-	mu      sync.Mutex
-	pubsub  *redis.PubSub
-	closed  bool
+	mu     sync.Mutex
+	pubsub *redis.PubSub
+	closed bool
 }
 
 // NewBroadcaster 构造 Broadcaster

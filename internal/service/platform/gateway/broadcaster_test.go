@@ -33,7 +33,9 @@ func TestUnifiedManager_LocalSendToUser(t *testing.T) {
 
 // =====================================================================
 // 测试 2：UnifiedConnectionManager.SendToUser broadcaster=nil 退化为纯本地
-//        验证向后兼容（单节点部署不启用广播时行为正确）
+//
+//	验证向后兼容（单节点部署不启用广播时行为正确）
+//
 // =====================================================================
 func TestUnifiedManager_SendToUser_LocalOnly_WhenBroadcasterNil(t *testing.T) {
 	m := &UnifiedConnectionManager{
@@ -96,15 +98,17 @@ func TestUnifiedManager_RegisterUnregister(t *testing.T) {
 
 // =====================================================================
 // 测试 4：BroadcastMessage 结构体字段语义
-//        确保 SourceNodeID 在跨节点广播中保留，供回环过滤使用
+//
+//	确保 SourceNodeID 在跨节点广播中保留，供回环过滤使用
+//
 // =====================================================================
 func TestBroadcastMessage_Fields(t *testing.T) {
 	msg := &BroadcastMessage{
-		SourceNodeID:    "node-1",
-		TargetMode:      TargetModeUsers,
-		TargetUserIDs:   []string{"u1", "u2"},
-		ExceptUserID:    "u3",
-		Payload:         []byte("payload"),
+		SourceNodeID:  "node-1",
+		TargetMode:    TargetModeUsers,
+		TargetUserIDs: []string{"u1", "u2"},
+		ExceptUserID:  "u3",
+		Payload:       []byte("payload"),
 	}
 
 	if msg.SourceNodeID != "node-1" {
@@ -120,8 +124,10 @@ func TestBroadcastMessage_Fields(t *testing.T) {
 
 // =====================================================================
 // 测试 5：UnifiedConnectionManager.HandleRemoteMessage 各 TargetMode 路由
-//        验证订阅侧的分发逻辑（不依赖 redis）
-//        这是 Broadcaster.Subscribe handler 的纯本地等价测试
+//
+//	验证订阅侧的分发逻辑（不依赖 redis）
+//	这是 Broadcaster.Subscribe handler 的纯本地等价测试
+//
 // =====================================================================
 func TestUnifiedManager_HandleRemoteMessage_Routing(t *testing.T) {
 	m := &UnifiedConnectionManager{

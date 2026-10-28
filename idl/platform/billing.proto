@@ -109,6 +109,23 @@ message GetPaymentOrderResponse {
   PaymentOrder data = 3;
 }
 
+// 支付单列表请求（仅返回本人订单）
+message ListPaymentOrdersRequest {
+  string user_id = 1;
+  // 可选状态过滤：不传表示全部状态（proto3 optional 支持"未设置"与 PENDING=0 区分）
+  optional PaymentOrderStatus status = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// 支付单列表响应
+message ListPaymentOrdersResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated PaymentOrder orders = 3;
+  int32 total = 4;
+}
+
 // 支付回调请求（由支付渠道服务端调用，需签名校验）
 message ConfirmPaymentRequest {
   string order_id = 1;
@@ -288,6 +305,9 @@ service BillingService {
 
   // 查询支付单（仅限本人）
   rpc GetPaymentOrder(GetPaymentOrderRequest) returns (GetPaymentOrderResponse);
+
+  // 查询支付单列表（仅限本人，按创建时间倒序）
+  rpc ListPaymentOrders(ListPaymentOrdersRequest) returns (ListPaymentOrdersResponse);
 
   // 支付回调（支付渠道服务端调用，验签通过后幂等入账）
   rpc ConfirmPayment(ConfirmPaymentRequest) returns (ConfirmPaymentResponse);

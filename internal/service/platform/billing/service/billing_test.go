@@ -37,6 +37,15 @@ type stubBillingRepo struct {
 	reapLimit  int
 	reapCount  int64
 	reapErr    error
+
+	// 支付单列表
+	listedOrders []*model.PaymentOrder
+	listedTotal  int64
+	listCalls    int
+	listUserID   string
+	listStatus   *int
+	listPage     int
+	listPageSize int
 }
 
 func (s *stubBillingRepo) WithTransaction(ctx context.Context, fn func(dao.BillingRepository) error) error {
@@ -104,6 +113,15 @@ func (s *stubBillingRepo) ExpirePendingOrders(ctx context.Context, before time.T
 	s.reapBefore = before
 	s.reapLimit = limit
 	return s.reapCount, s.reapErr
+}
+
+func (s *stubBillingRepo) ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error) {
+	s.listCalls++
+	s.listUserID = userID
+	s.listStatus = status
+	s.listPage = page
+	s.listPageSize = pageSize
+	return s.listedOrders, s.listedTotal, nil
 }
 
 type stubOutboxRepo struct {
@@ -531,5 +549,58 @@ func callbackWithSignature(secret string, order *model.PaymentOrder, amount floa
 		Timestamp: ts,
 		Nonce:     nonce,
 		Signature: signPayment(secret, order.ID, "trade-1", amount, ts, nonce),
+	}
+}
+
+func TestListPaymentOrders_ClampsPagination(t *testing.T) {
+	logger.SetLogger(zap.NewNop())
+
+	repo := &stubBillingRepo{
+		listedOrders: []*model.PaymentOrder{{ID: "order-1"}},
+		listedTotal:  1,
+	}
+	svc := NewBillingService(repo, &stubOutboxRepo{}, "secret")
+
+	orders, total, err := svc.ListPaymentOrders(context.Background(), "alice", nil, 0, 500)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if total != 1 || len(orders) != 1 {
+		t.Fatalf("total/len = %d/%d, want 1/1", total, len(orders))
+	}
+	if repo.listPage != 1 || repo.listPageSize != 100 {
+		t.Fatalf("分页 = %d/%d, want 1/100（page 归一到 1，pageSize 收敛到上限）", repo.listPage, repo.listPageSize)
+	}
+	if repo.listUserID != "alice" || repo.listStatus != nil {
+		t.Fatalf("userID/status = %q/%v, want alice/nil", repo.listUserID, repo.listStatus)
+	}
+
+	// pageSize 缺省时使用默认值 20
+	if _, _, err := svc.ListPaymentOrders(context.Background(), "alice", nil, 1, 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.listPageSize != 20 {
+		t.Fatalf("pageSize = %d, want 20", repo.listPageSize)
+	}
+}
+
+// 参数校验必须在查库之前完成：空身份与非法状态都不能触达仓储。
+func TestListPaymentOrders_RejectsInvalidParams(t *testing.T) {
+	logger.SetLogger(zap.NewNop())
+
+	repo := &stubBillingRepo{}
+	svc := NewBillingService(repo, &stubOutboxRepo{}, "secret")
+
+	if _, _, err := svc.ListPaymentOrders(context.Background(), "", nil, 1, 20); !errors.Is(err, ErrPaymentInvalidRequest) {
+		t.Fatalf("空 userID err = %v, want ErrPaymentInvalidRequest", err)
+	}
+
+	badStatus := 9
+	if _, _, err := svc.ListPaymentOrders(context.Background(), "alice", &badStatus, 1, 20); !errors.Is(err, ErrPaymentInvalidRequest) {
+		t.Fatalf("非法 status err = %v, want ErrPaymentInvalidRequest", err)
+	}
+
+	if repo.listCalls != 0 {
+		t.Fatalf("参数非法时不应查库, calls = %d", repo.listCalls)
 	}
 }
