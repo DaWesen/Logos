@@ -29,6 +29,7 @@ type stubBillingRepo struct {
 	order         *model.PaymentOrder
 	createdOrder  *model.PaymentOrder
 	markPaidCalls int
+	expiredCalls  int
 }
 
 func (s *stubBillingRepo) WithTransaction(ctx context.Context, fn func(dao.BillingRepository) error) error {
@@ -79,6 +80,15 @@ func (s *stubBillingRepo) MarkPaymentOrderPaid(ctx context.Context, id, tradeNo,
 	s.order.TradeNo = tradeNo
 	s.order.PaidAt = &paidAt
 	s.markPaidCalls++
+	return true, nil
+}
+
+func (s *stubBillingRepo) MarkPaymentOrderExpired(ctx context.Context, id string, now time.Time) (bool, error) {
+	if s.order == nil || s.order.ID != id || s.order.Status != 0 {
+		return false, nil
+	}
+	s.order.Status = 3
+	s.expiredCalls++
 	return true, nil
 }
 
@@ -409,6 +419,44 @@ func TestConfirmPayment_CreditsOnlyOnce(t *testing.T) {
 	}
 	if repo.markPaidCalls != 1 {
 		t.Fatalf("MarkPaymentOrderPaid called %d times, want 1", repo.markPaidCalls)
+	}
+}
+
+func TestPaymentOrderExpiredIsRecycled(t *testing.T) {
+	logger.SetLogger(zap.NewNop())
+
+	order := &model.PaymentOrder{
+		ID:        "order-expired",
+		UserID:    "alice",
+		Amount:    10,
+		Status:    0,
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	repo := &stubBillingRepo{order: order}
+	svc := NewBillingService(repo, &stubOutboxRepo{}, "secret")
+
+	got, err := svc.GetPaymentOrder(context.Background(), "alice", order.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != 3 {
+		t.Fatalf("status = %d, want 3 (expired)", got.Status)
+	}
+	if repo.expiredCalls != 1 {
+		t.Fatalf("expiredCalls = %d, want 1", repo.expiredCalls)
+	}
+
+	// 对过期且仍为 pending 的订单回调：拒绝入账并回收订单
+	order.Status = 0
+	cb := callbackWithSignature("secret", order, 10, time.Now().Unix(), "nonce-expired")
+	if _, err := svc.ConfirmPayment(context.Background(), cb); !errors.Is(err, ErrPaymentOrderExpired) {
+		t.Fatalf("err = %v, want ErrPaymentOrderExpired", err)
+	}
+	if repo.markPaidCalls != 0 {
+		t.Error("过期订单不应入账")
+	}
+	if repo.expiredCalls != 2 {
+		t.Fatalf("expiredCalls = %d, want 2", repo.expiredCalls)
 	}
 }
 

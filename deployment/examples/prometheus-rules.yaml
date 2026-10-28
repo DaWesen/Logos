@@ -144,6 +144,21 @@ spec:
         summary: "Token 用量估算占比过高"
         description: "近 15 分钟 {{ $value | humanizePercentage }} 的计费使用本地估算而非供应商真实 usage，请检查上游模型是否返回 usage（流式需 stream_options.include_usage）"
 
+  # 支付链路：回调结果指标
+  - name: logos.payment
+    interval: 30s
+    rules:
+    # 回调失败率过高：可能是验签密钥不一致、渠道重复推送过期订单，或伪造回调攻击
+    - alert: PaymentCallbackFailureRateHigh
+      expr: |
+        sum by (result) (rate(logos_payment_callback_count_total{result!="paid"}[10m])) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "支付回调失败率过高（result={{ $labels.result }}）"
+        description: "近 10 分钟每秒 {{ $value }} 次支付回调未成功入账，请检查 PAYMENT_CALLBACK_SECRET 与渠道配置；若 invalid_signature 突增需排查伪造回调"
+
   - name: logos.resources
     interval: 30s
     rules:

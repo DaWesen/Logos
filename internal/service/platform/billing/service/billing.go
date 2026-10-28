@@ -223,6 +223,7 @@ func (s *billingServiceImpl) GetPaymentOrder(ctx context.Context, userID, orderI
 	if order == nil || order.UserID != userID {
 		return nil, ErrPaymentOrderNotFound
 	}
+	s.expireIfNeeded(ctx, order)
 	return order, nil
 }
 
@@ -260,8 +261,16 @@ func (s *billingServiceImpl) ConfirmPayment(ctx context.Context, callback Paymen
 	if order.Status != 0 {
 		return nil, ErrPaymentOrderClosed
 	}
-	if !order.ExpiresAt.IsZero() && time.Now().After(order.ExpiresAt) {
+	// 过期订单顺手回收，避免 pending 长期残留；并发支付/回收时以回读状态为准
+	s.expireIfNeeded(ctx, order)
+	switch order.Status {
+	case 1:
+		return order, nil
+	case 3:
 		return nil, ErrPaymentOrderExpired
+	case 0:
+	default:
+		return nil, ErrPaymentOrderClosed
 	}
 	if math.Abs(order.Amount-callback.Amount) > 1e-6 {
 		logger.Warn("支付回调金额与订单不一致",
@@ -319,6 +328,30 @@ func (s *billingServiceImpl) ConfirmPayment(ctx context.Context, callback Paymen
 		logger.Float64Field("amount", order.Amount))
 
 	return order, nil
+}
+
+// expireIfNeeded 把已过期但仍为 pending 的支付单条件更新为 expired。
+// 更新失败说明订单已被并发支付/回收，此时回读数据库状态覆盖入参，保证调用方看到最终状态。
+func (s *billingServiceImpl) expireIfNeeded(ctx context.Context, order *model.PaymentOrder) {
+	if order.Status != 0 || order.ExpiresAt.IsZero() || !time.Now().After(order.ExpiresAt) {
+		return
+	}
+
+	updated, err := s.repo.MarkPaymentOrderExpired(ctx, order.ID, time.Now())
+	if err != nil {
+		logger.Warn("标记支付单过期失败",
+			logger.StringField("orderID", order.ID),
+			logger.ErrorField(err))
+		return
+	}
+	if updated {
+		order.Status = 3
+		return
+	}
+
+	if latest, getErr := s.repo.GetPaymentOrder(ctx, order.ID); getErr == nil && latest != nil {
+		*order = *latest
+	}
 }
 
 // verifyPaymentSignature 校验 HMAC-SHA256 签名，签名串字段顺序固定。

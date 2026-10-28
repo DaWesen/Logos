@@ -163,6 +163,32 @@ func RecordTokenSource(ctx context.Context, source string) {
 	}
 }
 
+// 支付回调指标：回调是公开接口，失败原因（验签失败/金额不一致/订单过期）
+// 无法从业务日志聚合，用结果标签打点以便告警兜住支付链路异常。
+var (
+	paymentCallbackOnce    sync.Once
+	paymentCallbackCounter metric.Int64Counter
+)
+
+func initPaymentCallbackMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	paymentCallbackCounter, _ = meter.Int64Counter(
+		"logos.payment.callback.count",
+		metric.WithDescription("支付回调处理结果计数（result=paid/invalid_signature/amount_mismatch/order_expired/...）"),
+	)
+}
+
+// RecordPaymentCallback 记录一次支付回调的处理结果。
+func RecordPaymentCallback(ctx context.Context, result string) {
+	paymentCallbackOnce.Do(initPaymentCallbackMetrics)
+	if paymentCallbackCounter != nil {
+		paymentCallbackCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.

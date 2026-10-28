@@ -33,6 +33,8 @@ type BillingRepository interface {
 	GetPaymentOrder(ctx context.Context, id string) (*model.PaymentOrder, error)
 	// MarkPaymentOrderPaid 条件更新：仅当订单仍为 pending 时置为 paid，返回是否更新成功（用于幂等入账）
 	MarkPaymentOrderPaid(ctx context.Context, id, tradeNo, nonce string, paidAt time.Time) (bool, error)
+	// MarkPaymentOrderExpired 条件更新：仅当订单仍为 pending 且已过期时置为 expired
+	MarkPaymentOrderExpired(ctx context.Context, id string, now time.Time) (bool, error)
 
 	// 消费扣减
 	ConsumeBalance(ctx context.Context, userID string, item int, amount float64, description string, metadata map[string]string) (*model.Transaction, error)
@@ -140,6 +142,17 @@ func (r *billingRepositoryImpl) MarkPaymentOrderPaid(ctx context.Context, id, tr
 			"callback_nonce": nonce,
 			"paid_at":        paidAt,
 		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+func (r *billingRepositoryImpl) MarkPaymentOrderExpired(ctx context.Context, id string, now time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&model.PaymentOrder{}).
+		Where("id = ? AND status = ? AND expires_at < ?", id, 0, now).
+		Update("status", 3)
 	if res.Error != nil {
 		return false, res.Error
 	}

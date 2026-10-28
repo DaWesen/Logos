@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
 	"Logos/internal/service/platform/billing/model"
 	"Logos/internal/service/platform/billing/service"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	pb "Logos/proto_gen/billing"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -173,15 +175,42 @@ func (s *BillingServiceImpl) ConfirmPayment(ctx context.Context, req *pb.Confirm
 	})
 	if err != nil {
 		logger.Warn("支付回调处理失败", logger.ErrorField(err))
+		obs.RecordPaymentCallback(ctx, paymentResultLabel(err))
 		resp.Code = 1
 		resp.Message = err.Error()
 		return resp, nil
 	}
 
+	obs.RecordPaymentCallback(ctx, "paid")
+
 	resp.Code = 0
 	resp.Message = "success"
 	resp.Data = convertModelPaymentOrderToProtoPaymentOrder(order)
 	return resp, nil
+}
+
+// paymentResultLabel 把回调失败原因映射为指标标签（低基数，便于告警聚合）。
+func paymentResultLabel(err error) string {
+	switch {
+	case errors.Is(err, service.ErrPaymentNotConfigured):
+		return "secret_missing"
+	case errors.Is(err, service.ErrPaymentInvalidRequest):
+		return "invalid_request"
+	case errors.Is(err, service.ErrPaymentSignature):
+		return "invalid_signature"
+	case errors.Is(err, service.ErrPaymentTimestamp):
+		return "timestamp_out_of_window"
+	case errors.Is(err, service.ErrPaymentAmountMismatch):
+		return "amount_mismatch"
+	case errors.Is(err, service.ErrPaymentOrderNotFound):
+		return "order_not_found"
+	case errors.Is(err, service.ErrPaymentOrderExpired):
+		return "order_expired"
+	case errors.Is(err, service.ErrPaymentOrderClosed):
+		return "order_closed"
+	default:
+		return "error"
+	}
 }
 
 func (s *BillingServiceImpl) Deposit(ctx context.Context, req *pb.DepositRequest) (*pb.DepositResponse, error) {
