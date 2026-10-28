@@ -35,6 +35,8 @@ type BillingRepository interface {
 	MarkPaymentOrderPaid(ctx context.Context, id, tradeNo, nonce string, paidAt time.Time) (bool, error)
 	// MarkPaymentOrderExpired 条件更新：仅当订单仍为 pending 且已过期时置为 expired
 	MarkPaymentOrderExpired(ctx context.Context, id string, now time.Time) (bool, error)
+	// ExpirePendingOrders 批量回收已过期仍为 pending 的支付单，返回本次回收条数
+	ExpirePendingOrders(ctx context.Context, before time.Time, limit int) (int64, error)
 
 	// 消费扣减
 	ConsumeBalance(ctx context.Context, userID string, item int, amount float64, description string, metadata map[string]string) (*model.Transaction, error)
@@ -157,6 +159,30 @@ func (r *billingRepositoryImpl) MarkPaymentOrderExpired(ctx context.Context, id 
 		return false, res.Error
 	}
 	return res.RowsAffected == 1, nil
+}
+
+// ExpirePendingOrders 批量回收过期支付单。
+// 用子查询限定单批条数，避免一次更新大量数据造成长事务与锁竞争；
+// 条件里再次带上 status=0，保证并发支付成功的订单不会被误回收。
+func (r *billingRepositoryImpl) ExpirePendingOrders(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	ids := r.db.WithContext(ctx).
+		Model(&model.PaymentOrder{}).
+		Select("id").
+		Where("status = ? AND expires_at < ?", 0, before).
+		Limit(limit)
+
+	res := r.db.WithContext(ctx).
+		Model(&model.PaymentOrder{}).
+		Where("id IN (?)", ids).
+		Update("status", 3)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
 func (r *billingRepositoryImpl) ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error) {

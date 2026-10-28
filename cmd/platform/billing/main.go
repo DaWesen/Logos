@@ -48,6 +48,11 @@ func main() {
 
 	billingService := service.NewBillingService(repo, outboxRepo, cfg.Payment.CallbackSecret)
 
+	// 后台兜底回收过期支付单（按需回收只覆盖被访问过的订单）
+	reaper := service.NewPaymentOrderReaper(repo)
+	reaper.Start()
+	defer reaper.Stop()
+
 	if producer != nil {
 		relay := outbox.NewRelay(db, producer)
 		relay.Start()

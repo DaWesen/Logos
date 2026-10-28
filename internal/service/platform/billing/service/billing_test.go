@@ -30,6 +30,13 @@ type stubBillingRepo struct {
 	createdOrder  *model.PaymentOrder
 	markPaidCalls int
 	expiredCalls  int
+
+	// 批量回收
+	reapCalls  int
+	reapBefore time.Time
+	reapLimit  int
+	reapCount  int64
+	reapErr    error
 }
 
 func (s *stubBillingRepo) WithTransaction(ctx context.Context, fn func(dao.BillingRepository) error) error {
@@ -90,6 +97,13 @@ func (s *stubBillingRepo) MarkPaymentOrderExpired(ctx context.Context, id string
 	s.order.Status = 3
 	s.expiredCalls++
 	return true, nil
+}
+
+func (s *stubBillingRepo) ExpirePendingOrders(ctx context.Context, before time.Time, limit int) (int64, error) {
+	s.reapCalls++
+	s.reapBefore = before
+	s.reapLimit = limit
+	return s.reapCount, s.reapErr
 }
 
 type stubOutboxRepo struct {

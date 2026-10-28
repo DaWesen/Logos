@@ -189,6 +189,32 @@ func RecordPaymentCallback(ctx context.Context, result string) {
 	}
 }
 
+// 支付单回收指标：后台批量回收过期 pending 订单，反映"下单后未支付"的订单量。
+// 数量突增往往意味着支付渠道不可用或前端引流异常。
+var (
+	paymentReapOnce sync.Once
+	paymentReaped   metric.Int64Counter
+)
+
+func initPaymentReapMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	paymentReaped, _ = meter.Int64Counter(
+		"logos.payment.order.expired.count",
+		metric.WithDescription("后台批量回收的过期支付单数量"),
+	)
+}
+
+// RecordPaymentOrderReaped 记录一次批量回收的支付单数量。
+func RecordPaymentOrderReaped(ctx context.Context, count int64) {
+	paymentReapOnce.Do(initPaymentReapMetrics)
+	if paymentReaped != nil {
+		paymentReaped.Add(ctx, count)
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.
