@@ -40,6 +40,34 @@ function normalizeTransaction(tx: any): Transaction {
   }
 }
 
+// protobuf Timestamp 经 encoding/json 序列化为 {seconds, nanos}，统一转成 ISO 字符串
+function normalizeProtoTime(value: unknown): string {
+	if (!value) return ''
+	if (typeof value === 'string') return value
+	if (typeof value === 'object') {
+		const v = value as Record<string, unknown>
+		const seconds = Number(v.seconds ?? 0)
+		const nanos = Number(v.nanos ?? 0)
+		if (seconds > 0) return new Date(seconds * 1000 + Math.floor(nanos / 1000000)).toISOString()
+	}
+	return ''
+}
+
+function normalizePaymentOrder(raw: any): PaymentOrder {
+	return {
+		id: raw?.id || '',
+		user_id: raw?.user_id || raw?.userId || '',
+		amount: typeof raw?.amount === 'number' ? raw.amount : parseFloat(raw?.amount) || 0,
+		payment_method: raw?.payment_method || raw?.paymentMethod || '',
+		status: Number(raw?.status) || 0,
+		trade_no: raw?.trade_no || raw?.tradeNo || '',
+		metadata: raw?.metadata || {},
+		created_at: normalizeProtoTime(raw?.created_at ?? raw?.createdAt),
+		expires_at: normalizeProtoTime(raw?.expires_at ?? raw?.expiresAt),
+		paid_at: normalizeProtoTime(raw?.paid_at ?? raw?.paidAt),
+	}
+}
+
 function extractTransactionsData(res: { data: unknown }): { transactions: Transaction[]; total: number } {
 	const d = res.data as Record<string, unknown>
 	if (!d) return { transactions: [], total: 0 }
@@ -80,9 +108,30 @@ export interface Transaction {
 	created_at: string
 }
 
-export interface DepositRequest {
+// 支付单状态，与服务端 PaymentOrderStatus 枚举保持一致
+export const PaymentOrderStatus = {
+	PENDING: 0,
+	PAID: 1,
+	FAILED: 2,
+	EXPIRED: 3,
+} as const
+
+export interface PaymentOrder {
+	id: string
+	user_id: string
 	amount: number
-	payment_method?: string
+	payment_method: string
+	status: number
+	trade_no: string
+	metadata: Record<string, string>
+	created_at: string
+	expires_at: string
+	paid_at: string
+}
+
+export interface CreatePaymentOrderRequest {
+	amount: number
+	payment_method: string
 	metadata?: Record<string, string>
 }
 
@@ -141,9 +190,17 @@ export interface GetUsageStatsParams {
 }
 
 export const billingApi = {
-	async deposit(data: DepositRequest) {
-		const res = await client.post('/billing/deposit', data)
-		return extractData<Transaction>(res, null)
+	// 充值改为「创建支付单 -> 渠道回调入账」：前端只能创建支付单，不能直接给账户加钱
+	async createPaymentOrder(data: CreatePaymentOrderRequest) {
+		const res = await client.post('/billing/payments', data)
+		const order = extractData<PaymentOrder>(res, null)
+		return order ? normalizePaymentOrder(order) : null
+	},
+
+	async getPaymentOrder(id: string) {
+		const res = await client.get(`/billing/payments/${id}`)
+		const order = extractData<PaymentOrder>(res, null)
+		return order ? normalizePaymentOrder(order) : null
 	},
 
 	async withdraw(data: WithdrawRequest) {

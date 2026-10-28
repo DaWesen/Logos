@@ -121,6 +121,91 @@
   cursor: not-allowed;
 }
 
+.wallet-payment-order {
+  background: var(--ba-card);
+  border: 1px dashed var(--ba-border);
+  border-radius: var(--ba-radius);
+  padding: 16px 24px;
+  margin-bottom: 20px;
+}
+
+.wallet-payment-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.wallet-payment-order-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ba-text);
+  word-break: break-all;
+}
+
+.wallet-payment-order-status {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--ba-blue);
+}
+
+.wallet-payment-order-status-1 {
+  background: rgba(78, 205, 196, 0.12);
+  color: var(--ba-success);
+}
+
+.wallet-payment-order-status-2,
+.wallet-payment-order-status-3 {
+  background: rgba(255, 107, 138, 0.12);
+  color: var(--ba-accent);
+}
+
+.wallet-payment-order-meta {
+  font-size: 13px;
+  color: var(--ba-text-light);
+}
+
+.wallet-payment-order-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ba-text-light);
+}
+
+.wallet-payment-order-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.wallet-payment-order-actions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--ba-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-blue-light));
+  transition: var(--ba-transition);
+}
+
+.wallet-payment-order-actions button:disabled {
+  background: var(--ba-border);
+  cursor: not-allowed;
+}
+
+.wallet-payment-order-actions .wallet-payment-order-close {
+  background: transparent;
+  border: 1px solid var(--ba-border);
+  color: var(--ba-text-light);
+}
+
 .wallet-stats-section {
   background: var(--ba-card);
   border-radius: var(--ba-radius);

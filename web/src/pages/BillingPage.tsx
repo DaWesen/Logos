@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { billingApi, Account, Transaction } from '../api/billing'
+import { billingApi, Account, Transaction, PaymentOrder, PaymentOrderStatus } from '../api/billing'
 import './BillingPage.css'
 
 export function BillingPage() {
@@ -8,6 +8,8 @@ export function BillingPage() {
   const [loading, setLoading] = useState(true)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositing, setDepositing] = useState(false)
+  const [paymentOrder, setPaymentOrder] = useState<PaymentOrder | null>(null)
+  const [refreshingOrder, setRefreshingOrder] = useState(false)
 
   const loadData = async () => {
     try {
@@ -31,22 +33,71 @@ export function BillingPage() {
 
   const handleDeposit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!depositAmount || parseFloat(depositAmount) <= 0) return
+    const amount = parseFloat(depositAmount)
+    if (!amount || amount <= 0) return
 
     try {
       setDepositing(true)
-      await billingApi.deposit({
-        amount: parseFloat(depositAmount),
-        payment_method: 'manual'
+      // 只创建支付单：金额由支付渠道回调入账，前端无法直接给账户加钱
+      const order = await billingApi.createPaymentOrder({
+        amount,
+        payment_method: 'alipay'
       })
+      if (!order) {
+        alert('创建支付单失败，请重试')
+        return
+      }
+      setPaymentOrder(order)
       setDepositAmount('')
-      await loadData()
     } catch (error) {
-      console.error('Failed to deposit:', error)
-      alert('充值失败，请重试')
+      console.error('Failed to create payment order:', error)
+      alert(error instanceof Error ? error.message : '创建支付单失败，请重试')
     } finally {
       setDepositing(false)
     }
+  }
+
+  const refreshPaymentOrder = async () => {
+    if (!paymentOrder) return
+    try {
+      setRefreshingOrder(true)
+      const latest = await billingApi.getPaymentOrder(paymentOrder.id)
+      if (latest) {
+        setPaymentOrder(latest)
+        if (latest.status === PaymentOrderStatus.PAID) await loadData()
+      }
+    } catch (error) {
+      console.error('Failed to refresh payment order:', error)
+    } finally {
+      setRefreshingOrder(false)
+    }
+  }
+
+  // 待支付时轮询订单状态，渠道回调到账后自动刷新余额
+  useEffect(() => {
+    if (!paymentOrder || paymentOrder.status !== PaymentOrderStatus.PENDING) return
+    const orderId = paymentOrder.id
+    const timer = setInterval(async () => {
+      try {
+        const latest = await billingApi.getPaymentOrder(orderId)
+        if (!latest) return
+        setPaymentOrder(latest)
+        if (latest.status === PaymentOrderStatus.PAID) await loadData()
+      } catch (error) {
+        console.error('Failed to poll payment order:', error)
+      }
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [paymentOrder?.id, paymentOrder?.status])
+
+  const getPaymentStatusLabel = (status: number) => {
+    const labels: Record<number, string> = {
+      [PaymentOrderStatus.PENDING]: '待支付',
+      [PaymentOrderStatus.PAID]: '已支付',
+      [PaymentOrderStatus.FAILED]: '支付失败',
+      [PaymentOrderStatus.EXPIRED]: '已过期'
+    }
+    return labels[status] || '未知'
   }
 
   const getTransactionTypeLabel = (type: number) => {
@@ -95,9 +146,37 @@ export function BillingPage() {
             disabled={depositing}
           />
           <button type="submit" disabled={depositing || !depositAmount}>
-            {depositing ? '充值中...' : '充值'}
+            {depositing ? '生成中...' : '充值'}
           </button>
         </form>
+
+        {paymentOrder && (
+          <div className="payment-order">
+            <div className="payment-order-header">
+              <span className="payment-order-id">支付单号 {paymentOrder.id}</span>
+              <span className={`payment-order-status payment-order-status-${paymentOrder.status}`}>
+                {getPaymentStatusLabel(paymentOrder.status)}
+              </span>
+            </div>
+            <div className="payment-order-meta">
+              金额 ¥{paymentOrder.amount.toFixed(2)} · 支付方式 {paymentOrder.payment_method}
+              {paymentOrder.status === PaymentOrderStatus.PENDING && paymentOrder.expires_at && (
+                <> · 有效期至 {new Date(paymentOrder.expires_at).toLocaleTimeString()}</>
+              )}
+            </div>
+            <div className="payment-order-tip">
+              请通过 {paymentOrder.payment_method} 完成支付，渠道回调成功后余额自动到账（本页会自动刷新状态）。
+            </div>
+            <div className="payment-order-actions">
+              <button type="button" onClick={refreshPaymentOrder} disabled={refreshingOrder}>
+                {refreshingOrder ? '刷新中...' : '刷新支付状态'}
+              </button>
+              <button type="button" className="payment-order-close" onClick={() => setPaymentOrder(null)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="billing-card">

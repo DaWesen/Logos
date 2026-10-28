@@ -98,6 +98,91 @@
   cursor: not-allowed;
 }
 
+.payment-order {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px dashed var(--ba-border);
+  border-radius: var(--ba-radius-sm);
+  background: var(--ba-bg);
+}
+
+.payment-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.payment-order-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ba-text);
+  word-break: break-all;
+}
+
+.payment-order-status {
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--ba-blue);
+}
+
+.payment-order-status-1 {
+  background: rgba(78, 205, 196, 0.12);
+  color: var(--ba-success);
+}
+
+.payment-order-status-2,
+.payment-order-status-3 {
+  background: rgba(255, 107, 138, 0.12);
+  color: var(--ba-accent);
+}
+
+.payment-order-meta {
+  font-size: 13px;
+  color: var(--ba-text-light);
+}
+
+.payment-order-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ba-text-light);
+}
+
+.payment-order-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.payment-order-actions button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--ba-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+  background: linear-gradient(135deg, var(--ba-blue), var(--ba-blue-light));
+  transition: var(--ba-transition);
+}
+
+.payment-order-actions button:disabled {
+  background: var(--ba-border);
+  cursor: not-allowed;
+}
+
+.payment-order-actions .payment-order-close {
+  background: transparent;
+  border: 1px solid var(--ba-border);
+  color: var(--ba-text-light);
+}
+
 .transactions-list {
   max-height: 500px;
   overflow-y: auto;
