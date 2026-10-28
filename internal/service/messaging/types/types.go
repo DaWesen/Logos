@@ -3,7 +3,7 @@ package types
 type MessageType int
 
 const (
-	MessageTypeText     MessageType = iota + 1
+	MessageTypeText MessageType = iota + 1
 	MessageTypeImage
 	MessageTypeFile
 	MessageTypeVoice
@@ -37,7 +37,7 @@ func (m MessageType) String() string {
 type ChatType int
 
 const (
-	ChatTypePrivate   ChatType = iota + 1
+	ChatTypePrivate ChatType = iota + 1
 	ChatTypeGroup
 	ChatTypeChannel
 	ChatTypeBroadcast
@@ -64,6 +64,11 @@ var (
 	// ErrContentModerationUnavailable 审核服务未能给出判定（模型不可用、输出无法解析、超时）。
 	// 采用失败关闭策略：宁可拒绝发送，也不让未经审核的内容流入群聊。
 	ErrContentModerationUnavailable = &MessagingError{Code: 50406, Message: "content moderation unavailable, please retry later"}
+	// ErrChatAccessDenied 请求者无权访问目标会话（非群成员、非私聊参与方或无法解析会话）。
+	// 历史、搜索、已读、清空等入口统一失败关闭，避免通过猜 chat_id 越权读取他人会话。
+	ErrChatAccessDenied = &MessagingError{Code: 50403, Message: "无权访问该会话"}
+	// ErrChatPermissionDenied 已通过会话访问校验，但当前角色无权执行该操作（如普通成员清空群历史）。
+	ErrChatPermissionDenied = &MessagingError{Code: 50409, Message: "当前角色无权执行该操作"}
 )
 
 type MessagingError struct {

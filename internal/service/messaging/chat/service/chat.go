@@ -30,12 +30,13 @@ func toInt64(s string) int64 {
 
 type ChatService interface {
 	SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error)
-	GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error)
-	SearchMessages(chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
+	GetMessageHistory(userID, chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error)
+	SearchMessages(userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
 	MarkMessagesRead(msgIDs []string, userID, chatID string) error
 	WithdrawMessage(msgID, userID string) error
 	EditMessage(msgID, userID, content string) (*model.Message, error)
-	DeleteChatHistory(chatID string) error
+	DeleteChatHistory(userID, chatID string) error
+	EnsureChatAccess(userID, chatID string, chatType model.ChatType) error
 
 	CreateGroup(name, ownerID string, memberIDs []string, metadata map[string]string) (*model.Group, error)
 	InviteGroupMember(groupID, operatorID string, userIDs []string) error
@@ -929,7 +930,15 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 	return msg, recipientIDs, nil
 }
 
-func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error) {
+func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error) {
+	if err := s.EnsureChatAccess(userID, chatID, chatType); err != nil {
+		logger.Warn("拒绝越权读取会话历史",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(err))
+		return nil, false, err
+	}
+
 	// afterSeq > 0：增量补拉路径。只返回 seq 大于该游标的消息，已按 seq 升序，无需反转。
 	// 用于客户端 WS 断线重连后，填补 Redis PubSub 实时扇出丢失的窗口。
 	// afterSeq == 0：保持原有「取最近 limit 条 + 反转成升序」的历史分页语义。
@@ -967,7 +976,28 @@ func (s *ChatServiceImpl) GetMessageHistory(chatID string, chatType model.ChatTy
 	return messages, hasMore, nil
 }
 
-func (s *ChatServiceImpl) SearchMessages(chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error) {
+func (s *ChatServiceImpl) SearchMessages(userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error) {
+	// 搜索必须限定在单个可访问会话内：既防止用空 chat_id 全库检索，
+	// 也防止通过猜 chat_id 越权检索他人会话内容。
+	if chatID == "" {
+		return nil, 0, types.ErrChatAccessDenied
+	}
+	if err := s.EnsureChatAccess(userID, chatID, chatType); err != nil {
+		logger.Warn("拒绝越权搜索会话消息",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(err))
+		return nil, 0, err
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize)
 }
 
@@ -979,8 +1009,15 @@ func (s *ChatServiceImpl) SearchMessages(chatID string, chatType model.ChatType,
 // UPDATE messages.is_read（避免大会话下的写放大），仅对显式 msgIDs 保留标记以兼容展示。
 func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string, userID, chatID string) error {
 	if chatID == "" || userID == "" {
-		// 缺少会话/用户信息时退化为逐条标记（兼容旧调用方）
-		return s.repo.MarkMessagesRead(s.ctx, msgIDs)
+		// 缺少会话/用户信息时不再静默退化为全局标记，直接拒绝。
+		return types.ErrChatAccessDenied
+	}
+	if err := s.EnsureChatAccess(userID, chatID, model.ChatType(0)); err != nil {
+		logger.Warn("拒绝越权标记会话已读",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(err))
+		return err
 	}
 
 	var targetSeq int64
@@ -1081,14 +1118,124 @@ func (s *ChatServiceImpl) EditMessage(msgID, userID, content string) (*model.Mes
 	return s.repo.GetMessageByID(s.ctx, msgID)
 }
 
-func (s *ChatServiceImpl) DeleteChatHistory(chatID string) error {
-	logger.Info("\x1b[36m🔵 [Chat] 清理聊天记录\x1b[0m", logger.StringField("chat_id", chatID))
+// DeleteChatHistory 清空整个会话的消息，是破坏性操作，必须做双重校验：
+// 群聊要求操作者是群主或管理员；私聊要求操作者是会话参与方。
+// 仅校验「群成员」不够——普通成员清空会把其他成员的历史一并删除。
+func (s *ChatServiceImpl) DeleteChatHistory(userID, chatID string) error {
+	if chatID == "" || userID == "" {
+		return types.ErrChatAccessDenied
+	}
+
+	group, err := s.repo.GetGroupByID(s.ctx, chatID)
+	if err != nil {
+		logger.Error("查询群组失败", logger.ErrorField(err))
+		return err
+	}
+	if group != nil {
+		member, err := s.repo.GetGroupMember(s.ctx, chatID, userID)
+		if err != nil {
+			logger.Error("查询群成员失败", logger.ErrorField(err))
+			return err
+		}
+		if member == nil {
+			return types.ErrChatAccessDenied
+		}
+		if member.Role == model.GroupMemberRoleMember {
+			return types.ErrChatPermissionDenied
+		}
+	} else if err := checkPrivateChatAccess(chatID, userID); err != nil {
+		logger.Warn("拒绝越权清空私聊历史",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", chatID))
+		return err
+	}
+
+	logger.Info("\x1b[36m🔵 [Chat] 清理聊天记录\x1b[0m",
+		logger.StringField("chat_id", chatID),
+		logger.StringField("operator_id", userID))
 	if err := s.repo.DeleteChatHistory(s.ctx, chatID); err != nil {
 		logger.Error("\x1b[31m🔴 [Chat] 清理聊天记录失败\x1b[0m", logger.ErrorField(err))
 		return err
 	}
 	logger.Info("\x1b[32m🟢 [Chat] 清理聊天记录成功\x1b[0m", logger.StringField("chat_id", chatID))
 	return nil
+}
+
+// EnsureChatAccess 是 IM 所有读写入口的统一访问闸门（失败关闭）：
+//   - 群聊：必须是群成员；
+//   - 私聊：必须能从 chatID 解析出会话双方且请求者是其中一方（bot- 会话除外）；
+//   - chatType 缺失时按 chatID 反查类型（历史/搜索接口由网关透传，常为 UNSPECIFIED）。
+func (s *ChatServiceImpl) EnsureChatAccess(userID, chatID string, chatType model.ChatType) error {
+	if userID == "" || chatID == "" {
+		return types.ErrChatAccessDenied
+	}
+
+	if chatType != model.ChatTypeGroup && chatType != model.ChatTypePrivate && chatType != model.ChatTypeBroadcast {
+		switch {
+		case chatID == "broadcast":
+			chatType = model.ChatTypeBroadcast
+		default:
+			group, err := s.repo.GetGroupByID(s.ctx, chatID)
+			if err != nil {
+				logger.Error("查询会话类型失败", logger.ErrorField(err))
+				return err
+			}
+			if group != nil {
+				chatType = model.ChatTypeGroup
+			} else {
+				chatType = model.ChatTypePrivate
+			}
+		}
+	}
+
+	switch chatType {
+	case model.ChatTypeBroadcast:
+		// 广播会话对所有登录用户可见
+		return nil
+	case model.ChatTypeGroup:
+		member, err := s.repo.GetGroupMember(s.ctx, chatID, userID)
+		if err != nil {
+			logger.Error("查询群成员失败", logger.ErrorField(err))
+			return err
+		}
+		if member == nil {
+			return types.ErrChatAccessDenied
+		}
+		return nil
+	case model.ChatTypePrivate:
+		return checkPrivateChatAccess(chatID, userID)
+	default:
+		return types.ErrChatAccessDenied
+	}
+}
+
+// checkPrivateChatAccess 校验私聊 chatID 与请求者的归属关系。
+// 支持 private_{a}_{b}、{a}_{b} 两种会话 ID 格式；bot-{uuid} 为 Bot 共享会话，不做参与者解析。
+// 单段 chatID 仅在请求自身命名空间时放行，避免被当作任意用户的历史入口。
+func checkPrivateChatAccess(chatID, userID string) error {
+	if strings.HasPrefix(chatID, "bot-") {
+		return nil
+	}
+	if chatID == "" || userID == "" {
+		return types.ErrChatAccessDenied
+	}
+
+	parts := strings.Split(chatID, "_")
+	switch {
+	case len(parts) == 3 && parts[0] == "private":
+		if parts[1] == userID || parts[2] == userID {
+			return nil
+		}
+	case len(parts) == 2:
+		if parts[0] == userID || parts[1] == userID {
+			return nil
+		}
+	case len(parts) == 1:
+		if chatID == userID {
+			return nil
+		}
+	}
+	return types.ErrChatAccessDenied
 }
 
 func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, metadata map[string]string) (*model.Group, error) {
@@ -2035,6 +2182,16 @@ func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []strin
 	originalMsg, err := s.repo.GetMessageByID(s.ctx, messageID)
 	if err != nil || originalMsg == nil {
 		return nil, fmt.Errorf("原始消息不存在")
+	}
+
+	// 转发等价于「读原消息 + 写目标会话」：原会话不可访问时拒绝，
+	// 否则任何人只要拿到 message_id 就能把他人消息转发到自己会话里查看。
+	if err := s.EnsureChatAccess(senderID, originalMsg.ChatID, model.ChatType(originalMsg.ChatType)); err != nil {
+		logger.Warn("拒绝越权转发消息",
+			logger.StringField("user_id", senderID),
+			logger.StringField("message_id", messageID),
+			logger.StringField("chat_id", originalMsg.ChatID))
+		return nil, err
 	}
 
 	var forwardedMessages []*model.Message

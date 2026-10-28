@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"Logos/internal/service/messaging/chat/model"
 	"Logos/internal/service/messaging/chat/service"
+	"Logos/internal/service/messaging/types"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
 	pb "Logos/proto_gen/chat"
@@ -16,6 +18,18 @@ import (
 
 func getUserID(ctx context.Context) (string, error) {
 	return auth.GetUserID(ctx)
+}
+
+// chatErrorCode 把服务层错误映射为业务码：
+// 鉴权/权限类错误返回 403（客户端应停止重试），其余视为系统错误返回 500。
+func chatErrorCode(err error) (int32, string) {
+	var me *types.MessagingError
+	if errors.As(err, &me) {
+		if me.Code == types.ErrChatAccessDenied.Code || me.Code == types.ErrChatPermissionDenied.Code {
+			return 403, me.Message
+		}
+	}
+	return 500, err.Error()
 }
 
 func chatTypeToProto(chatType int) pb.ChatType {
@@ -83,26 +97,16 @@ func (s *ChatServiceImpl) GetMessageHistory(ctx context.Context, req *pb.GetMess
 		beforeTime = req.BeforeTime.AsTime()
 	}
 
-	// 群聊鉴权检查
-	if model.ChatType(req.ChatType) == model.ChatTypeGroup {
-		userID, err := getUserID(ctx)
-		if err != nil {
-			return &pb.GetMessageHistoryResponse{Code: 401, Message: "未提供认证信息"}, nil
-		}
-		member, err := s.service.GetGroupMember(req.ChatId, userID)
-		if err != nil {
-			logger.Error("检查群成员身份失败", logger.ErrorField(err))
-			return &pb.GetMessageHistoryResponse{Code: 500, Message: "检查群成员身份失败"}, nil
-		}
-		if member == nil {
-			return &pb.GetMessageHistoryResponse{Code: 403, Message: "您不是该群组成员"}, nil
-		}
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetMessageHistoryResponse{Code: 401, Message: "未提供认证信息"}, nil
 	}
 
-	messages, hasMore, err := s.service.GetMessageHistory(req.ChatId, model.ChatType(req.ChatType), beforeTime, int(req.Limit), req.AfterSeq)
+	messages, hasMore, err := s.service.GetMessageHistory(userID, req.ChatId, model.ChatType(req.ChatType), beforeTime, int(req.Limit), req.AfterSeq)
 	if err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("获取消息历史失败", logger.ErrorField(err))
-		return &pb.GetMessageHistoryResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.GetMessageHistoryResponse{Code: code, Message: msg}, nil
 	}
 
 	pbMessages := make([]*pb.Message, 0, len(messages))
@@ -122,10 +126,16 @@ func (s *ChatServiceImpl) SearchMessages(ctx context.Context, req *pb.SearchMess
 		endTime = req.EndTime.AsTime()
 	}
 
-	messages, total, err := s.service.SearchMessages(req.ChatId, model.ChatType(req.ChatType), req.Keyword, startTime, endTime, int(req.Page), int(req.PageSize))
+	userID, err := getUserID(ctx)
 	if err != nil {
+		return &pb.SearchMessagesResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	messages, total, err := s.service.SearchMessages(userID, req.ChatId, model.ChatType(req.ChatType), req.Keyword, startTime, endTime, int(req.Page), int(req.PageSize))
+	if err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("搜索消息失败", logger.ErrorField(err))
-		return &pb.SearchMessagesResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.SearchMessagesResponse{Code: code, Message: msg}, nil
 	}
 
 	pbMessages := make([]*pb.Message, 0, len(messages))
@@ -137,10 +147,14 @@ func (s *ChatServiceImpl) SearchMessages(ctx context.Context, req *pb.SearchMess
 }
 
 func (s *ChatServiceImpl) MarkMessagesRead(ctx context.Context, req *pb.MarkMessagesReadRequest) (*pb.MarkMessagesReadResponse, error) {
-	userID, _ := getUserID(ctx)
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.MarkMessagesReadResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
 	if err := s.service.MarkMessagesRead(req.MessageIds, userID, req.ChatId); err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("标记消息已读失败", logger.ErrorField(err))
-		return &pb.MarkMessagesReadResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.MarkMessagesReadResponse{Code: code, Message: msg}, nil
 	}
 	return &pb.MarkMessagesReadResponse{Code: 200, Message: "标记成功"}, nil
 }
@@ -502,8 +516,9 @@ func (s *ChatServiceImpl) ForwardMessage(ctx context.Context, req *pb.ForwardMes
 
 	messages, err := s.service.ForwardMessage(req.MessageId, req.TargetChatIds, userID)
 	if err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("转发消息失败", logger.ErrorField(err))
-		return &pb.ForwardMessageResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.ForwardMessageResponse{Code: code, Message: msg}, nil
 	}
 
 	pbMessages := make([]*pb.Message, 0, len(messages))
@@ -546,9 +561,10 @@ func (s *ChatServiceImpl) DeleteChatHistory(ctx context.Context, req *pb.DeleteC
 		return &pb.DeleteChatHistoryResponse{Code: 401, Message: "未提供认证信息"}, nil
 	}
 
-	if err := s.service.DeleteChatHistory(req.ChatId); err != nil {
+	if err := s.service.DeleteChatHistory(userID, req.ChatId); err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("删除聊天记录失败", logger.ErrorField(err), logger.StringField("chat_id", req.ChatId), logger.StringField("user_id", userID))
-		return &pb.DeleteChatHistoryResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.DeleteChatHistoryResponse{Code: code, Message: msg}, nil
 	}
 
 	return &pb.DeleteChatHistoryResponse{
