@@ -135,6 +135,25 @@ export interface CreatePaymentOrderRequest {
 	metadata?: Record<string, string>
 }
 
+export interface ListPaymentOrdersParams {
+	// 不传表示全部状态
+	status?: number
+	page?: number
+	page_size?: number
+}
+
+// 服务端返回 { orders, total }，订单字段可能带 snake_case 或 camelCase，统一归一化
+function extractPaymentOrdersData(res: { data: unknown }): { orders: PaymentOrder[]; total: number } {
+	const d = res.data as Record<string, unknown>
+	if (!d || !d.data) return { orders: [], total: 0 }
+	const data = d.data as Record<string, unknown>
+	const rawOrders = Array.isArray(data.orders) ? data.orders : []
+	return {
+		orders: rawOrders.map(normalizePaymentOrder),
+		total: typeof data.total === 'number' ? data.total : rawOrders.length
+	}
+}
+
 export interface WithdrawRequest {
 	amount: number
 	withdraw_method?: string
@@ -201,6 +220,12 @@ export const billingApi = {
 		const res = await client.get(`/billing/payments/${id}`)
 		const order = extractData<PaymentOrder>(res, null)
 		return order ? normalizePaymentOrder(order) : null
+	},
+
+	// 支付单列表：后端强制按登录身份过滤，status 省略表示全部
+	async listPaymentOrders(params?: ListPaymentOrdersParams) {
+		const res = await client.get('/billing/payments', { params })
+		return extractPaymentOrdersData(res)
 	},
 
 	async withdraw(data: WithdrawRequest) {

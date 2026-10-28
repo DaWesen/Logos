@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { billingApi, Account, Transaction, PaymentOrder, PaymentOrderStatus } from '../api/billing'
 import './BillingPage.css'
 
+const ORDER_PAGE_SIZE = 10
+
 export function BillingPage() {
   const [account, setAccount] = useState<Account | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -10,6 +12,13 @@ export function BillingPage() {
   const [depositing, setDepositing] = useState(false)
   const [paymentOrder, setPaymentOrder] = useState<PaymentOrder | null>(null)
   const [refreshingOrder, setRefreshingOrder] = useState(false)
+
+  // 支付单历史：支持按状态筛选与翻页
+  const [orders, setOrders] = useState<PaymentOrder[]>([])
+  const [orderTotal, setOrderTotal] = useState(0)
+  const [orderPage, setOrderPage] = useState(1)
+  const [orderStatus, setOrderStatus] = useState<number | ''>('')
+  const [ordersLoading, setOrdersLoading] = useState(false)
 
   const loadData = async () => {
     try {
@@ -27,8 +36,27 @@ export function BillingPage() {
     }
   }
 
+  const loadOrders = async (page = orderPage, status = orderStatus) => {
+    try {
+      setOrdersLoading(true)
+      const data = await billingApi.listPaymentOrders({
+        status: status === '' ? undefined : status,
+        page,
+        page_size: ORDER_PAGE_SIZE
+      })
+      setOrders(data.orders)
+      setOrderTotal(data.total)
+      setOrderPage(page)
+    } catch (error) {
+      console.error('Failed to load payment orders:', error)
+    } finally {
+      setOrdersLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
+    loadOrders(1, '')
   }, [])
 
   const handleDeposit = async (e: React.FormEvent) => {
@@ -49,6 +77,8 @@ export function BillingPage() {
       }
       setPaymentOrder(order)
       setDepositAmount('')
+      // 新订单立即出现在历史列表顶部
+      loadOrders(1)
     } catch (error) {
       console.error('Failed to create payment order:', error)
       alert(error instanceof Error ? error.message : '创建支付单失败，请重试')
@@ -64,7 +94,10 @@ export function BillingPage() {
       const latest = await billingApi.getPaymentOrder(paymentOrder.id)
       if (latest) {
         setPaymentOrder(latest)
-        if (latest.status === PaymentOrderStatus.PAID) await loadData()
+        if (latest.status === PaymentOrderStatus.PAID) {
+          await loadData()
+          await loadOrders()
+        }
       }
     } catch (error) {
       console.error('Failed to refresh payment order:', error)
@@ -82,7 +115,10 @@ export function BillingPage() {
         const latest = await billingApi.getPaymentOrder(orderId)
         if (!latest) return
         setPaymentOrder(latest)
-        if (latest.status === PaymentOrderStatus.PAID) await loadData()
+        if (latest.status === PaymentOrderStatus.PAID) {
+          await loadData()
+          await loadOrders()
+        }
       } catch (error) {
         console.error('Failed to poll payment order:', error)
       }
@@ -175,6 +211,74 @@ export function BillingPage() {
                 关闭
               </button>
             </div>
+          </div>
+        )}
+      </div>
+
+      <div className="billing-card">
+        <div className="payment-history-header">
+          <h2>支付单记录</h2>
+          <div className="payment-history-filters">
+            <select
+              value={orderStatus === '' ? '' : String(orderStatus)}
+              onChange={(e) => {
+                const next = e.target.value === '' ? '' : Number(e.target.value)
+                setOrderStatus(next)
+                loadOrders(1, next)
+              }}
+              disabled={ordersLoading}
+            >
+              <option value="">全部状态</option>
+              <option value={PaymentOrderStatus.PENDING}>待支付</option>
+              <option value={PaymentOrderStatus.PAID}>已支付</option>
+              <option value={PaymentOrderStatus.FAILED}>支付失败</option>
+              <option value={PaymentOrderStatus.EXPIRED}>已过期</option>
+            </select>
+            <button type="button" onClick={() => loadOrders(orderPage)} disabled={ordersLoading}>
+              {ordersLoading ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+        </div>
+
+        {orders.length === 0 ? (
+          <div className="no-transactions">{ordersLoading ? '加载中...' : '暂无支付单'}</div>
+        ) : (
+          <div className="payment-history-list">
+            {orders.map((order) => (
+              <div key={order.id} className="payment-history-item">
+                <div className="payment-history-left">
+                  <span className="payment-history-amount">¥{order.amount.toFixed(2)}</span>
+                  <span className="payment-history-method">{order.payment_method}</span>
+                  <span className="payment-history-id">#{order.id}</span>
+                </div>
+                <div className="payment-history-right">
+                  <span className={`payment-order-status payment-order-status-${order.status}`}>
+                    {getPaymentStatusLabel(order.status)}
+                  </span>
+                  <span className="payment-history-time">
+                    {order.created_at ? new Date(order.created_at).toLocaleString() : '-'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {orderTotal > ORDER_PAGE_SIZE && (
+          <div className="payment-history-pager">
+            <button type="button" onClick={() => loadOrders(orderPage - 1)} disabled={ordersLoading || orderPage <= 1}>
+              上一页
+            </button>
+            <span>
+              第 {orderPage} / {Math.ceil(orderTotal / ORDER_PAGE_SIZE)} 页 · 共 {orderTotal} 条
+            </span>
+            <button
+              type="button"
+              onClick={() => loadOrders(orderPage + 1)}
+              disabled={ordersLoading || orderPage * ORDER_PAGE_SIZE >= orderTotal}
+            >
+              下一页
+            </button>
           </div>
         )}
       </div>

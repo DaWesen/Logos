@@ -183,6 +183,110 @@
   color: var(--ba-text-light);
 }
 
+.payment-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.payment-history-header h2 {
+  margin: 0;
+}
+
+.payment-history-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.payment-history-filters select,
+.payment-history-filters button {
+  padding: 6px 12px;
+  border: 1px solid var(--ba-border);
+  border-radius: var(--ba-radius-sm);
+  background: transparent;
+  color: var(--ba-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--ba-transition);
+}
+
+.payment-history-filters select {
+  background: var(--ba-bg);
+}
+
+.payment-history-filters button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.payment-history-list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.payment-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ba-border);
+}
+
+.payment-history-item:last-child {
+  border-bottom: none;
+}
+
+.payment-history-left,
+.payment-history-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.payment-history-amount {
+  font-weight: 600;
+}
+
+.payment-history-method,
+.payment-history-id,
+.payment-history-time {
+  font-size: 12px;
+  color: var(--ba-text-light);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.payment-history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ba-text-light);
+}
+
+.payment-history-pager button {
+  padding: 6px 14px;
+  border: 1px solid var(--ba-border);
+  border-radius: var(--ba-radius-sm);
+  background: transparent;
+  color: var(--ba-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.payment-history-pager button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .transactions-list {
   max-height: 500px;
   overflow-y: auto;
