@@ -46,7 +46,10 @@ func main() {
 		producer = mq.NewProducer()
 	}
 
-	billingService := service.NewBillingService(repo, outboxRepo, cfg.Payment.CallbackSecret)
+	billingService := service.NewBillingService(repo, outboxRepo, cfg.Payment.CallbackSecret,
+		service.WithPaymentMethods(cfg.Payment.AllowedMethods),
+		service.WithPaymentAmountLimits(cfg.Payment.MinAmount, cfg.Payment.MaxAmount),
+	)
 
 	// 后台兜底回收过期支付单（按需回收只覆盖被访问过的订单）
 	reaper := service.NewPaymentOrderReaper(repo)

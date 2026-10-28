@@ -43,6 +43,11 @@ type Config struct {
 type Payment struct {
 	// CallbackSecret 支付渠道回调验签密钥（HMAC-SHA256），为空时拒绝所有回调（fail closed）
 	CallbackSecret string `mapstructure:"callback_secret"`
+	// AllowedMethods 支付方式白名单（逗号分隔），为空时使用服务内置默认值
+	AllowedMethods []string `mapstructure:"allowed_methods"`
+	// MinAmount / MaxAmount 单笔支付单金额上下限，<=0 时使用服务内置默认值
+	MinAmount float64 `mapstructure:"min_amount"`
+	MaxAmount float64 `mapstructure:"max_amount"`
 }
 
 // ServiceDiscovery 服务发现配置（多节点水平扩展）
@@ -310,6 +315,9 @@ func bindEnvVars() {
 		{"LOGOS_WS_PUBSUB_CHANNEL", "gateway.pubsub_channel"},
 		{"LOGOS_WS_BROADCAST_ENABLED", "gateway.enable_broadcast"},
 		{"PAYMENT_CALLBACK_SECRET", "payment.callback_secret"},
+		{"PAYMENT_ALLOWED_METHODS", "payment.allowed_methods"},
+		{"PAYMENT_MIN_AMOUNT", "payment.min_amount"},
+		{"PAYMENT_MAX_AMOUNT", "payment.max_amount"},
 	}
 
 	for _, b := range envBindings {
@@ -434,6 +442,19 @@ func overrideFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("PAYMENT_CALLBACK_SECRET"); v != "" {
 		cfg.Payment.CallbackSecret = v
+	}
+	if v := os.Getenv("PAYMENT_ALLOWED_METHODS"); v != "" {
+		cfg.Payment.AllowedMethods = splitAndTrim(v)
+	}
+	if v := os.Getenv("PAYMENT_MIN_AMOUNT"); v != "" {
+		if amount, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Payment.MinAmount = amount
+		}
+	}
+	if v := os.Getenv("PAYMENT_MAX_AMOUNT"); v != "" {
+		if amount, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Payment.MaxAmount = amount
+		}
 	}
 }
 

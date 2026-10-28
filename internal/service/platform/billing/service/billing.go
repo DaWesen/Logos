@@ -43,9 +43,15 @@ var (
 const (
 	paymentOrderTTL       = 30 * time.Minute
 	paymentCallbackWindow = 5 * time.Minute
-	minPaymentAmount      = 0.01
-	maxPaymentAmount      = 100000.0
 )
+
+// 支付单默认限额与白名单：可由配置覆盖（NewBillingService 的 Option）
+const (
+	defaultMinPaymentAmount = 0.01
+	defaultMaxPaymentAmount = 100000.0
+)
+
+var defaultAllowedPaymentMethods = []string{"alipay", "wechat", "stripe", "mock"}
 
 // PaymentCallback 支付渠道回调参数
 type PaymentCallback struct {
@@ -58,12 +64,13 @@ type PaymentCallback struct {
 	Metadata  map[string]string
 }
 
-var allowedPaymentMethods = map[string]bool{
-	"alipay": true,
-	"wechat": true,
-	"stripe": true,
-	"mock":   true,
-}
+var defaultPaymentMethodsSet = func() map[string]bool {
+	set := make(map[string]bool, len(defaultAllowedPaymentMethods))
+	for _, m := range defaultAllowedPaymentMethods {
+		set[m] = true
+	}
+	return set
+}()
 
 type BillingService interface {
 	CreatePaymentOrder(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.PaymentOrder, error)
@@ -83,13 +90,56 @@ type BillingService interface {
 }
 
 type billingServiceImpl struct {
-	repo          dao.BillingRepository
-	outboxRepo    outbox.OutboxRepository
-	paymentSecret string
+	repo           dao.BillingRepository
+	outboxRepo     outbox.OutboxRepository
+	paymentSecret  string
+	allowedMethods map[string]bool
+	minAmount      float64
+	maxAmount      float64
 }
 
-func NewBillingService(repo dao.BillingRepository, outboxRepo outbox.OutboxRepository, paymentSecret string) BillingService {
-	return &billingServiceImpl{repo: repo, outboxRepo: outboxRepo, paymentSecret: paymentSecret}
+// BillingServiceOption 覆盖支付单校验参数（支付方式白名单、金额上下限）。
+type BillingServiceOption func(*billingServiceImpl)
+
+// WithPaymentMethods 覆盖支付方式白名单：自动去空白并转小写，空列表回退默认值。
+func WithPaymentMethods(methods []string) BillingServiceOption {
+	return func(s *billingServiceImpl) {
+		set := make(map[string]bool, len(methods))
+		for _, m := range methods {
+			if m = strings.ToLower(strings.TrimSpace(m)); m != "" {
+				set[m] = true
+			}
+		}
+		if len(set) > 0 {
+			s.allowedMethods = set
+		}
+	}
+}
+
+// WithPaymentAmountLimits 覆盖单笔支付金额上下限；区间非法（min<=0 或 max<min）时回退默认值。
+func WithPaymentAmountLimits(min, max float64) BillingServiceOption {
+	return func(s *billingServiceImpl) {
+		if min <= 0 || max < min {
+			return
+		}
+		s.minAmount = min
+		s.maxAmount = max
+	}
+}
+
+func NewBillingService(repo dao.BillingRepository, outboxRepo outbox.OutboxRepository, paymentSecret string, opts ...BillingServiceOption) BillingService {
+	s := &billingServiceImpl{
+		repo:           repo,
+		outboxRepo:     outboxRepo,
+		paymentSecret:  paymentSecret,
+		allowedMethods: defaultPaymentMethodsSet,
+		minAmount:      defaultMinPaymentAmount,
+		maxAmount:      defaultMaxPaymentAmount,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *billingServiceImpl) Deposit(ctx context.Context, userID string, amount float64, paymentMethod string, metadata map[string]string) (*model.Transaction, error) {
@@ -180,11 +230,11 @@ func (s *billingServiceImpl) CreatePaymentOrder(ctx context.Context, userID stri
 	if userID == "" {
 		return nil, ErrPaymentInvalidRequest
 	}
-	if amount < minPaymentAmount || amount > maxPaymentAmount {
-		return nil, fmt.Errorf("%w: amount must be between %.2f and %.2f", ErrPaymentInvalidRequest, minPaymentAmount, maxPaymentAmount)
+	if amount < s.minAmount || amount > s.maxAmount {
+		return nil, fmt.Errorf("%w: amount must be between %.2f and %.2f", ErrPaymentInvalidRequest, s.minAmount, s.maxAmount)
 	}
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
-	if !allowedPaymentMethods[paymentMethod] {
+	if !s.allowedMethods[paymentMethod] {
 		return nil, fmt.Errorf("%w: unsupported payment method %q", ErrPaymentInvalidRequest, paymentMethod)
 	}
 

@@ -274,6 +274,55 @@ func TestCreatePaymentOrder_Success(t *testing.T) {
 	}
 }
 
+func TestCreatePaymentOrder_UsesConfiguredMethodsAndLimits(t *testing.T) {
+	logger.SetLogger(zap.NewNop())
+
+	repo := &stubBillingRepo{}
+	svc := NewBillingService(repo, &stubOutboxRepo{}, "secret",
+		WithPaymentMethods([]string{" WeChat "}),
+		WithPaymentAmountLimits(1, 100),
+	)
+
+	// 白名单被收窄后，默认允许的 alipay 必须失效
+	if _, err := svc.CreatePaymentOrder(context.Background(), "alice", 10, "alipay", nil); !errors.Is(err, ErrPaymentInvalidRequest) {
+		t.Fatalf("alipay 应被拒绝, err = %v", err)
+	}
+	// 金额低于/高于配置区间
+	if _, err := svc.CreatePaymentOrder(context.Background(), "alice", 0.5, "wechat", nil); !errors.Is(err, ErrPaymentInvalidRequest) {
+		t.Fatalf("低于下限应被拒绝, err = %v", err)
+	}
+	if _, err := svc.CreatePaymentOrder(context.Background(), "alice", 100.01, "wechat", nil); !errors.Is(err, ErrPaymentInvalidRequest) {
+		t.Fatalf("高于上限应被拒绝, err = %v", err)
+	}
+
+	order, err := svc.CreatePaymentOrder(context.Background(), "alice", 50, " WeChat ", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if order.PaymentMethod != "wechat" {
+		t.Errorf("payment method = %q, want normalized wechat", order.PaymentMethod)
+	}
+}
+
+// 配置缺省或非法时不能把业务卡死：回退内置默认白名单与限额。
+func TestNewBillingService_IgnoresInvalidPaymentOptions(t *testing.T) {
+	logger.SetLogger(zap.NewNop())
+
+	repo := &stubBillingRepo{}
+	svc := NewBillingService(repo, &stubOutboxRepo{}, "secret",
+		WithPaymentMethods([]string{" ", ""}),
+		WithPaymentAmountLimits(0, 0),
+	)
+
+	order, err := svc.CreatePaymentOrder(context.Background(), "alice", defaultMinPaymentAmount, "alipay", nil)
+	if err != nil {
+		t.Fatalf("默认白名单/限额应生效, err = %v", err)
+	}
+	if order.PaymentMethod != "alipay" {
+		t.Errorf("payment method = %q, want alipay", order.PaymentMethod)
+	}
+}
+
 func TestGetPaymentOrder_RejectsOtherUsersOrder(t *testing.T) {
 	logger.SetLogger(zap.NewNop())
 
