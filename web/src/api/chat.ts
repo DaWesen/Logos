@@ -206,6 +206,41 @@ export async function markMessagesRead(chatId: string, chatType = 1): Promise<vo
   }
 }
 
+export interface MessageReadReceipt {
+  messageId: string
+  seq: number
+  readCount: number
+  memberCount: number
+  allRead: boolean
+}
+
+// getMessageReadReceipts 查询自己发送的消息的已读回执（服务端按已读位点聚合）。
+// 单次最多 50 条，超出部分由服务端拒绝，因此在调用侧截断。
+export async function getMessageReadReceipts(chatId: string, messageIds: string[]): Promise<Record<string, MessageReadReceipt>> {
+  if (!chatId || messageIds.length === 0) return {}
+  const ids = messageIds.filter((id) => id && !id.startsWith('local-')).slice(0, 50)
+  if (ids.length === 0) return {}
+  try {
+    const res = await client.post('/chat/read-receipts', { chat_id: chatId, message_ids: ids })
+    const raw = (res.data as { data?: { receipts?: any[] } })?.data?.receipts || []
+    const result: Record<string, MessageReadReceipt> = {}
+    for (const item of raw) {
+      const messageId: string = item.message_id || item.messageId || ''
+      if (!messageId) continue
+      result[messageId] = {
+        messageId,
+        seq: Number(item.seq || 0),
+        readCount: Number(item.read_count ?? item.readCount ?? 0),
+        memberCount: Number(item.member_count ?? item.memberCount ?? 0),
+        allRead: Boolean(item.all_read ?? item.allRead),
+      }
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
 export async function withdrawMessage(messageId: string): Promise<void> {
   await client.post('/chat/withdraw', { message_id: messageId })
 }

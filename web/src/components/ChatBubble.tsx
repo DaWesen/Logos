@@ -11,6 +11,9 @@ interface Props {
   message: Message
   isOwn: boolean
   showAvatar?: boolean
+  // receipt 已读回执（仅自己发送的消息有值），按群成员数展示「N/M 已读」
+  receipt?: { readCount: number; memberCount: number; allRead: boolean }
+  showReadCount?: boolean
   onEdit?: (message: Message) => void
   onForward?: (message: Message) => void
   onWithdraw?: (messageId: string) => void
@@ -25,7 +28,7 @@ const getAvatarChar = (name?: string, isOwn?: boolean) => {
   return name.charAt(0).toUpperCase()
 }
 
-export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, onForward, onWithdraw, onFileOpen }: Props) {
+export default function ChatBubble({ message, isOwn, showAvatar = true, receipt, showReadCount, onEdit, onForward, onWithdraw, onFileOpen }: Props) {
   const [translated, setTranslated] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -228,11 +231,17 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, onEdit, 
         </div>
         <div className="chat-bubble-meta">
           <span className="chat-bubble-time">{formatTime(message.createdAt)}</span>
-          {isOwn && (
+          {isOwn && (receipt ? (
+            <span className={`chat-bubble-read-mark ${receipt.allRead || receipt.readCount > 0 ? 'read' : 'unread'}`}>
+              {showReadCount
+                ? `${receipt.readCount}/${receipt.memberCount} 已读`
+                : (receipt.readCount > 0 ? '已读' : '未读')}
+            </span>
+          ) : (
             <span className={`chat-bubble-read-mark ${message.isRead ? 'read' : 'unread'}`}>
               {message.isRead ? '✓✓' : '✓'}
             </span>
-          )}
+          ))}
           <div className="chat-bubble-actions">
             {!isOwn && (
               <div style={{ position: 'relative' }}>

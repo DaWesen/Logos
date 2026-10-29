@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare, Filter, Image, File, Mic, Film, MapPin, Clock, X } from 'lucide-react'
 import type { Message, WsMessage } from '@/types'
-import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages } from '@/api/chat'
+import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages, getMessageReadReceipts } from '@/api/chat'
+import type { MessageReadReceipt } from '@/api/chat'
 import { streamBotMessage, getBotList, getBotHistory } from '@/api/bot'
 import { searchUsers, getUser } from '@/api/user'
 import { getGroup, createGroup, getGroupMembers, inviteGroupMember, inviteBotToGroup, leaveGroup, kickGroupMember, joinGroup, updateGroupAvatar, muteGroupMember, transferGroupOwner, updateGroupAnnouncement, setGroupAdmin } from '@/api/group'
@@ -99,6 +100,8 @@ export default function ChatPage() {
   const [groupMembers, setGroupMembers] = useState<Map<string, { userId: string; username: string; avatar: string; role: string }>>(new Map())
   const chatsRef = useRef<ChatItem[]>(chats)
   const lastMarkReadTime = useRef<Record<string, number>>({})
+  // 自己发送消息的已读回执（messageId -> 已读人数/成员数），由服务端按已读位点聚合
+  const [readReceipts, setReadReceipts] = useState<Record<string, MessageReadReceipt>>({})
 
   // 同步 messages 到 ref，供 WebSocket 兜底匹配使用
   useEffect(() => { messagesRef.current = messages }, [messages])
@@ -628,6 +631,40 @@ export default function ChatPage() {
     setSearchEndTime('')
     setTypingChatId(null)
   }, [selectedChatId])
+
+  // 已读回执只针对自己发送的消息（服务端也只返回本人消息）。
+  // 用 id 串作为依赖，避免每条新消息都重建定时器。
+  const ownMessageIDsKey = useMemo(() => (
+    messages
+      .filter((m) => m.senderId === user?.id && !m.id.startsWith('local-'))
+      .slice(-50)
+      .map((m) => m.id)
+      .join(',')
+  ), [messages, user?.id])
+
+  useEffect(() => {
+    if (!selectedChatId || !user?.id || !ownMessageIDsKey) {
+      setReadReceipts({})
+      return
+    }
+    const chatType = chatsRef.current.find((c) => c.id === selectedChatId)?.type
+    // Bot 会话与广播没有成员已读位点，不查询回执
+    if (chatType === 'bot') {
+      setReadReceipts({})
+      return
+    }
+    const ids = ownMessageIDsKey.split(',')
+    let cancelled = false
+    const load = () => {
+      getMessageReadReceipts(selectedChatId, ids).then((map) => {
+        if (!cancelled) setReadReceipts(map)
+      })
+    }
+    load()
+    // 对方已读是异步发生的，会话打开期间定时刷新；切换会话时立即清理
+    const timer = setInterval(load, 15000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [selectedChatId, ownMessageIDsKey, user?.id])
 
   const refreshConversations = useCallback(async () => {
     const startTime = new Date()
@@ -3157,6 +3194,8 @@ export default function ChatPage() {
                       <ChatBubble
                         message={msg}
                         isOwn={msg.senderId === user?.id}
+                        receipt={readReceipts[msg.id]}
+                        showReadCount={selectedChat?.type === 'group'}
                         showAvatar={true}
                         onEdit={handleEditMessage}
                         onForward={handleForwardMessage}
