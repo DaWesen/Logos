@@ -186,18 +186,9 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			return nil
 		}
 
-		// 群聊消息：检查发送者是否是群成员
-		if event.ChatType == types.ChatTypeGroup {
-			member, err := s.repo.GetGroupMember(s.ctx, event.ChatID, event.SenderID)
-			if err != nil {
-				logger.Warn("检查群成员身份失败", logger.ErrorField(err))
-			}
-			if member == nil {
-				logger.Warn("非群组成员尝试发送消息，已拒绝",
-					logger.StringField("sender_id", event.SenderID),
-					logger.StringField("chat_id", event.ChatID))
-				return nil
-			}
+		// 发送者必须有权向该会话发送消息，否则拒绝（失败关闭）。
+		if !s.authorizeIncomingMessage(event) {
+			return nil
 		}
 
 		// 收到 Kafka 消息
@@ -280,6 +271,40 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 	}
 
 	return nil
+}
+
+// authorizeIncomingMessage 校验事件发送者是否有权向该会话发送消息（失败关闭）。
+//
+// 群聊要求发送者是群成员；私聊要求发送者是会话参与方——文本与媒体共用同一条事件链路，
+// 若不校验，拿到会话 ID 就能向任意两人的私聊注入消息（含图片/文件）。
+// 例外：QQ 桥接事件由服务端转换并携带 channel=qq；system 为可信系统消息；
+// bot-{uuid} 的 Bot 共享会话在 checkPrivateChatAccess 内放行。
+func (s *ChatServiceImpl) authorizeIncomingMessage(event *types.MessageEvent) bool {
+	switch event.ChatType {
+	case types.ChatTypeGroup:
+		member, err := s.repo.GetGroupMember(s.ctx, event.ChatID, event.SenderID)
+		if err != nil {
+			logger.Warn("检查群成员身份失败", logger.ErrorField(err))
+		}
+		if member == nil {
+			logger.Warn("非群组成员尝试发送消息，已拒绝",
+				logger.StringField("sender_id", event.SenderID),
+				logger.StringField("chat_id", event.ChatID))
+			return false
+		}
+	case types.ChatTypePrivate:
+		if event.Channel == "qq" || event.SenderID == "system" {
+			return true
+		}
+		if err := checkPrivateChatAccess(event.ChatID, event.SenderID); err != nil {
+			logger.Warn("非私聊会话参与方尝试发送消息，已拒绝",
+				logger.StringField("sender_id", event.SenderID),
+				logger.StringField("chat_id", event.ChatID),
+				logger.IntField("message_type", int(event.MessageType)))
+			return false
+		}
+	}
+	return true
 }
 
 // persistIncomingMessage 同步落库：确保会话存在 + 写入消息（幂等）+ 更新会话最后消息。

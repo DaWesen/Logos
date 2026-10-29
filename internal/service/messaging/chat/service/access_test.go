@@ -120,6 +120,74 @@ func TestEnsureChatAccess(t *testing.T) {
 	}
 }
 
+func TestAuthorizeIncomingMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		event   types.MessageEvent
+		allowed bool
+	}{
+		{
+			name:    "群成员放行",
+			event:   types.MessageEvent{ChatType: types.ChatTypeGroup, ChatID: "group-1", SenderID: "member"},
+			allowed: true,
+		},
+		{
+			name:  "非群成员拒绝",
+			event: types.MessageEvent{ChatType: types.ChatTypeGroup, ChatID: "group-1", SenderID: "outsider"},
+		},
+		{
+			name:    "私聊参与者放行（文本）",
+			event:   types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "private_1001_1002", SenderID: "1001"},
+			allowed: true,
+		},
+		{
+			name:    "私聊参与者放行（媒体）",
+			event:   types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "private_1001_1002", SenderID: "1002", MessageType: types.MessageTypeFile},
+			allowed: true,
+		},
+		{
+			name:  "私聊旁观者拒绝（媒体注入）",
+			event: types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "private_1001_1002", SenderID: "1003", MessageType: types.MessageTypeImage},
+		},
+		{
+			name:    "QQ 桥接私聊放行",
+			event:   types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "private_1001_self", SenderID: "1001", Channel: "qq"},
+			allowed: true,
+		},
+		{
+			name:    "系统消息放行",
+			event:   types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "private_1001_1002", SenderID: "system"},
+			allowed: true,
+		},
+		{
+			name:    "Bot 会话放行",
+			event:   types.MessageEvent{ChatType: types.ChatTypePrivate, ChatID: "bot-uuid-1", SenderID: "bot_bot-uuid-1"},
+			allowed: true,
+		},
+		{
+			name:    "广播类型不限制",
+			event:   types.MessageEvent{ChatType: types.ChatTypeBroadcast, ChatID: "broadcast", SenderID: "1001"},
+			allowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &stubChatRepo{
+				groups: map[string]*model.Group{},
+				members: map[string]*model.GroupMember{
+					"group-1|member": {GroupID: "group-1", UserID: "member"},
+				},
+			}
+			svc := newAccessService(repo)
+
+			if got := svc.authorizeIncomingMessage(&tt.event); got != tt.allowed {
+				t.Fatalf("期望放行=%v，实际=%v", tt.allowed, got)
+			}
+		})
+	}
+}
+
 func TestDeleteChatHistoryPermission(t *testing.T) {
 	tests := []struct {
 		name       string
