@@ -463,6 +463,44 @@ func (h *Handler) GetMessageReadReceipts(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
 }
 
+// syncOfflineBody 离线同步入参：每个会话带一个「已见过的最大 seq」游标。
+type syncOfflineBody struct {
+	Cursors []struct {
+		ChatID  string `json:"chat_id" binding:"required"`
+		LastSeq int64  `json:"last_seq"`
+	} `json:"cursors" binding:"required,min=1,max=100"`
+	Limit int `json:"limit"`
+}
+
+// SyncChatMessages 与 IM 模块按时间同步的 SyncOfflineMessages 区分：本接口以会话 seq 游标为语义。
+func (h *Handler) SyncChatMessages(c *gin.Context) {
+	if h.ChatClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+	var body syncOfflineBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	cursors := make([]*pb.ChatSyncCursor, 0, len(body.Cursors))
+	for _, cur := range body.Cursors {
+		cursors = append(cursors, &pb.ChatSyncCursor{ChatId: cur.ChatID, LastSeq: cur.LastSeq})
+	}
+	resp, err := h.ChatClient.SyncOfflineMessages(c.Request.Context(), &pb.SyncOfflineMessagesRequest{
+		Cursors: cursors,
+		Limit:   int32(body.Limit),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if !checkChatCode(c, resp.Code, resp.Message) {
+		return
+	}
+	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
+}
+
 func (h *Handler) WithdrawChatMessage(c *gin.Context) {
 	if h.ChatClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))

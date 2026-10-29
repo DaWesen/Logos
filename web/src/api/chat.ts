@@ -206,6 +206,36 @@ export async function markMessagesRead(chatId: string, chatType = 1): Promise<vo
   }
 }
 
+export interface ChatSyncItem {
+  chatId: string
+  messages: Record<string, unknown>[]
+  latestSeq: number
+  clearedSeq: number
+  hasMore: boolean
+}
+
+// syncChatMessages 断线重连后批量补齐增量：每个会话带「已见过的最大 seq」游标，
+// 服务端一次请求返回多个会话的增量，避免按会话逐个请求。
+export async function syncChatMessages(cursors: { chatId: string; lastSeq: number }[]): Promise<ChatSyncItem[]> {
+  if (cursors.length === 0) return []
+  try {
+    const res = await client.post('/chat/sync', {
+      cursors: cursors.slice(0, 100).map((c) => ({ chat_id: c.chatId, last_seq: c.lastSeq })),
+      limit: 100,
+    })
+    const chats = ((res.data as { data?: { chats?: any[] } })?.data?.chats) || []
+    return chats.map((c) => ({
+      chatId: String(c.chat_id || c.chatId || ''),
+      messages: Array.isArray(c.messages) ? c.messages : [],
+      latestSeq: Number(c.latest_seq ?? c.latestSeq ?? 0),
+      clearedSeq: Number(c.cleared_seq ?? c.clearedSeq ?? 0),
+      hasMore: Boolean(c.has_more ?? c.hasMore),
+    })).filter((c) => c.chatId)
+  } catch {
+    return []
+  }
+}
+
 export interface MessageReadReceipt {
   messageId: string
   seq: number

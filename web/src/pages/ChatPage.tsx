@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare, Filter, Image, File, Mic, Film, MapPin, Clock, X } from 'lucide-react'
 import type { Message, WsMessage } from '@/types'
-import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages, getMessageReadReceipts } from '@/api/chat'
-import type { MessageReadReceipt } from '@/api/chat'
+import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages, getMessageReadReceipts, syncChatMessages } from '@/api/chat'
+import type { MessageReadReceipt, ChatSyncItem } from '@/api/chat'
 import { streamBotMessage, getBotList, getBotHistory } from '@/api/bot'
 import { searchUsers, getUser } from '@/api/user'
 import { getGroup, createGroup, getGroupMembers, inviteGroupMember, inviteBotToGroup, leaveGroup, kickGroupMember, joinGroup, updateGroupAvatar, muteGroupMember, transferGroupOwner, updateGroupAnnouncement, setGroupAdmin } from '@/api/group'
@@ -64,6 +64,39 @@ function resolveMediaMeta(raw: unknown): string {
     return String(obj.filename || '')
   }
   return String(raw)
+}
+
+// mapSyncMessage 把批量同步接口返回的消息转换成前端 Message（字段与历史接口一致）。
+function mapSyncMessage(
+  raw: Record<string, unknown>,
+  chatId: string,
+  resolveName: (senderId: string, chatId: string) => string,
+): Message {
+  const senderId = String(raw.sender_id || raw.senderId || '')
+  const rawCreated = raw.created_at || raw.createdAt
+  let createdAt = new Date().toISOString()
+  if (typeof rawCreated === 'string' && rawCreated) {
+    createdAt = rawCreated
+  } else if (rawCreated && typeof rawCreated === 'object') {
+    const ts = rawCreated as Record<string, unknown>
+    const seconds = Number(ts.seconds ?? ts.Seconds ?? 0)
+    const nanos = Number(ts.nanos ?? ts.Nanos ?? 0)
+    const ms = seconds * 1000 + Math.floor(nanos / 1000000)
+    if (ms > 0) createdAt = new Date(ms).toISOString()
+  }
+  return {
+    id: String(raw.id || ''),
+    chatId: String(raw.chat_id || raw.chatId || chatId),
+    senderId,
+    senderName: String(raw.sender_name || raw.senderName || '') || resolveName(senderId, chatId),
+    senderAvatar: String(raw.sender_avatar || raw.senderAvatar || ''),
+    content: String(raw.content || '').trim(),
+    messageType: resolveMessageType(raw.message_type || raw.messageType),
+    mediaUrl: toMediaUrl(String(raw.media_url || raw.mediaUrl || '')),
+    mediaMeta: resolveMediaMeta(raw.media_meta || raw.mediaMeta),
+    createdAt,
+    seq: raw.seq != null ? Number(raw.seq) : undefined,
+  }
 }
 
 function loadAllMessages(): Record<string, Message[]> {
@@ -1659,6 +1692,45 @@ export default function ChatPage() {
     processWsMessage(msg)
   }, [processWsMessage, persistAndSetMessages, selectedChatId, typingChatId, user])
 
+  // applyBatchSync 把批量同步结果合并进各会话的本地缓存。
+  // 只处理非当前会话：当前会话仍走 fetchRemoteMessages 的完整合并逻辑（含本地临时消息替换）。
+  // 已在本地被「清空历史」丢弃的消息（seq <= cleared_seq）不会重新出现。
+  const applyBatchSync = useCallback<(items: ChatSyncItem[], round?: number) => void>((items, round = 0) => {
+    const followUps: { chatId: string; lastSeq: number }[] = []
+    for (const item of items) {
+      const prev = seqCursorRef.current.get(item.chatId) || 0
+      let newest = item.latestSeq
+      if (item.chatId !== activeChatIdRef.current) {
+        const cleared = item.clearedSeq || 0
+        const byId = new Map<string, Message>()
+        for (const cached of loadChatMessages(item.chatId)) {
+          if (cleared > 0 && cached.seq && cached.seq <= cleared) continue
+          byId.set(cached.id, cached)
+        }
+        for (const raw of item.messages) {
+          const mapped = mapSyncMessage(raw, item.chatId, getCorrectSenderName)
+          if (!mapped.id) continue
+          byId.set(mapped.id, mapped)
+          if (mapped.seq) newest = Math.max(newest, mapped.seq)
+        }
+        if (byId.size > 0) {
+          const merged = Array.from(byId.values()).sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          )
+          persistMessages(item.chatId, merged)
+        }
+      }
+      if (newest > prev) seqCursorRef.current.set(item.chatId, newest)
+      if (item.hasMore && item.messages.length > 0) {
+        followUps.push({ chatId: item.chatId, lastSeq: newest })
+      }
+    }
+    // 单会话增量超过一页时最多再补一轮，避免重连时无限翻页
+    if (round < 1 && followUps.length > 0) {
+      syncChatMessages(followUps).then((more) => applyBatchSync(more, round + 1)).catch(() => {})
+    }
+  }, [getCorrectSenderName])
+
   // 首次连接由「进入会话」的 effect 负责拉取，这里只在断线重连后补拉，避免正常挂载时重复请求
   const hasOpenedWsRef = useRef(false)
   // WS 重连补偿：Redis PubSub 只负责实时扇出且不可靠（订阅者掉线期间的消息不会重投，
@@ -1676,8 +1748,18 @@ export default function ChatPage() {
       const cursor = seqCursorRef.current.get(chatId) || 0
       fetchRemoteMessages(chatId, cursor > 0 ? cursor : undefined).catch(() => {})
     }
+    // 其他会话不再逐个请求，一次批量同步补齐；Bot 会话不参与（无成员位点）
+    const cursors: { chatId: string; lastSeq: number }[] = []
+    for (const [id, seq] of seqCursorRef.current) {
+      if (id === chatId) continue
+      if (!chatsRef.current.some((c) => c.id === id && c.type !== 'bot')) continue
+      cursors.push({ chatId: id, lastSeq: seq })
+    }
+    if (cursors.length > 0) {
+      syncChatMessages(cursors).then((items) => applyBatchSync(items)).catch(() => {})
+    }
     refreshConversations().catch(() => {})
-  }, [fetchRemoteMessages, refreshConversations])
+  }, [fetchRemoteMessages, refreshConversations, applyBatchSync])
 
   const { send: wsSend, connected: wsConnected } = useWebSocket(wsBase, {
     onMessage: handleWsMessage,

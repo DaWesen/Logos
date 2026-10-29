@@ -3294,6 +3294,254 @@ func (x *GetMessageReadReceiptsResponse) GetReceipts() []*MessageReadReceipt {
 	return nil
 }
 
+// 离线同步游标：客户端为每个会话维护「已见过的最大 seq」
+type ChatSyncCursor struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChatId        string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	LastSeq       int64                  `protobuf:"varint,2,opt,name=last_seq,json=lastSeq,proto3" json:"last_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatSyncCursor) Reset() {
+	*x = ChatSyncCursor{}
+	mi := &file_idl_messaging_chat_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatSyncCursor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatSyncCursor) ProtoMessage() {}
+
+func (x *ChatSyncCursor) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_messaging_chat_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatSyncCursor.ProtoReflect.Descriptor instead.
+func (*ChatSyncCursor) Descriptor() ([]byte, []int) {
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ChatSyncCursor) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
+func (x *ChatSyncCursor) GetLastSeq() int64 {
+	if x != nil {
+		return x.LastSeq
+	}
+	return 0
+}
+
+// 单个会话的增量同步结果
+type ChatSyncResult struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	ChatId string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	// 按 seq 升序的增量消息
+	Messages []*Message `protobuf:"bytes,2,rep,name=messages,proto3" json:"messages,omitempty"`
+	// 会话当前最大 seq，客户端应以此推进游标（即使本次没有消息）
+	LatestSeq int64 `protobuf:"varint,3,opt,name=latest_seq,json=latestSeq,proto3" json:"latest_seq,omitempty"`
+	// 本人清空历史的水位线：<= 该 seq 的本地缓存应被丢弃，避免被重新拉回
+	ClearedSeq int64 `protobuf:"varint,4,opt,name=cleared_seq,json=clearedSeq,proto3" json:"cleared_seq,omitempty"`
+	// 本次是否还有更多（客户端可继续用返回的最大 seq 再次拉取）
+	HasMore       bool `protobuf:"varint,5,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatSyncResult) Reset() {
+	*x = ChatSyncResult{}
+	mi := &file_idl_messaging_chat_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatSyncResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatSyncResult) ProtoMessage() {}
+
+func (x *ChatSyncResult) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_messaging_chat_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatSyncResult.ProtoReflect.Descriptor instead.
+func (*ChatSyncResult) Descriptor() ([]byte, []int) {
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *ChatSyncResult) GetChatId() string {
+	if x != nil {
+		return x.ChatId
+	}
+	return ""
+}
+
+func (x *ChatSyncResult) GetMessages() []*Message {
+	if x != nil {
+		return x.Messages
+	}
+	return nil
+}
+
+func (x *ChatSyncResult) GetLatestSeq() int64 {
+	if x != nil {
+		return x.LatestSeq
+	}
+	return 0
+}
+
+func (x *ChatSyncResult) GetClearedSeq() int64 {
+	if x != nil {
+		return x.ClearedSeq
+	}
+	return 0
+}
+
+func (x *ChatSyncResult) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
+}
+
+type SyncOfflineMessagesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 一次最多 100 个会话
+	Cursors []*ChatSyncCursor `protobuf:"bytes,1,rep,name=cursors,proto3" json:"cursors,omitempty"`
+	// 每个会话返回的消息上限，默认 50，最大 200
+	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncOfflineMessagesRequest) Reset() {
+	*x = SyncOfflineMessagesRequest{}
+	mi := &file_idl_messaging_chat_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncOfflineMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncOfflineMessagesRequest) ProtoMessage() {}
+
+func (x *SyncOfflineMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_messaging_chat_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncOfflineMessagesRequest.ProtoReflect.Descriptor instead.
+func (*SyncOfflineMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *SyncOfflineMessagesRequest) GetCursors() []*ChatSyncCursor {
+	if x != nil {
+		return x.Cursors
+	}
+	return nil
+}
+
+func (x *SyncOfflineMessagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type SyncOfflineMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Chats         []*ChatSyncResult      `protobuf:"bytes,3,rep,name=chats,proto3" json:"chats,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncOfflineMessagesResponse) Reset() {
+	*x = SyncOfflineMessagesResponse{}
+	mi := &file_idl_messaging_chat_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncOfflineMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncOfflineMessagesResponse) ProtoMessage() {}
+
+func (x *SyncOfflineMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_idl_messaging_chat_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncOfflineMessagesResponse.ProtoReflect.Descriptor instead.
+func (*SyncOfflineMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *SyncOfflineMessagesResponse) GetCode() int32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *SyncOfflineMessagesResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *SyncOfflineMessagesResponse) GetChats() []*ChatSyncResult {
+	if x != nil {
+		return x.Chats
+	}
+	return nil
+}
+
 // 转发消息请求
 type ForwardMessageRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -3306,7 +3554,7 @@ type ForwardMessageRequest struct {
 
 func (x *ForwardMessageRequest) Reset() {
 	*x = ForwardMessageRequest{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[46]
+	mi := &file_idl_messaging_chat_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3318,7 +3566,7 @@ func (x *ForwardMessageRequest) String() string {
 func (*ForwardMessageRequest) ProtoMessage() {}
 
 func (x *ForwardMessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[46]
+	mi := &file_idl_messaging_chat_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3331,7 +3579,7 @@ func (x *ForwardMessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardMessageRequest.ProtoReflect.Descriptor instead.
 func (*ForwardMessageRequest) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{46}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ForwardMessageRequest) GetMessageId() string {
@@ -3367,7 +3615,7 @@ type ForwardMessageResponse struct {
 
 func (x *ForwardMessageResponse) Reset() {
 	*x = ForwardMessageResponse{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[47]
+	mi := &file_idl_messaging_chat_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3379,7 +3627,7 @@ func (x *ForwardMessageResponse) String() string {
 func (*ForwardMessageResponse) ProtoMessage() {}
 
 func (x *ForwardMessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[47]
+	mi := &file_idl_messaging_chat_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3392,7 +3640,7 @@ func (x *ForwardMessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardMessageResponse.ProtoReflect.Descriptor instead.
 func (*ForwardMessageResponse) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{47}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ForwardMessageResponse) GetCode() int32 {
@@ -3427,7 +3675,7 @@ type DeleteChatRequest struct {
 
 func (x *DeleteChatRequest) Reset() {
 	*x = DeleteChatRequest{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[48]
+	mi := &file_idl_messaging_chat_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3439,7 +3687,7 @@ func (x *DeleteChatRequest) String() string {
 func (*DeleteChatRequest) ProtoMessage() {}
 
 func (x *DeleteChatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[48]
+	mi := &file_idl_messaging_chat_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3452,7 +3700,7 @@ func (x *DeleteChatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatRequest.ProtoReflect.Descriptor instead.
 func (*DeleteChatRequest) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{48}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *DeleteChatRequest) GetChatId() string {
@@ -3480,7 +3728,7 @@ type DeleteChatResponse struct {
 
 func (x *DeleteChatResponse) Reset() {
 	*x = DeleteChatResponse{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[49]
+	mi := &file_idl_messaging_chat_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3492,7 +3740,7 @@ func (x *DeleteChatResponse) String() string {
 func (*DeleteChatResponse) ProtoMessage() {}
 
 func (x *DeleteChatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[49]
+	mi := &file_idl_messaging_chat_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3505,7 +3753,7 @@ func (x *DeleteChatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatResponse.ProtoReflect.Descriptor instead.
 func (*DeleteChatResponse) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{49}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *DeleteChatResponse) GetCode() int32 {
@@ -3532,7 +3780,7 @@ type DeleteChatHistoryRequest struct {
 
 func (x *DeleteChatHistoryRequest) Reset() {
 	*x = DeleteChatHistoryRequest{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[50]
+	mi := &file_idl_messaging_chat_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3544,7 +3792,7 @@ func (x *DeleteChatHistoryRequest) String() string {
 func (*DeleteChatHistoryRequest) ProtoMessage() {}
 
 func (x *DeleteChatHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[50]
+	mi := &file_idl_messaging_chat_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3557,7 +3805,7 @@ func (x *DeleteChatHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatHistoryRequest.ProtoReflect.Descriptor instead.
 func (*DeleteChatHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{50}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *DeleteChatHistoryRequest) GetChatId() string {
@@ -3578,7 +3826,7 @@ type DeleteChatHistoryResponse struct {
 
 func (x *DeleteChatHistoryResponse) Reset() {
 	*x = DeleteChatHistoryResponse{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[51]
+	mi := &file_idl_messaging_chat_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3590,7 +3838,7 @@ func (x *DeleteChatHistoryResponse) String() string {
 func (*DeleteChatHistoryResponse) ProtoMessage() {}
 
 func (x *DeleteChatHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[51]
+	mi := &file_idl_messaging_chat_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3603,7 +3851,7 @@ func (x *DeleteChatHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteChatHistoryResponse.ProtoReflect.Descriptor instead.
 func (*DeleteChatHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{51}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *DeleteChatHistoryResponse) GetCode() int32 {
@@ -3631,7 +3879,7 @@ type UpdateGroupAvatarRequest struct {
 
 func (x *UpdateGroupAvatarRequest) Reset() {
 	*x = UpdateGroupAvatarRequest{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[52]
+	mi := &file_idl_messaging_chat_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3643,7 +3891,7 @@ func (x *UpdateGroupAvatarRequest) String() string {
 func (*UpdateGroupAvatarRequest) ProtoMessage() {}
 
 func (x *UpdateGroupAvatarRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[52]
+	mi := &file_idl_messaging_chat_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3656,7 +3904,7 @@ func (x *UpdateGroupAvatarRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateGroupAvatarRequest.ProtoReflect.Descriptor instead.
 func (*UpdateGroupAvatarRequest) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{52}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *UpdateGroupAvatarRequest) GetGroupId() string {
@@ -3684,7 +3932,7 @@ type UpdateGroupAvatarResponse struct {
 
 func (x *UpdateGroupAvatarResponse) Reset() {
 	*x = UpdateGroupAvatarResponse{}
-	mi := &file_idl_messaging_chat_proto_msgTypes[53]
+	mi := &file_idl_messaging_chat_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3696,7 +3944,7 @@ func (x *UpdateGroupAvatarResponse) String() string {
 func (*UpdateGroupAvatarResponse) ProtoMessage() {}
 
 func (x *UpdateGroupAvatarResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_idl_messaging_chat_proto_msgTypes[53]
+	mi := &file_idl_messaging_chat_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3709,7 +3957,7 @@ func (x *UpdateGroupAvatarResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateGroupAvatarResponse.ProtoReflect.Descriptor instead.
 func (*UpdateGroupAvatarResponse) Descriptor() ([]byte, []int) {
-	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{53}
+	return file_idl_messaging_chat_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *UpdateGroupAvatarResponse) GetCode() int32 {
@@ -3972,7 +4220,25 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\x1eGetMessageReadReceiptsResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12>\n" +
-	"\breceipts\x18\x03 \x03(\v2\".messaging.chat.MessageReadReceiptR\breceipts\"\xa2\x01\n" +
+	"\breceipts\x18\x03 \x03(\v2\".messaging.chat.MessageReadReceiptR\breceipts\"D\n" +
+	"\x0eChatSyncCursor\x12\x17\n" +
+	"\achat_id\x18\x01 \x01(\tR\x06chatId\x12\x19\n" +
+	"\blast_seq\x18\x02 \x01(\x03R\alastSeq\"\xb9\x01\n" +
+	"\x0eChatSyncResult\x12\x17\n" +
+	"\achat_id\x18\x01 \x01(\tR\x06chatId\x123\n" +
+	"\bmessages\x18\x02 \x03(\v2\x17.messaging.chat.MessageR\bmessages\x12\x1d\n" +
+	"\n" +
+	"latest_seq\x18\x03 \x01(\x03R\tlatestSeq\x12\x1f\n" +
+	"\vcleared_seq\x18\x04 \x01(\x03R\n" +
+	"clearedSeq\x12\x19\n" +
+	"\bhas_more\x18\x05 \x01(\bR\ahasMore\"l\n" +
+	"\x1aSyncOfflineMessagesRequest\x128\n" +
+	"\acursors\x18\x01 \x03(\v2\x1e.messaging.chat.ChatSyncCursorR\acursors\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\x81\x01\n" +
+	"\x1bSyncOfflineMessagesResponse\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x124\n" +
+	"\x05chats\x18\x03 \x03(\v2\x1e.messaging.chat.ChatSyncResultR\x05chats\"\xa2\x01\n" +
 	"\x15ForwardMessageRequest\x12\x1d\n" +
 	"\n" +
 	"message_id\x18\x01 \x01(\tR\tmessageId\x12&\n" +
@@ -4028,7 +4294,7 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\x15MUTE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eMUTE_TYPE_NONE\x10\x01\x12\x17\n" +
 	"\x13MUTE_TYPE_TEMPORARY\x10\x02\x12\x17\n" +
-	"\x13MUTE_TYPE_PERMANENT\x10\x032\xd2\x12\n" +
+	"\x13MUTE_TYPE_PERMANENT\x10\x032\xc2\x13\n" +
 	"\vChatService\x12V\n" +
 	"\vSendMessage\x12\".messaging.chat.SendMessageRequest\x1a#.messaging.chat.SendMessageResponse\x12_\n" +
 	"\x0eSearchMessages\x12%.messaging.chat.SearchMessagesRequest\x1a&.messaging.chat.SearchMessagesResponse\x12h\n" +
@@ -4050,7 +4316,8 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\bGetGroup\x12\x1f.messaging.chat.GetGroupRequest\x1a .messaging.chat.GetGroupResponse\x12n\n" +
 	"\x13GetConversationList\x12*.messaging.chat.GetConversationListRequest\x1a+.messaging.chat.GetConversationListResponse\x12_\n" +
 	"\x0eGetUnreadCount\x12%.messaging.chat.GetUnreadCountRequest\x1a&.messaging.chat.GetUnreadCountResponse\x12w\n" +
-	"\x16GetMessageReadReceipts\x12-.messaging.chat.GetMessageReadReceiptsRequest\x1a..messaging.chat.GetMessageReadReceiptsResponse\x12_\n" +
+	"\x16GetMessageReadReceipts\x12-.messaging.chat.GetMessageReadReceiptsRequest\x1a..messaging.chat.GetMessageReadReceiptsResponse\x12n\n" +
+	"\x13SyncOfflineMessages\x12*.messaging.chat.SyncOfflineMessagesRequest\x1a+.messaging.chat.SyncOfflineMessagesResponse\x12_\n" +
 	"\x0eForwardMessage\x12%.messaging.chat.ForwardMessageRequest\x1a&.messaging.chat.ForwardMessageResponse\x12S\n" +
 	"\n" +
 	"DeleteChat\x12!.messaging.chat.DeleteChatRequest\x1a\".messaging.chat.DeleteChatResponse\x12h\n" +
@@ -4070,7 +4337,7 @@ func file_idl_messaging_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_idl_messaging_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_idl_messaging_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 58)
+var file_idl_messaging_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 62)
 var file_idl_messaging_chat_proto_goTypes = []any{
 	(MessageType)(0),                        // 0: messaging.chat.MessageType
 	(ChatType)(0),                           // 1: messaging.chat.ChatType
@@ -4123,116 +4390,125 @@ var file_idl_messaging_chat_proto_goTypes = []any{
 	(*MessageReadReceipt)(nil),              // 48: messaging.chat.MessageReadReceipt
 	(*GetMessageReadReceiptsRequest)(nil),   // 49: messaging.chat.GetMessageReadReceiptsRequest
 	(*GetMessageReadReceiptsResponse)(nil),  // 50: messaging.chat.GetMessageReadReceiptsResponse
-	(*ForwardMessageRequest)(nil),           // 51: messaging.chat.ForwardMessageRequest
-	(*ForwardMessageResponse)(nil),          // 52: messaging.chat.ForwardMessageResponse
-	(*DeleteChatRequest)(nil),               // 53: messaging.chat.DeleteChatRequest
-	(*DeleteChatResponse)(nil),              // 54: messaging.chat.DeleteChatResponse
-	(*DeleteChatHistoryRequest)(nil),        // 55: messaging.chat.DeleteChatHistoryRequest
-	(*DeleteChatHistoryResponse)(nil),       // 56: messaging.chat.DeleteChatHistoryResponse
-	(*UpdateGroupAvatarRequest)(nil),        // 57: messaging.chat.UpdateGroupAvatarRequest
-	(*UpdateGroupAvatarResponse)(nil),       // 58: messaging.chat.UpdateGroupAvatarResponse
-	nil,                                     // 59: messaging.chat.Message.MetadataEntry
-	nil,                                     // 60: messaging.chat.Group.MetadataEntry
-	nil,                                     // 61: messaging.chat.SendMessageRequest.MetadataEntry
-	nil,                                     // 62: messaging.chat.CreateGroupRequest.MetadataEntry
-	(*timestamppb.Timestamp)(nil),           // 63: google.protobuf.Timestamp
+	(*ChatSyncCursor)(nil),                  // 51: messaging.chat.ChatSyncCursor
+	(*ChatSyncResult)(nil),                  // 52: messaging.chat.ChatSyncResult
+	(*SyncOfflineMessagesRequest)(nil),      // 53: messaging.chat.SyncOfflineMessagesRequest
+	(*SyncOfflineMessagesResponse)(nil),     // 54: messaging.chat.SyncOfflineMessagesResponse
+	(*ForwardMessageRequest)(nil),           // 55: messaging.chat.ForwardMessageRequest
+	(*ForwardMessageResponse)(nil),          // 56: messaging.chat.ForwardMessageResponse
+	(*DeleteChatRequest)(nil),               // 57: messaging.chat.DeleteChatRequest
+	(*DeleteChatResponse)(nil),              // 58: messaging.chat.DeleteChatResponse
+	(*DeleteChatHistoryRequest)(nil),        // 59: messaging.chat.DeleteChatHistoryRequest
+	(*DeleteChatHistoryResponse)(nil),       // 60: messaging.chat.DeleteChatHistoryResponse
+	(*UpdateGroupAvatarRequest)(nil),        // 61: messaging.chat.UpdateGroupAvatarRequest
+	(*UpdateGroupAvatarResponse)(nil),       // 62: messaging.chat.UpdateGroupAvatarResponse
+	nil,                                     // 63: messaging.chat.Message.MetadataEntry
+	nil,                                     // 64: messaging.chat.Group.MetadataEntry
+	nil,                                     // 65: messaging.chat.SendMessageRequest.MetadataEntry
+	nil,                                     // 66: messaging.chat.CreateGroupRequest.MetadataEntry
+	(*timestamppb.Timestamp)(nil),           // 67: google.protobuf.Timestamp
 }
 var file_idl_messaging_chat_proto_depIdxs = []int32{
 	1,  // 0: messaging.chat.Message.chat_type:type_name -> messaging.chat.ChatType
 	0,  // 1: messaging.chat.Message.message_type:type_name -> messaging.chat.MessageType
-	59, // 2: messaging.chat.Message.metadata:type_name -> messaging.chat.Message.MetadataEntry
+	63, // 2: messaging.chat.Message.metadata:type_name -> messaging.chat.Message.MetadataEntry
 	2,  // 3: messaging.chat.Message.status:type_name -> messaging.chat.MessageStatus
-	63, // 4: messaging.chat.Message.created_at:type_name -> google.protobuf.Timestamp
-	63, // 5: messaging.chat.Message.updated_at:type_name -> google.protobuf.Timestamp
-	60, // 6: messaging.chat.Group.metadata:type_name -> messaging.chat.Group.MetadataEntry
-	63, // 7: messaging.chat.Group.created_at:type_name -> google.protobuf.Timestamp
-	63, // 8: messaging.chat.Group.updated_at:type_name -> google.protobuf.Timestamp
+	67, // 4: messaging.chat.Message.created_at:type_name -> google.protobuf.Timestamp
+	67, // 5: messaging.chat.Message.updated_at:type_name -> google.protobuf.Timestamp
+	64, // 6: messaging.chat.Group.metadata:type_name -> messaging.chat.Group.MetadataEntry
+	67, // 7: messaging.chat.Group.created_at:type_name -> google.protobuf.Timestamp
+	67, // 8: messaging.chat.Group.updated_at:type_name -> google.protobuf.Timestamp
 	3,  // 9: messaging.chat.GroupMember.role:type_name -> messaging.chat.GroupMemberRole
 	4,  // 10: messaging.chat.GroupMember.mute_type:type_name -> messaging.chat.MuteType
-	63, // 11: messaging.chat.GroupMember.mute_until:type_name -> google.protobuf.Timestamp
-	63, // 12: messaging.chat.GroupMember.joined_at:type_name -> google.protobuf.Timestamp
+	67, // 11: messaging.chat.GroupMember.mute_until:type_name -> google.protobuf.Timestamp
+	67, // 12: messaging.chat.GroupMember.joined_at:type_name -> google.protobuf.Timestamp
 	1,  // 13: messaging.chat.SendMessageRequest.chat_type:type_name -> messaging.chat.ChatType
 	0,  // 14: messaging.chat.SendMessageRequest.message_type:type_name -> messaging.chat.MessageType
-	61, // 15: messaging.chat.SendMessageRequest.metadata:type_name -> messaging.chat.SendMessageRequest.MetadataEntry
+	65, // 15: messaging.chat.SendMessageRequest.metadata:type_name -> messaging.chat.SendMessageRequest.MetadataEntry
 	5,  // 16: messaging.chat.SendMessageResponse.data:type_name -> messaging.chat.Message
 	1,  // 17: messaging.chat.SearchMessagesRequest.chat_type:type_name -> messaging.chat.ChatType
-	63, // 18: messaging.chat.SearchMessagesRequest.start_time:type_name -> google.protobuf.Timestamp
-	63, // 19: messaging.chat.SearchMessagesRequest.end_time:type_name -> google.protobuf.Timestamp
+	67, // 18: messaging.chat.SearchMessagesRequest.start_time:type_name -> google.protobuf.Timestamp
+	67, // 19: messaging.chat.SearchMessagesRequest.end_time:type_name -> google.protobuf.Timestamp
 	5,  // 20: messaging.chat.SearchMessagesResponse.messages:type_name -> messaging.chat.Message
 	1,  // 21: messaging.chat.GetMessageHistoryRequest.chat_type:type_name -> messaging.chat.ChatType
-	63, // 22: messaging.chat.GetMessageHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
+	67, // 22: messaging.chat.GetMessageHistoryRequest.before_time:type_name -> google.protobuf.Timestamp
 	5,  // 23: messaging.chat.GetMessageHistoryResponse.messages:type_name -> messaging.chat.Message
 	1,  // 24: messaging.chat.MarkMessagesReadRequest.chat_type:type_name -> messaging.chat.ChatType
 	5,  // 25: messaging.chat.EditMessageResponse.data:type_name -> messaging.chat.Message
-	62, // 26: messaging.chat.CreateGroupRequest.metadata:type_name -> messaging.chat.CreateGroupRequest.MetadataEntry
+	66, // 26: messaging.chat.CreateGroupRequest.metadata:type_name -> messaging.chat.CreateGroupRequest.MetadataEntry
 	6,  // 27: messaging.chat.CreateGroupResponse.data:type_name -> messaging.chat.Group
 	4,  // 28: messaging.chat.MuteGroupMemberRequest.mute_type:type_name -> messaging.chat.MuteType
-	63, // 29: messaging.chat.MuteGroupMemberRequest.mute_until:type_name -> google.protobuf.Timestamp
+	67, // 29: messaging.chat.MuteGroupMemberRequest.mute_until:type_name -> google.protobuf.Timestamp
 	7,  // 30: messaging.chat.GetGroupMembersResponse.members:type_name -> messaging.chat.GroupMember
 	6,  // 31: messaging.chat.GetGroupResponse.data:type_name -> messaging.chat.Group
 	1,  // 32: messaging.chat.ConversationItem.chat_type:type_name -> messaging.chat.ChatType
 	5,  // 33: messaging.chat.ConversationItem.last_message:type_name -> messaging.chat.Message
-	63, // 34: messaging.chat.ConversationItem.updated_at:type_name -> google.protobuf.Timestamp
+	67, // 34: messaging.chat.ConversationItem.updated_at:type_name -> google.protobuf.Timestamp
 	42, // 35: messaging.chat.GetConversationListResponse.conversations:type_name -> messaging.chat.ConversationItem
 	46, // 36: messaging.chat.GetUnreadCountResponse.counts:type_name -> messaging.chat.ChatUnreadCount
 	1,  // 37: messaging.chat.GetMessageReadReceiptsRequest.chat_type:type_name -> messaging.chat.ChatType
 	48, // 38: messaging.chat.GetMessageReadReceiptsResponse.receipts:type_name -> messaging.chat.MessageReadReceipt
-	1,  // 39: messaging.chat.ForwardMessageRequest.target_chat_type:type_name -> messaging.chat.ChatType
-	5,  // 40: messaging.chat.ForwardMessageResponse.forwarded_messages:type_name -> messaging.chat.Message
-	1,  // 41: messaging.chat.DeleteChatRequest.chat_type:type_name -> messaging.chat.ChatType
-	8,  // 42: messaging.chat.ChatService.SendMessage:input_type -> messaging.chat.SendMessageRequest
-	10, // 43: messaging.chat.ChatService.SearchMessages:input_type -> messaging.chat.SearchMessagesRequest
-	12, // 44: messaging.chat.ChatService.GetMessageHistory:input_type -> messaging.chat.GetMessageHistoryRequest
-	14, // 45: messaging.chat.ChatService.MarkMessagesRead:input_type -> messaging.chat.MarkMessagesReadRequest
-	16, // 46: messaging.chat.ChatService.WithdrawMessage:input_type -> messaging.chat.WithdrawMessageRequest
-	18, // 47: messaging.chat.ChatService.EditMessage:input_type -> messaging.chat.EditMessageRequest
-	20, // 48: messaging.chat.ChatService.CreateGroup:input_type -> messaging.chat.CreateGroupRequest
-	22, // 49: messaging.chat.ChatService.InviteGroupMember:input_type -> messaging.chat.InviteGroupMemberRequest
-	24, // 50: messaging.chat.ChatService.KickGroupMember:input_type -> messaging.chat.KickGroupMemberRequest
-	26, // 51: messaging.chat.ChatService.MuteGroupMember:input_type -> messaging.chat.MuteGroupMemberRequest
-	28, // 52: messaging.chat.ChatService.TransferGroupOwner:input_type -> messaging.chat.TransferGroupOwnerRequest
-	30, // 53: messaging.chat.ChatService.UpdateGroupAnnouncement:input_type -> messaging.chat.UpdateGroupAnnouncementRequest
-	32, // 54: messaging.chat.ChatService.SetGroupAdmin:input_type -> messaging.chat.SetGroupAdminRequest
-	34, // 55: messaging.chat.ChatService.GetGroupMembers:input_type -> messaging.chat.GetGroupMembersRequest
-	36, // 56: messaging.chat.ChatService.JoinGroup:input_type -> messaging.chat.JoinGroupRequest
-	38, // 57: messaging.chat.ChatService.LeaveGroup:input_type -> messaging.chat.LeaveGroupRequest
-	40, // 58: messaging.chat.ChatService.GetGroup:input_type -> messaging.chat.GetGroupRequest
-	43, // 59: messaging.chat.ChatService.GetConversationList:input_type -> messaging.chat.GetConversationListRequest
-	45, // 60: messaging.chat.ChatService.GetUnreadCount:input_type -> messaging.chat.GetUnreadCountRequest
-	49, // 61: messaging.chat.ChatService.GetMessageReadReceipts:input_type -> messaging.chat.GetMessageReadReceiptsRequest
-	51, // 62: messaging.chat.ChatService.ForwardMessage:input_type -> messaging.chat.ForwardMessageRequest
-	53, // 63: messaging.chat.ChatService.DeleteChat:input_type -> messaging.chat.DeleteChatRequest
-	55, // 64: messaging.chat.ChatService.DeleteChatHistory:input_type -> messaging.chat.DeleteChatHistoryRequest
-	57, // 65: messaging.chat.ChatService.UpdateGroupAvatar:input_type -> messaging.chat.UpdateGroupAvatarRequest
-	9,  // 66: messaging.chat.ChatService.SendMessage:output_type -> messaging.chat.SendMessageResponse
-	11, // 67: messaging.chat.ChatService.SearchMessages:output_type -> messaging.chat.SearchMessagesResponse
-	13, // 68: messaging.chat.ChatService.GetMessageHistory:output_type -> messaging.chat.GetMessageHistoryResponse
-	15, // 69: messaging.chat.ChatService.MarkMessagesRead:output_type -> messaging.chat.MarkMessagesReadResponse
-	17, // 70: messaging.chat.ChatService.WithdrawMessage:output_type -> messaging.chat.WithdrawMessageResponse
-	19, // 71: messaging.chat.ChatService.EditMessage:output_type -> messaging.chat.EditMessageResponse
-	21, // 72: messaging.chat.ChatService.CreateGroup:output_type -> messaging.chat.CreateGroupResponse
-	23, // 73: messaging.chat.ChatService.InviteGroupMember:output_type -> messaging.chat.InviteGroupMemberResponse
-	25, // 74: messaging.chat.ChatService.KickGroupMember:output_type -> messaging.chat.KickGroupMemberResponse
-	27, // 75: messaging.chat.ChatService.MuteGroupMember:output_type -> messaging.chat.MuteGroupMemberResponse
-	29, // 76: messaging.chat.ChatService.TransferGroupOwner:output_type -> messaging.chat.TransferGroupOwnerResponse
-	31, // 77: messaging.chat.ChatService.UpdateGroupAnnouncement:output_type -> messaging.chat.UpdateGroupAnnouncementResponse
-	33, // 78: messaging.chat.ChatService.SetGroupAdmin:output_type -> messaging.chat.SetGroupAdminResponse
-	35, // 79: messaging.chat.ChatService.GetGroupMembers:output_type -> messaging.chat.GetGroupMembersResponse
-	37, // 80: messaging.chat.ChatService.JoinGroup:output_type -> messaging.chat.JoinGroupResponse
-	39, // 81: messaging.chat.ChatService.LeaveGroup:output_type -> messaging.chat.LeaveGroupResponse
-	41, // 82: messaging.chat.ChatService.GetGroup:output_type -> messaging.chat.GetGroupResponse
-	44, // 83: messaging.chat.ChatService.GetConversationList:output_type -> messaging.chat.GetConversationListResponse
-	47, // 84: messaging.chat.ChatService.GetUnreadCount:output_type -> messaging.chat.GetUnreadCountResponse
-	50, // 85: messaging.chat.ChatService.GetMessageReadReceipts:output_type -> messaging.chat.GetMessageReadReceiptsResponse
-	52, // 86: messaging.chat.ChatService.ForwardMessage:output_type -> messaging.chat.ForwardMessageResponse
-	54, // 87: messaging.chat.ChatService.DeleteChat:output_type -> messaging.chat.DeleteChatResponse
-	56, // 88: messaging.chat.ChatService.DeleteChatHistory:output_type -> messaging.chat.DeleteChatHistoryResponse
-	58, // 89: messaging.chat.ChatService.UpdateGroupAvatar:output_type -> messaging.chat.UpdateGroupAvatarResponse
-	66, // [66:90] is the sub-list for method output_type
-	42, // [42:66] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	5,  // 39: messaging.chat.ChatSyncResult.messages:type_name -> messaging.chat.Message
+	51, // 40: messaging.chat.SyncOfflineMessagesRequest.cursors:type_name -> messaging.chat.ChatSyncCursor
+	52, // 41: messaging.chat.SyncOfflineMessagesResponse.chats:type_name -> messaging.chat.ChatSyncResult
+	1,  // 42: messaging.chat.ForwardMessageRequest.target_chat_type:type_name -> messaging.chat.ChatType
+	5,  // 43: messaging.chat.ForwardMessageResponse.forwarded_messages:type_name -> messaging.chat.Message
+	1,  // 44: messaging.chat.DeleteChatRequest.chat_type:type_name -> messaging.chat.ChatType
+	8,  // 45: messaging.chat.ChatService.SendMessage:input_type -> messaging.chat.SendMessageRequest
+	10, // 46: messaging.chat.ChatService.SearchMessages:input_type -> messaging.chat.SearchMessagesRequest
+	12, // 47: messaging.chat.ChatService.GetMessageHistory:input_type -> messaging.chat.GetMessageHistoryRequest
+	14, // 48: messaging.chat.ChatService.MarkMessagesRead:input_type -> messaging.chat.MarkMessagesReadRequest
+	16, // 49: messaging.chat.ChatService.WithdrawMessage:input_type -> messaging.chat.WithdrawMessageRequest
+	18, // 50: messaging.chat.ChatService.EditMessage:input_type -> messaging.chat.EditMessageRequest
+	20, // 51: messaging.chat.ChatService.CreateGroup:input_type -> messaging.chat.CreateGroupRequest
+	22, // 52: messaging.chat.ChatService.InviteGroupMember:input_type -> messaging.chat.InviteGroupMemberRequest
+	24, // 53: messaging.chat.ChatService.KickGroupMember:input_type -> messaging.chat.KickGroupMemberRequest
+	26, // 54: messaging.chat.ChatService.MuteGroupMember:input_type -> messaging.chat.MuteGroupMemberRequest
+	28, // 55: messaging.chat.ChatService.TransferGroupOwner:input_type -> messaging.chat.TransferGroupOwnerRequest
+	30, // 56: messaging.chat.ChatService.UpdateGroupAnnouncement:input_type -> messaging.chat.UpdateGroupAnnouncementRequest
+	32, // 57: messaging.chat.ChatService.SetGroupAdmin:input_type -> messaging.chat.SetGroupAdminRequest
+	34, // 58: messaging.chat.ChatService.GetGroupMembers:input_type -> messaging.chat.GetGroupMembersRequest
+	36, // 59: messaging.chat.ChatService.JoinGroup:input_type -> messaging.chat.JoinGroupRequest
+	38, // 60: messaging.chat.ChatService.LeaveGroup:input_type -> messaging.chat.LeaveGroupRequest
+	40, // 61: messaging.chat.ChatService.GetGroup:input_type -> messaging.chat.GetGroupRequest
+	43, // 62: messaging.chat.ChatService.GetConversationList:input_type -> messaging.chat.GetConversationListRequest
+	45, // 63: messaging.chat.ChatService.GetUnreadCount:input_type -> messaging.chat.GetUnreadCountRequest
+	49, // 64: messaging.chat.ChatService.GetMessageReadReceipts:input_type -> messaging.chat.GetMessageReadReceiptsRequest
+	53, // 65: messaging.chat.ChatService.SyncOfflineMessages:input_type -> messaging.chat.SyncOfflineMessagesRequest
+	55, // 66: messaging.chat.ChatService.ForwardMessage:input_type -> messaging.chat.ForwardMessageRequest
+	57, // 67: messaging.chat.ChatService.DeleteChat:input_type -> messaging.chat.DeleteChatRequest
+	59, // 68: messaging.chat.ChatService.DeleteChatHistory:input_type -> messaging.chat.DeleteChatHistoryRequest
+	61, // 69: messaging.chat.ChatService.UpdateGroupAvatar:input_type -> messaging.chat.UpdateGroupAvatarRequest
+	9,  // 70: messaging.chat.ChatService.SendMessage:output_type -> messaging.chat.SendMessageResponse
+	11, // 71: messaging.chat.ChatService.SearchMessages:output_type -> messaging.chat.SearchMessagesResponse
+	13, // 72: messaging.chat.ChatService.GetMessageHistory:output_type -> messaging.chat.GetMessageHistoryResponse
+	15, // 73: messaging.chat.ChatService.MarkMessagesRead:output_type -> messaging.chat.MarkMessagesReadResponse
+	17, // 74: messaging.chat.ChatService.WithdrawMessage:output_type -> messaging.chat.WithdrawMessageResponse
+	19, // 75: messaging.chat.ChatService.EditMessage:output_type -> messaging.chat.EditMessageResponse
+	21, // 76: messaging.chat.ChatService.CreateGroup:output_type -> messaging.chat.CreateGroupResponse
+	23, // 77: messaging.chat.ChatService.InviteGroupMember:output_type -> messaging.chat.InviteGroupMemberResponse
+	25, // 78: messaging.chat.ChatService.KickGroupMember:output_type -> messaging.chat.KickGroupMemberResponse
+	27, // 79: messaging.chat.ChatService.MuteGroupMember:output_type -> messaging.chat.MuteGroupMemberResponse
+	29, // 80: messaging.chat.ChatService.TransferGroupOwner:output_type -> messaging.chat.TransferGroupOwnerResponse
+	31, // 81: messaging.chat.ChatService.UpdateGroupAnnouncement:output_type -> messaging.chat.UpdateGroupAnnouncementResponse
+	33, // 82: messaging.chat.ChatService.SetGroupAdmin:output_type -> messaging.chat.SetGroupAdminResponse
+	35, // 83: messaging.chat.ChatService.GetGroupMembers:output_type -> messaging.chat.GetGroupMembersResponse
+	37, // 84: messaging.chat.ChatService.JoinGroup:output_type -> messaging.chat.JoinGroupResponse
+	39, // 85: messaging.chat.ChatService.LeaveGroup:output_type -> messaging.chat.LeaveGroupResponse
+	41, // 86: messaging.chat.ChatService.GetGroup:output_type -> messaging.chat.GetGroupResponse
+	44, // 87: messaging.chat.ChatService.GetConversationList:output_type -> messaging.chat.GetConversationListResponse
+	47, // 88: messaging.chat.ChatService.GetUnreadCount:output_type -> messaging.chat.GetUnreadCountResponse
+	50, // 89: messaging.chat.ChatService.GetMessageReadReceipts:output_type -> messaging.chat.GetMessageReadReceiptsResponse
+	54, // 90: messaging.chat.ChatService.SyncOfflineMessages:output_type -> messaging.chat.SyncOfflineMessagesResponse
+	56, // 91: messaging.chat.ChatService.ForwardMessage:output_type -> messaging.chat.ForwardMessageResponse
+	58, // 92: messaging.chat.ChatService.DeleteChat:output_type -> messaging.chat.DeleteChatResponse
+	60, // 93: messaging.chat.ChatService.DeleteChatHistory:output_type -> messaging.chat.DeleteChatHistoryResponse
+	62, // 94: messaging.chat.ChatService.UpdateGroupAvatar:output_type -> messaging.chat.UpdateGroupAvatarResponse
+	70, // [70:95] is the sub-list for method output_type
+	45, // [45:70] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_idl_messaging_chat_proto_init() }
@@ -4246,7 +4522,7 @@ func file_idl_messaging_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_idl_messaging_chat_proto_rawDesc), len(file_idl_messaging_chat_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   58,
+			NumMessages:   62,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -405,6 +405,38 @@ message GetMessageReadReceiptsResponse {
   repeated MessageReadReceipt receipts = 3;
 }
 
+// 离线同步游标：客户端为每个会话维护「已见过的最大 seq」
+message ChatSyncCursor {
+  string chat_id = 1;
+  int64 last_seq = 2;
+}
+
+// 单个会话的增量同步结果
+message ChatSyncResult {
+  string chat_id = 1;
+  // 按 seq 升序的增量消息
+  repeated Message messages = 2;
+  // 会话当前最大 seq，客户端应以此推进游标（即使本次没有消息）
+  int64 latest_seq = 3;
+  // 本人清空历史的水位线：<= 该 seq 的本地缓存应被丢弃，避免被重新拉回
+  int64 cleared_seq = 4;
+  // 本次是否还有更多（客户端可继续用返回的最大 seq 再次拉取）
+  bool has_more = 5;
+}
+
+message SyncOfflineMessagesRequest {
+  // 一次最多 100 个会话
+  repeated ChatSyncCursor cursors = 1;
+  // 每个会话返回的消息上限，默认 50，最大 200
+  int32 limit = 2;
+}
+
+message SyncOfflineMessagesResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated ChatSyncResult chats = 3;
+}
+
 // 转发消息请求
 message ForwardMessageRequest {
   string message_id = 1;
@@ -515,6 +547,9 @@ service ChatService {
 
   // 获取消息已读回执（发送者视角的已读人数）
   rpc GetMessageReadReceipts(GetMessageReadReceiptsRequest) returns (GetMessageReadReceiptsResponse);
+
+  // 离线/断线重连后的批量增量同步（一次请求补齐多个会话）
+  rpc SyncOfflineMessages(SyncOfflineMessagesRequest) returns (SyncOfflineMessagesResponse);
   
   // 转发消息
   rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);

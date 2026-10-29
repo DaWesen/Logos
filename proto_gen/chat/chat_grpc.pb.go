@@ -39,6 +39,7 @@ const (
 	ChatService_GetConversationList_FullMethodName     = "/messaging.chat.ChatService/GetConversationList"
 	ChatService_GetUnreadCount_FullMethodName          = "/messaging.chat.ChatService/GetUnreadCount"
 	ChatService_GetMessageReadReceipts_FullMethodName  = "/messaging.chat.ChatService/GetMessageReadReceipts"
+	ChatService_SyncOfflineMessages_FullMethodName     = "/messaging.chat.ChatService/SyncOfflineMessages"
 	ChatService_ForwardMessage_FullMethodName          = "/messaging.chat.ChatService/ForwardMessage"
 	ChatService_DeleteChat_FullMethodName              = "/messaging.chat.ChatService/DeleteChat"
 	ChatService_DeleteChatHistory_FullMethodName       = "/messaging.chat.ChatService/DeleteChatHistory"
@@ -91,6 +92,8 @@ type ChatServiceClient interface {
 	GetUnreadCount(ctx context.Context, in *GetUnreadCountRequest, opts ...grpc.CallOption) (*GetUnreadCountResponse, error)
 	// 获取消息已读回执（发送者视角的已读人数）
 	GetMessageReadReceipts(ctx context.Context, in *GetMessageReadReceiptsRequest, opts ...grpc.CallOption) (*GetMessageReadReceiptsResponse, error)
+	// 离线/断线重连后的批量增量同步（一次请求补齐多个会话）
+	SyncOfflineMessages(ctx context.Context, in *SyncOfflineMessagesRequest, opts ...grpc.CallOption) (*SyncOfflineMessagesResponse, error)
 	// 转发消息
 	ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error)
 	// 删除聊天
@@ -309,6 +312,16 @@ func (c *chatServiceClient) GetMessageReadReceipts(ctx context.Context, in *GetM
 	return out, nil
 }
 
+func (c *chatServiceClient) SyncOfflineMessages(ctx context.Context, in *SyncOfflineMessagesRequest, opts ...grpc.CallOption) (*SyncOfflineMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SyncOfflineMessagesResponse)
+	err := c.cc.Invoke(ctx, ChatService_SyncOfflineMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *chatServiceClient) ForwardMessage(ctx context.Context, in *ForwardMessageRequest, opts ...grpc.CallOption) (*ForwardMessageResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ForwardMessageResponse)
@@ -395,6 +408,8 @@ type ChatServiceServer interface {
 	GetUnreadCount(context.Context, *GetUnreadCountRequest) (*GetUnreadCountResponse, error)
 	// 获取消息已读回执（发送者视角的已读人数）
 	GetMessageReadReceipts(context.Context, *GetMessageReadReceiptsRequest) (*GetMessageReadReceiptsResponse, error)
+	// 离线/断线重连后的批量增量同步（一次请求补齐多个会话）
+	SyncOfflineMessages(context.Context, *SyncOfflineMessagesRequest) (*SyncOfflineMessagesResponse, error)
 	// 转发消息
 	ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error)
 	// 删除聊天
@@ -472,6 +487,9 @@ func (UnimplementedChatServiceServer) GetUnreadCount(context.Context, *GetUnread
 }
 func (UnimplementedChatServiceServer) GetMessageReadReceipts(context.Context, *GetMessageReadReceiptsRequest) (*GetMessageReadReceiptsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMessageReadReceipts not implemented")
+}
+func (UnimplementedChatServiceServer) SyncOfflineMessages(context.Context, *SyncOfflineMessagesRequest) (*SyncOfflineMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SyncOfflineMessages not implemented")
 }
 func (UnimplementedChatServiceServer) ForwardMessage(context.Context, *ForwardMessageRequest) (*ForwardMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ForwardMessage not implemented")
@@ -866,6 +884,24 @@ func _ChatService_GetMessageReadReceipts_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ChatService_SyncOfflineMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncOfflineMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).SyncOfflineMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_SyncOfflineMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).SyncOfflineMessages(ctx, req.(*SyncOfflineMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ChatService_ForwardMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ForwardMessageRequest)
 	if err := dec(in); err != nil {
@@ -1024,6 +1060,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMessageReadReceipts",
 			Handler:    _ChatService_GetMessageReadReceipts_Handler,
+		},
+		{
+			MethodName: "SyncOfflineMessages",
+			Handler:    _ChatService_SyncOfflineMessages_Handler,
 		},
 		{
 			MethodName: "ForwardMessage",

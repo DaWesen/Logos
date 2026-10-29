@@ -31,12 +31,15 @@ func TestMain(m *testing.M) {
 // stubChatRepo 只实现访问控制路径用到的查询，其余方法由内嵌接口兜底（误调用会 panic）。
 type stubChatRepo struct {
 	dao.ChatRepository
-	groups    map[string]*model.Group
-	members   map[string]*model.GroupMember
-	maxSeqs   map[string]int64
-	cleared   []clearCall
-	messages  map[string]*model.Message
-	positions map[string][]dao.ReadPosition
+	groups     map[string]*model.Group
+	members    map[string]*model.GroupMember
+	maxSeqs    map[string]int64
+	cleared    []clearCall
+	messages   map[string]*model.Message
+	positions  map[string][]dao.ReadPosition
+	watermarks map[string]dao.ParticipantWatermark
+	chatSeqs   map[string]int64
+	chatMsgs   map[string][]*model.Message
 }
 
 type clearCall struct {
@@ -74,6 +77,40 @@ func (r *stubChatRepo) GetMessagesByIDs(_ context.Context, msgIDs []string) ([]*
 
 func (r *stubChatRepo) GetReadPositions(_ context.Context, conversationID string) ([]dao.ReadPosition, error) {
 	return r.positions[conversationID], nil
+}
+
+func (r *stubChatRepo) GetParticipantWatermarks(_ context.Context, _ string, conversationIDs []string) (map[string]dao.ParticipantWatermark, error) {
+	out := make(map[string]dao.ParticipantWatermark, len(conversationIDs))
+	for _, id := range conversationIDs {
+		if wm, ok := r.watermarks[id]; ok {
+			out[id] = wm
+		}
+	}
+	return out, nil
+}
+
+func (r *stubChatRepo) GetMaxSeqByChatIDs(_ context.Context, chatIDs []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(chatIDs))
+	for _, id := range chatIDs {
+		if seq, ok := r.chatSeqs[id]; ok {
+			out[id] = seq
+		}
+	}
+	return out, nil
+}
+
+// GetMessagesAfterSeq 按 seq 升序返回增量，行为与真实实现一致（limit 由调用方给 limit+1）。
+func (r *stubChatRepo) GetMessagesAfterSeq(_ context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
+	var out []*model.Message
+	for _, m := range r.chatMsgs[chatID] {
+		if m.Seq > afterSeq {
+			out = append(out, m)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func newAccessService(repo dao.ChatRepository) *ChatServiceImpl {

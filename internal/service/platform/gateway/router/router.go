@@ -378,6 +378,9 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 			// 已读回执（发送者视角的已读人数）
 			chat.POST("/read-receipts", h.GetMessageReadReceipts)
 
+			// 断线重连后的批量增量同步（一次请求补齐多个会话）
+			chat.POST("/sync", h.SyncChatMessages)
+
 			// 会话列表
 			chat.GET("/conversations", h.GetConversationList)
 			chat.GET("/unread", h.GetUnreadCount)

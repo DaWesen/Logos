@@ -395,6 +395,22 @@ func (ConversationSeq) TableName() string {
 	return "conversation_seqs"
 }
 
+// SyncCursor 是客户端为单个会话维护的同步游标（已见过的最大 seq）。
+type SyncCursor struct {
+	ChatID  string `json:"chat_id"`
+	LastSeq int64  `json:"last_seq"`
+}
+
+// ChatSyncResult 是单个会话的增量同步结果。
+// LatestSeq 让客户端即使本次没有消息也能推进游标；ClearedSeq 让客户端丢弃已被本人清空的本地缓存。
+type ChatSyncResult struct {
+	ChatID     string     `json:"chat_id"`
+	Messages   []*Message `json:"messages"`
+	LatestSeq  int64      `json:"latest_seq"`
+	ClearedSeq int64      `json:"cleared_seq"`
+	HasMore    bool       `json:"has_more"`
+}
+
 // MessageReadReceipt 是消息已读回执的聚合结果，不落库：
 // 由会话参与者的已读位点（last_read_seq）与该消息 seq 比对得出，
 // 因此消息写入路径无需为每条消息 × 每个成员写已读记录。

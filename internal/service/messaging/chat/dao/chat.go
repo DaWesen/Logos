@@ -78,6 +78,10 @@ type ChatRepository interface {
 	GetMessagesByIDs(ctx context.Context, msgIDs []string) ([]*model.Message, error)
 	// GetReadPositions 返回会话内各成员的已读位点，已读回执由位点比对聚合得出。
 	GetReadPositions(ctx context.Context, conversationID string) ([]ReadPosition, error)
+	// GetParticipantWatermarks 批量取用户在各会话的位点；无记录即非成员，用于离线同步的访问校验。
+	GetParticipantWatermarks(ctx context.Context, userID string, conversationIDs []string) (map[string]ParticipantWatermark, error)
+	// GetMaxSeqByChatIDs 批量取各会话当前最大 seq，用于推进客户端同步游标。
+	GetMaxSeqByChatIDs(ctx context.Context, chatIDs []string) (map[string]int64, error)
 	// GetClearedSeq 返回用户在会话内的清空水位线（无记录时为 0）。
 	GetClearedSeq(ctx context.Context, conversationID, userID string) (int64, error)
 	// ClearConversationForUser 把用户的清空水位线单调推进到 seq（同时推进已读位点）。
@@ -262,6 +266,58 @@ func (r *chatRepositoryImpl) GetMessagesByIDs(ctx context.Context, msgIDs []stri
 	var messages []*model.Message
 	err := r.db.WithContext(ctx).Where("id IN ?", msgIDs).Find(&messages).Error
 	return messages, err
+}
+
+// ParticipantWatermark 是会话参与者的位点投影（已读位点 + 清空水位线）。
+type ParticipantWatermark struct {
+	ConversationID string `gorm:"column:conversation_id"`
+	LastReadSeq    int64  `gorm:"column:last_read_seq"`
+	ClearedSeq     int64  `gorm:"column:cleared_seq"`
+}
+
+// GetParticipantWatermarks 用一次查询拿到用户在多个会话的位点。
+// 返回的 map 同时充当访问白名单：没有参与记录（非成员、已退群、被踢）的会话不会出现在结果里。
+func (r *chatRepositoryImpl) GetParticipantWatermarks(ctx context.Context, userID string, conversationIDs []string) (map[string]ParticipantWatermark, error) {
+	result := make(map[string]ParticipantWatermark, len(conversationIDs))
+	if userID == "" || len(conversationIDs) == 0 {
+		return result, nil
+	}
+	var rows []ParticipantWatermark
+	err := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("user_id = ? AND conversation_id IN ?", userID, conversationIDs).
+		Select("conversation_id, last_read_seq, cleared_seq").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.ConversationID] = row
+	}
+	return result, nil
+}
+
+// GetMaxSeqByChatIDs 用一次 GROUP BY 取各会话当前最大 seq，避免按会话逐个查询。
+func (r *chatRepositoryImpl) GetMaxSeqByChatIDs(ctx context.Context, chatIDs []string) (map[string]int64, error) {
+	result := make(map[string]int64, len(chatIDs))
+	if len(chatIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		ChatID string `gorm:"column:chat_id"`
+		Seq    int64  `gorm:"column:seq"`
+	}
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("chat_id IN ?", chatIDs).
+		Select("chat_id, COALESCE(MAX(seq), 0) AS seq").
+		Group("chat_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.ChatID] = row.Seq
+	}
+	return result, nil
 }
 
 // GetReadPositions 一次取回会话内所有成员的已读位点（会话成员数有上限），

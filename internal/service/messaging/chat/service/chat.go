@@ -59,6 +59,7 @@ type ChatService interface {
 	GetUnreadCounts(userID string, chatIDs []string) (map[string]int64, error)
 	GetTotalUnreadCount(userID string) (int64, error)
 	GetMessageReadReceipts(userID, chatID string, messageIDs []string, includeReaders bool) ([]*model.MessageReadReceipt, error)
+	SyncOfflineMessages(userID string, cursors []model.SyncCursor, limit int) ([]*model.ChatSyncResult, error)
 	ForwardMessage(messageID string, targetChatIDs []string, senderID string) ([]*model.Message, error)
 	DeleteChat(chatID string, userID string, chatType model.ChatType) error
 }
@@ -2310,6 +2311,100 @@ func (s *ChatServiceImpl) GetMessageReadReceipts(userID, chatID string, messageI
 		receipts = append(receipts, receipt)
 	}
 	return receipts, nil
+}
+
+const (
+	// maxSyncChats 单次离线同步的会话数上限，避免重连时一次拉出全部会话历史。
+	maxSyncChats = 100
+	// defaultSyncLimit / maxSyncLimit 每会话返回条数：默认 50，上限 200。
+	defaultSyncLimit = 50
+	maxSyncLimit     = 200
+)
+
+// SyncOfflineMessages 批量补齐客户端离线期间的增量消息。
+//
+// 为什么需要它：实时推送走 Redis PubSub，订阅者掉线期间的消息不会重投；
+// 逐会话调用历史接口在会话多时是 N 次往返。这里一次请求带多个游标，
+// 服务端一次查出访问白名单与各会话最大 seq，再按会话走 (chat_id, seq) 索引取增量。
+//
+// 语义：
+//   - 游标低于本人清空水位线时抬升到水位线，避免把已清空的历史重新拉回；
+//   - 非成员/已退群/被踢的会话静默跳过，不泄露会话是否存在；
+//   - LatestSeq 即使本次没有新消息也返回，客户端可安全推进游标；
+//   - 每会话最多 limit 条，HasMore 标记还有更多，客户端可用返回的最大 seq 继续拉。
+func (s *ChatServiceImpl) SyncOfflineMessages(userID string, cursors []model.SyncCursor, limit int) ([]*model.ChatSyncResult, error) {
+	if userID == "" {
+		return nil, types.ErrChatAccessDenied
+	}
+	if len(cursors) == 0 || len(cursors) > maxSyncChats {
+		return nil, types.ErrChatBadRequest
+	}
+	if limit <= 0 {
+		limit = defaultSyncLimit
+	}
+	if limit > maxSyncLimit {
+		limit = maxSyncLimit
+	}
+
+	chatIDs := make([]string, 0, len(cursors))
+	cursorByChat := make(map[string]int64, len(cursors))
+	for _, c := range cursors {
+		if c.ChatID == "" {
+			continue
+		}
+		if _, ok := cursorByChat[c.ChatID]; ok {
+			continue
+		}
+		cursorByChat[c.ChatID] = c.LastSeq
+		chatIDs = append(chatIDs, c.ChatID)
+	}
+	if len(chatIDs) == 0 {
+		return nil, types.ErrChatBadRequest
+	}
+
+	// 参与者位点既提供清空水位线，也充当访问白名单。
+	watermarks, err := s.repo.GetParticipantWatermarks(s.ctx, userID, chatIDs)
+	if err != nil {
+		return nil, err
+	}
+	latestSeqs, err := s.repo.GetMaxSeqByChatIDs(s.ctx, chatIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]*model.ChatSyncResult, 0, len(chatIDs))
+	for _, chatID := range chatIDs {
+		wm, ok := watermarks[chatID]
+		if !ok {
+			logger.Debug("离线同步跳过非成员会话",
+				logger.StringField("user_id", userID),
+				logger.StringField("chat_id", chatID))
+			continue
+		}
+
+		afterSeq := cursorByChat[chatID]
+		if afterSeq < wm.ClearedSeq {
+			afterSeq = wm.ClearedSeq
+		}
+
+		messages, err := s.repo.GetMessagesAfterSeq(s.ctx, chatID, afterSeq, limit+1)
+		if err != nil {
+			return nil, err
+		}
+		hasMore := len(messages) > limit
+		if hasMore {
+			messages = messages[:limit]
+		}
+
+		results = append(results, &model.ChatSyncResult{
+			ChatID:     chatID,
+			Messages:   messages,
+			LatestSeq:  latestSeqs[chatID],
+			ClearedSeq: wm.ClearedSeq,
+			HasMore:    hasMore,
+		})
+	}
+	return results, nil
 }
 
 func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []string, senderID string) ([]*model.Message, error) {

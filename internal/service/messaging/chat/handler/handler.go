@@ -541,6 +541,43 @@ func (s *ChatServiceImpl) GetMessageReadReceipts(ctx context.Context, req *pb.Ge
 	return &pb.GetMessageReadReceiptsResponse{Code: 200, Message: "查询成功", Receipts: pbReceipts}, nil
 }
 
+func (s *ChatServiceImpl) SyncOfflineMessages(ctx context.Context, req *pb.SyncOfflineMessagesRequest) (*pb.SyncOfflineMessagesResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.SyncOfflineMessagesResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	cursors := make([]model.SyncCursor, 0, len(req.Cursors))
+	for _, c := range req.Cursors {
+		cursors = append(cursors, model.SyncCursor{ChatID: c.ChatId, LastSeq: c.LastSeq})
+	}
+
+	results, err := s.service.SyncOfflineMessages(userID, cursors, int(req.Limit))
+	if err != nil {
+		code, msg := chatErrorCode(err)
+		logger.Warn("离线消息同步失败",
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return &pb.SyncOfflineMessagesResponse{Code: code, Message: msg}, nil
+	}
+
+	chats := make([]*pb.ChatSyncResult, 0, len(results))
+	for _, r := range results {
+		msgs := make([]*pb.Message, 0, len(r.Messages))
+		for _, msg := range r.Messages {
+			msgs = append(msgs, msgToProto(msg))
+		}
+		chats = append(chats, &pb.ChatSyncResult{
+			ChatId:     r.ChatID,
+			Messages:   msgs,
+			LatestSeq:  r.LatestSeq,
+			ClearedSeq: r.ClearedSeq,
+			HasMore:    r.HasMore,
+		})
+	}
+	return &pb.SyncOfflineMessagesResponse{Code: 200, Message: "同步成功", Chats: chats}, nil
+}
+
 func (s *ChatServiceImpl) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {
 	userID, err := getUserID(ctx)
 	if err != nil {
