@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	pb "Logos/proto_gen/bot"
 
@@ -272,7 +273,8 @@ func (h *Handler) StreamBotMessage(c *gin.Context) {
 			return
 		}
 		if err != nil {
-			writeSSEEvent(c, map[string]interface{}{"error": err.Error(), "done": true})
+			// 错误事件写失败也不必再重试：客户端已经断了，直接结束
+			_ = writeSSEEvent(c, map[string]interface{}{"error": err.Error(), "done": true})
 			return
 		}
 
@@ -289,7 +291,12 @@ func (h *Handler) StreamBotMessage(c *gin.Context) {
 		if resp.GetTokens() > 0 {
 			event["tokens"] = resp.GetTokens()
 		}
-		writeSSEEvent(c, event)
+		if err := writeSSEEvent(c, event); err != nil {
+			// 客户端已断开：结束 handler 会取消请求上下文，进而取消上游 gRPC 流，
+			// 停止继续生成，避免为一个已经离开的客户端持续消耗 token。
+			logger.Warn("SSE 写入失败，关闭流", logger.ErrorField(err))
+			return
+		}
 
 		if resp.GetDone() {
 			return
@@ -297,15 +304,25 @@ func (h *Handler) StreamBotMessage(c *gin.Context) {
 	}
 }
 
-func writeSSEEvent(c *gin.Context, data map[string]interface{}) {
+// sseWriteTimeout 单次 SSE 写超时。慢客户端读不动 socket 时 Write 会一直阻塞，
+// 拖住整个 gRPC 流与生成槽；超时后写返回错误，由调用方结束流并取消上游生成。
+const sseWriteTimeout = 10 * time.Second
+
+// writeSSEEvent 把事件写成 SSE 帧并立即刷出。返回错误表示客户端已不可写
+// （断开、超时或代理断开），调用方必须结束流，不能继续读取上游。
+func writeSSEEvent(c *gin.Context, data map[string]interface{}) error {
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		return
+		return fmt.Errorf("序列化 SSE 事件失败: %w", err)
 	}
+	// ResponseController 在底层支持时设置写截止时间；不支持时返回 ErrNotSupported，
+	// 此时退化为依赖写错误返回，行为仍然正确。
+	_ = http.NewResponseController(c.Writer).SetWriteDeadline(time.Now().Add(sseWriteTimeout))
 	if _, err := c.Writer.WriteString("data: " + string(jsonBytes) + "\n\n"); err != nil {
-		return
+		return err
 	}
 	c.Writer.Flush()
+	return nil
 }
 
 func (h *Handler) GetBotHistory(c *gin.Context) {

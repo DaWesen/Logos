@@ -17,6 +17,7 @@ import (
 	"Logos/pkg/auth"
 	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
+	pkgJwt "Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/storage"
 	pbBilling "Logos/proto_gen/billing"
@@ -76,6 +77,9 @@ type Handler struct {
 	ProcessServiceURL string
 	MinioManager      *storage.MinioManager
 	Cfg               *config.Config
+	// JWTManager / Revoker 供登出使用：解析当前令牌拿到 jti，再写入撤销黑名单
+	JWTManager *pkgJwt.JWTManager
+	Revoker    *auth.Revoker
 }
 
 func directDial(host string, port int) (*grpc.ClientConn, error) {

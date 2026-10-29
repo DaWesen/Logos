@@ -132,9 +132,10 @@ func runWSConnection(id int, token string, userID int64, result *WSResult, stop 
 	if u.Scheme == "https" {
 		scheme = "wss"
 	}
-	wsURL := fmt.Sprintf("%s://%s/ws?token=%s", scheme, u.Host, url.QueryEscape(token))
-
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	// 与前端一致：令牌走 WebSocket 子协议，不出现在 URL（避免进 access log / 历史记录）
+	wsURL := fmt.Sprintf("%s://%s/ws", scheme, u.Host)
+	dialer := websocket.Dialer{Subprotocols: []string{"access_token", token}}
+	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
 		atomic.AddInt64(&result.ConnectFailed, 1)
 		return

@@ -121,6 +121,48 @@ func (eb *EventBus) PublishOutgoingWithdrawEvent(ctx context.Context, event *Mes
 	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
 }
 
+func (eb *EventBus) PublishOutgoingDeleteEvent(ctx context.Context, event *MessageDeleteEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	// 分区键仍是会话：同会话的事件保持有序；是否真的投递到某用户由 RecipientIDs 决定。
+	key := event.ChatID
+	logger.Info("发布出站删除事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("message_id", event.MessageID),
+		logger.StringField("owner_id", event.OwnerID))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
+// PublishOutgoingEditEvent 发布消息编辑事件。分区键与会话一致，保证同会话事件有序；
+// 具体投递给谁由 RecipientIDs 决定（编辑广播给会话内全部成员，含发送者本人其他设备）。
+func (eb *EventBus) PublishOutgoingEditEvent(ctx context.Context, event *MessageEditEvent) error {
+	if eb.producer == nil {
+		return fmt.Errorf("producer not initialized")
+	}
+
+	data, err := event.ToJSON()
+	if err != nil {
+		return fmt.Errorf("serialize event failed: %w", err)
+	}
+
+	key := event.ChatID
+	logger.Info("发布出站编辑事件",
+		logger.StringField("chat_id", key),
+		logger.StringField("message_id", event.MessageID),
+		logger.IntField("version", int(event.Version)),
+		logger.IntField("recipient_count", len(event.RecipientIDs)))
+
+	return eb.producer.SendChatOutgoingEvent(ctx, key, data)
+}
+
 func (eb *EventBus) PublishPresenceEvent(ctx context.Context, event *UserPresenceEvent) error {
 	if eb.producer == nil {
 		return fmt.Errorf("producer not initialized")

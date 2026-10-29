@@ -24,6 +24,7 @@ const (
 	ChatService_GetMessageHistory_FullMethodName       = "/messaging.chat.ChatService/GetMessageHistory"
 	ChatService_MarkMessagesRead_FullMethodName        = "/messaging.chat.ChatService/MarkMessagesRead"
 	ChatService_WithdrawMessage_FullMethodName         = "/messaging.chat.ChatService/WithdrawMessage"
+	ChatService_DeleteMessage_FullMethodName           = "/messaging.chat.ChatService/DeleteMessage"
 	ChatService_EditMessage_FullMethodName             = "/messaging.chat.ChatService/EditMessage"
 	ChatService_CreateGroup_FullMethodName             = "/messaging.chat.ChatService/CreateGroup"
 	ChatService_InviteGroupMember_FullMethodName       = "/messaging.chat.ChatService/InviteGroupMember"
@@ -62,6 +63,8 @@ type ChatServiceClient interface {
 	MarkMessagesRead(ctx context.Context, in *MarkMessagesReadRequest, opts ...grpc.CallOption) (*MarkMessagesReadResponse, error)
 	// 撤回消息
 	WithdrawMessage(ctx context.Context, in *WithdrawMessageRequest, opts ...grpc.CallOption) (*WithdrawMessageResponse, error)
+	// 删除消息（仅对本人生效）
+	DeleteMessage(ctx context.Context, in *DeleteMessageRequest, opts ...grpc.CallOption) (*DeleteMessageResponse, error)
 	// 编辑消息
 	EditMessage(ctx context.Context, in *EditMessageRequest, opts ...grpc.CallOption) (*EditMessageResponse, error)
 	// 创建群组
@@ -156,6 +159,16 @@ func (c *chatServiceClient) WithdrawMessage(ctx context.Context, in *WithdrawMes
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WithdrawMessageResponse)
 	err := c.cc.Invoke(ctx, ChatService_WithdrawMessage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) DeleteMessage(ctx context.Context, in *DeleteMessageRequest, opts ...grpc.CallOption) (*DeleteMessageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteMessageResponse)
+	err := c.cc.Invoke(ctx, ChatService_DeleteMessage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +391,8 @@ type ChatServiceServer interface {
 	MarkMessagesRead(context.Context, *MarkMessagesReadRequest) (*MarkMessagesReadResponse, error)
 	// 撤回消息
 	WithdrawMessage(context.Context, *WithdrawMessageRequest) (*WithdrawMessageResponse, error)
+	// 删除消息（仅对本人生效）
+	DeleteMessage(context.Context, *DeleteMessageRequest) (*DeleteMessageResponse, error)
 	// 编辑消息
 	EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error)
 	// 创建群组
@@ -442,6 +457,9 @@ func (UnimplementedChatServiceServer) MarkMessagesRead(context.Context, *MarkMes
 }
 func (UnimplementedChatServiceServer) WithdrawMessage(context.Context, *WithdrawMessageRequest) (*WithdrawMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WithdrawMessage not implemented")
+}
+func (UnimplementedChatServiceServer) DeleteMessage(context.Context, *DeleteMessageRequest) (*DeleteMessageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteMessage not implemented")
 }
 func (UnimplementedChatServiceServer) EditMessage(context.Context, *EditMessageRequest) (*EditMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method EditMessage not implemented")
@@ -610,6 +628,24 @@ func _ChatService_WithdrawMessage_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ChatServiceServer).WithdrawMessage(ctx, req.(*WithdrawMessageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_DeleteMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteMessageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).DeleteMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_DeleteMessage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).DeleteMessage(ctx, req.(*DeleteMessageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1000,6 +1036,10 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WithdrawMessage",
 			Handler:    _ChatService_WithdrawMessage_Handler,
+		},
+		{
+			MethodName: "DeleteMessage",
+			Handler:    _ChatService_DeleteMessage_Handler,
 		},
 		{
 			MethodName: "EditMessage",

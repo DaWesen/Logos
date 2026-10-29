@@ -125,12 +125,13 @@ export async function kickGroupMember(groupId: string, userId: string): Promise<
   await client.post('/chat/group/kick', { group_id: groupId, user_id: userId })
 }
 
-export async function muteGroupMember(groupId: string, userId: string, duration = 0): Promise<void> {
-  await client.put('/chat/group/mute', { group_id: groupId, user_id: userId, duration })
+// duration 单位为分钟，0 表示永久禁言（网关会把时长换算成 mute_type + mute_until）
+export async function muteGroupMember(groupId: string, userId: string, durationMinutes = 0): Promise<void> {
+  await client.post('/chat/group/mute', { group_id: groupId, user_id: userId, duration: durationMinutes })
 }
 
 export async function transferGroupOwner(groupId: string, newOwnerId: string): Promise<void> {
-  await client.put('/chat/group/owner', { group_id: groupId, new_owner_id: newOwnerId })
+  await client.post('/chat/group/transfer', { group_id: groupId, new_owner_id: newOwnerId })
 }
 
 export async function updateGroupAnnouncement(groupId: string, announcement: string): Promise<void> {
@@ -138,7 +139,7 @@ export async function updateGroupAnnouncement(groupId: string, announcement: str
 }
 
 export async function setGroupAdmin(groupId: string, userId: string, isAdmin: boolean): Promise<void> {
-  await client.put('/chat/group/admin', { group_id: groupId, user_id: userId, is_admin: isAdmin })
+  await client.post('/chat/group/admin', { group_id: groupId, user_id: userId, is_admin: isAdmin })
 }
 
 export async function inviteBotToGroup(groupId: string, botId: string): Promise<void> {

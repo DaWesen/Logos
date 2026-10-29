@@ -147,6 +147,14 @@ type Kafka struct {
 	Brokers []string          `mapstructure:"brokers"`
 	Version string            `mapstructure:"version"`
 	Topics  map[string]string `mapstructure:"topics"`
+	// Partitions 新建 topic 的分区数（默认 6）。分区数决定出站并行度上限；
+	// 同一会话按 chat_id 哈希到同一分区，单会话内仍严格有序。
+	Partitions int `mapstructure:"partitions"`
+	// ReplicationFactor 副本数（开发默认 1；生产应 >= 2，否则任一 broker 挂掉分区即不可用）。
+	ReplicationFactor int `mapstructure:"replication_factor"`
+	// RequiredAcks 生产端确认级别：all（默认，等 ISR 全部落盘）/ leader / none。
+	// 与 ReplicationFactor >= 2 组合才真正具备 broker 级容灾。
+	RequiredAcks string `mapstructure:"required_acks"`
 }
 
 // Elasticsearch Elasticsearch配置
@@ -345,6 +353,19 @@ func overrideFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("KAFKA_BROKERS"); v != "" {
 		cfg.Kafka.Brokers = strings.Split(v, ",")
+	}
+	if v := os.Getenv("KAFKA_PARTITIONS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Kafka.Partitions = n
+		}
+	}
+	if v := os.Getenv("KAFKA_REPLICATION_FACTOR"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Kafka.ReplicationFactor = n
+		}
+	}
+	if v := os.Getenv("KAFKA_REQUIRED_ACKS"); v != "" {
+		cfg.Kafka.RequiredAcks = v
 	}
 	if v := os.Getenv("ETCD_ENDPOINTS"); v != "" {
 		cfg.Etcd.Endpoints = strings.Split(v, ",")

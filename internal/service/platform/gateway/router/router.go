@@ -6,8 +6,10 @@ import (
 	"Logos/internal/service/platform/gateway/handler"
 	"Logos/internal/service/platform/gateway/middleware"
 	"Logos/internal/service/platform/gateway/websocket"
+	"Logos/pkg/auth"
 	"Logos/pkg/cache"
 	"Logos/pkg/client"
+	pkgJwt "Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/storage"
 	"os"
@@ -278,6 +280,9 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		ProcessServiceURL: processServiceURL,
 		MinioManager:      minioManager,
 		Cfg:               cfg,
+		// 撤销状态放 Redis：登出/改密的令牌在过期前即可失效
+		JWTManager: pkgJwt.NewJWTManager(),
+		Revoker:    auth.NewRevoker(redisCache),
 	}
 
 	// 公开接口（不需要认证）
@@ -291,8 +296,10 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 
 	// 需要认证的接口
 	authApi := api.Group("")
-	authApi.Use(middleware.Auth())
+	authApi.Use(middleware.Auth(auth.NewRevoker(redisCache)))
 	{
+		// 登出：需要认证（白名单已改为精确匹配，不会被 /api/v1/auth 前缀放行）
+		authApi.POST("/auth/logout", h.Logout)
 		// 用户相关
 		authApi.GET("/users/:id", h.GetUser)
 		authApi.GET("/users/username/:username", h.GetUserByUsername)
@@ -370,6 +377,7 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 			chat.POST("/translate", h.TranslateChatMessage)
 			chat.POST("/mark-read", h.MarkChatMessagesRead)
 			chat.POST("/withdraw", h.WithdrawChatMessage)
+			chat.POST("/delete-message", h.DeleteChatMessage)
 			chat.PUT("/edit", h.EditChatMessage)
 			chat.POST("/forward", h.ForwardMessage)
 			chat.POST("/delete", h.DeleteChat)

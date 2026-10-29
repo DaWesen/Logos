@@ -69,6 +69,10 @@ message Message {
   string media_meta = 14;
   // seq 会话内单调递增序号，作为客户端增量补拉的游标（仅历史接口返回时有效）。
   int64 seq = 15;
+  // version 编辑版本号，初始为 0，每次成功编辑 +1。
+  // 客户端编辑消息时必须把该值原样回传，服务端据此做乐观锁校验；
+  // 版本不一致说明内容已被其他端修改，服务端返回 409 让客户端刷新后再提交。
+  int64 version = 16;
 }
 
 // 群组
@@ -103,6 +107,9 @@ message SendMessageRequest {
   map<string, string> metadata = 5;
   string reply_to_message_id = 6;
   repeated string mention_user_ids = 7;
+  // 客户端幂等键：同一发送者重复提交同一 request_id 只会产生一条消息，
+  // 重试（超时、代理重放、双击）时服务端回放首次结果。为空则不做幂等。
+  string request_id = 8;
 }
 
 // 发送消息响应
@@ -110,6 +117,8 @@ message SendMessageResponse {
   int32 code = 1;
   string message = 2;
   Message data = 3;
+  // true 表示本次为幂等回放（该 request_id 已处理过），调用方不应再触发一次推送
+  bool replayed = 4;
 }
 
 // 搜索消息请求
@@ -174,10 +183,24 @@ message WithdrawMessageResponse {
   string message = 2;
 }
 
+// 删除消息请求（仅对请求者本人隐藏，不撤回、不影响其他成员）
+message DeleteMessageRequest {
+  string message_id = 1;
+}
+
+// 删除消息响应；重复删除同样返回成功（幂等）
+message DeleteMessageResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
 // 编辑消息请求
 message EditMessageRequest {
   string message_id = 1;
   string content = 2;
+  // version 客户端当前持有该消息的版本（来自 Message.version）。
+  // 与服务端版本不一致时拒绝写入并返回 409，防止并发编辑互相覆盖。
+  int64 version = 3;
 }
 
 // 编辑消息响应
@@ -405,10 +428,34 @@ message GetMessageReadReceiptsResponse {
   repeated MessageReadReceipt receipts = 3;
 }
 
-// 离线同步游标：客户端为每个会话维护「已见过的最大 seq」
+// 离线同步游标：客户端为每个会话维护三个互相独立的游标
+//   - last_seq：已见过的最大消息 seq（表达「新增」）
+//   - deleted_seq：已见过的最大删除墓碑序号（表达「删除」，因为被删的可能是很旧的消息）
+//   - updated_seq：已见过的最大原位变更序号（表达「编辑/撤回」，同样可能作用于很旧的消息）
 message ChatSyncCursor {
   string chat_id = 1;
   int64 last_seq = 2;
+  int64 deleted_seq = 3;
+  // updated_seq 原位变更（编辑/撤回）游标。这些变更不改变消息 seq，
+  // 若只按 last_seq 补拉，离线期间被改写的旧消息会一直是旧内容。
+  int64 updated_seq = 4;
+}
+
+// 原位变更（编辑/撤回）：消息 seq 不变，内容被改写，因此单独用 updated_seq 游标补拉。
+message MessageChange {
+  string message_id = 1;
+  string chat_id = 2;
+  // edit / withdraw
+  string change_type = 3;
+  // 变更后的内容；撤回为占位文本
+  string content = 4;
+  // 变更后的消息版本，客户端只在 version 比本地新时应用（乱序/重复不会回退内容）
+  int64 version = 5;
+  // 被变更消息的会话内 seq，用于跳过本人已清空的历史
+  int64 message_seq = 6;
+  // 变更日志自增 ID，即 updated_seq
+  int64 updated_seq = 7;
+  int64 changed_at = 8;
 }
 
 // 单个会话的增量同步结果
@@ -422,6 +469,18 @@ message ChatSyncResult {
   int64 cleared_seq = 4;
   // 本次是否还有更多（客户端可继续用返回的最大 seq 再次拉取）
   bool has_more = 5;
+  // 自 deleted_seq 以来被本人删除的消息 ID，客户端应移除对应本地副本
+  repeated string deleted_message_ids = 6;
+  // 客户端应写回的新删除游标；本次无墓碑时回显入参
+  int64 deleted_seq = 7;
+  // 删除墓碑还有更多，客户端可用返回的 deleted_seq 继续拉取
+  bool deleted_has_more = 8;
+  // 自 updated_seq 以来的原位变更（编辑/撤回），客户端按 version 幂等应用
+  repeated MessageChange changes = 9;
+  // 客户端应写回的新变更游标；本次无变更时回显入参
+  int64 updated_seq = 10;
+  // 变更日志还有更多，客户端可用返回的 updated_seq 继续拉取
+  bool updated_has_more = 11;
 }
 
 message SyncOfflineMessagesRequest {
@@ -502,6 +561,9 @@ service ChatService {
   
   // 撤回消息
   rpc WithdrawMessage(WithdrawMessageRequest) returns (WithdrawMessageResponse);
+  
+  // 删除消息（仅对本人生效）
+  rpc DeleteMessage(DeleteMessageRequest) returns (DeleteMessageResponse);
   
   // 编辑消息
   rpc EditMessage(EditMessageRequest) returns (EditMessageResponse);

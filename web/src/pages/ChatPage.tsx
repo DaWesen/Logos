@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Search, Plus, Bot, MoreVertical, Phone, Video, FileText, Sparkles, RefreshCw, Users, Crown, Shield, ShieldOff, UserMinus, LogOut, Smile, UserPlus, UserCheck, UserX, Camera, VolumeX, MessageSquare, Filter, Image, File, Mic, Film, MapPin, Clock, X } from 'lucide-react'
 import type { Message, WsMessage } from '@/types'
-import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, resolveMessageType, searchChatMessages, getMessageReadReceipts, syncChatMessages } from '@/api/chat'
-import type { MessageReadReceipt, ChatSyncItem } from '@/api/chat'
+import { sendMessage, sendMediaMessage, uploadChatMedia, getChatHistory, markMessagesRead, toMediaUrl, editMessage, getConversationList, forwardMessage, deleteChat, deleteChatHistory, withdrawMessage, deleteMessage, resolveMessageType, searchChatMessages, getMessageReadReceipts, syncChatMessages, newRequestId } from '@/api/chat'
+import type { MessageReadReceipt, ChatSyncItem, ChatSyncChange } from '@/api/chat'
 import { streamBotMessage, getBotList, getBotHistory } from '@/api/bot'
 import { searchUsers, getUser } from '@/api/user'
 import { getGroup, createGroup, getGroupMembers, inviteGroupMember, inviteBotToGroup, leaveGroup, kickGroupMember, joinGroup, updateGroupAvatar, muteGroupMember, transferGroupOwner, updateGroupAnnouncement, setGroupAdmin } from '@/api/group'
@@ -96,6 +96,7 @@ function mapSyncMessage(
     mediaMeta: resolveMediaMeta(raw.media_meta || raw.mediaMeta),
     createdAt,
     seq: raw.seq != null ? Number(raw.seq) : undefined,
+    version: raw.version != null ? Number(raw.version) : undefined,
   }
 }
 
@@ -105,6 +106,13 @@ function loadAllMessages(): Record<string, Message[]> {
 
 function loadChatMessages(chatId: string): Message[] {
   return loadAllMessages()[chatId] || []
+}
+
+// 同步游标持久化 key：必须按用户隔离，否则 A 的游标被 B 复用会直接跳过 B 的增量消息。
+// 消息 seq 游标可由本地消息缓存推导（取最大 seq），但 deleted_seq / updated_seq 无法从消息推导，
+// 不持久化的话刷新页面后归零，会重复拉取最多 7 天的墓碑与变更日志。
+function syncCursorStorageKey(userId: string): string {
+  return `chat_sync_cursors:${userId}`
 }
 
 function cleanBlobUrl(url?: string): string | undefined {
@@ -190,6 +198,54 @@ export default function ChatPage() {
   // 每个会话已见过的最大 seq（只由历史接口响应推进）。WS 重连时以此为游标增量补拉，
   // 填补 Redis PubSub 丢失的消息；实时推送载荷不含 seq，故不参与游标推进。
   const seqCursorRef = useRef<Map<string, number>>(new Map())
+  // 每个会话已见过的最大删除墓碑序号。删除无法由消息 seq 表达（可能删很旧的消息），
+  // 所以必须单独维护 deleted_seq 游标，重连补拉时与服务端墓碑对账。
+  const deletedSeqCursorRef = useRef<Map<string, number>>(new Map())
+  // 每个会话已见过的最大原位变更序号。编辑/撤回不改变消息 seq（可能作用于很旧的消息），
+  // 只按 seq 补拉会一直显示旧内容，因此单独维护 updated_seq 游标。
+  const updatedSeqCursorRef = useRef<Map<string, number>>(new Map())
+
+  // 刷新/重新打开页面后恢复同步游标：
+  //   - seq 游标由本地消息缓存的 max(seq) 推导（消息本身就是游标，无需额外存储）；
+  //   - deleted_seq / updated_seq 无法从消息推导，从按用户隔离的持久化记录恢复。
+  useEffect(() => {
+    const uid = user?.id
+    if (!uid) return
+    const byChat = loadAllMessages()
+    const seqMap = new Map<string, number>()
+    for (const [chatId, msgs] of Object.entries(byChat)) {
+      let max = 0
+      for (const m of msgs) { if (m.seq && m.seq > max) max = m.seq }
+      if (max > 0) seqMap.set(chatId, max)
+    }
+    seqCursorRef.current = seqMap
+
+    const deletedMap = new Map<string, number>()
+    const updatedMap = new Map<string, number>()
+    try {
+      const saved = load<Record<string, { deletedSeq?: number; updatedSeq?: number }>>(syncCursorStorageKey(uid), {})
+      for (const [chatId, c] of Object.entries(saved || {})) {
+        if (c?.deletedSeq && c.deletedSeq > 0) deletedMap.set(chatId, c.deletedSeq)
+        if (c?.updatedSeq && c.updatedSeq > 0) updatedMap.set(chatId, c.updatedSeq)
+      }
+    } catch { /* 本地记录损坏时退化为从 0 开始，仅多拉一次 */ }
+    deletedSeqCursorRef.current = deletedMap
+    updatedSeqCursorRef.current = updatedMap
+  }, [user?.id])
+
+  // persistSyncCursors 把无法推导的两个游标按用户隔离写入本地，避免刷新后归零重复补拉。
+  const persistSyncCursors = useCallback(() => {
+    const uid = user?.id
+    if (!uid) return
+    const out: Record<string, { deletedSeq: number; updatedSeq: number }> = {}
+    deletedSeqCursorRef.current.forEach((v, chatId) => {
+      out[chatId] = { deletedSeq: v, updatedSeq: updatedSeqCursorRef.current.get(chatId) || 0 }
+    })
+    updatedSeqCursorRef.current.forEach((v, chatId) => {
+      if (!out[chatId]) out[chatId] = { deletedSeq: 0, updatedSeq: v }
+    })
+    try { save(syncCursorStorageKey(uid), out) } catch { /* 存储不可用时退化为内存游标 */ }
+  }, [user?.id])
   const messageProcessingQueue = useRef<{ msg: WsMessage; resolve: () => void }[]>([])
   const isProcessingMessage = useRef(false)
   const [showMenu, setShowMenu] = useState(false)
@@ -511,6 +567,8 @@ export default function ChatPage() {
             isBot: isBotMsg,
             // 历史接口携带的会话内序号，仅用于推进补拉游标（实时推送不含该字段）
             seq: typeof m.seq === 'number' ? m.seq : (m.seq != null ? Number(m.seq) : undefined),
+            // 编辑版本号：编辑提交时原样回传，服务端据此做乐观锁校验
+            version: m.version != null ? Number(m.version) : undefined,
           }
         })
 
@@ -1592,27 +1650,21 @@ export default function ChatPage() {
       const messageId = String(data.message_id || '')
       const chatId = String(data.chat_id || '')
       if (!messageId || !chatId) return
+      // 撤回同样推进 version：按版本幂等应用，避免迟到的编辑事件把撤回态改回原文。
+      const version = Number(data.version ?? 0)
 
-      setMessages((prevMsgs) => {
-        const updated = prevMsgs.map((m) => {
-          if (m.id === messageId) {
-            return { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const }
-          }
-          return m
-        })
-        return updated
-      })
+      const applyWithdraw = (m: Message): Message => {
+        if (m.id !== messageId) return m
+        if (version > 0 && version <= (m.version ?? 0)) return m
+        return { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const, mediaUrl: undefined, mediaMeta: undefined, version: version > 0 ? version : m.version }
+      }
+
+      setMessages((prevMsgs) => prevMsgs.map(applyWithdraw))
 
       if (activeChatIdRef.current === chatId) {
         queueMicrotask(() => {
           const currentMsgs = loadChatMessages(chatId)
-          const updated = currentMsgs.map((m) => {
-            if (m.id === messageId) {
-              return { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const }
-            }
-            return m
-          })
-          persistAndSetMessages(chatId, updated)
+          persistAndSetMessages(chatId, currentMsgs.map(applyWithdraw))
         })
       }
 
@@ -1623,6 +1675,55 @@ export default function ChatPage() {
         return chat
       }))
 
+      return
+    }
+
+    // 编辑事件广播给会话内所有成员（含自己的其他设备）。
+    // 按 version 幂等应用：只有服务端版本比本地新才更新，乱序/重复事件不会把新内容改回旧内容。
+    if (msg.type === 'edit') {
+      const data = msg.data as Record<string, unknown>
+      const messageId = String(data.message_id || '')
+      const chatId = String(data.chat_id || '')
+      if (!messageId || !chatId) return
+      const content = String(data.content ?? '')
+      const version = Number(data.version ?? 0)
+
+      const applyEdit = (m: Message): Message => {
+        if (m.id !== messageId) return m
+        if (version <= (m.version ?? 0)) return m
+        return { ...m, content, version, editedAt: new Date().toISOString() }
+      }
+
+      const updatedCache = loadChatMessages(chatId).map(applyEdit)
+      persistMessages(chatId, updatedCache)
+      if (activeChatIdRef.current === chatId) {
+        setMessages((prevMsgs) => prevMsgs.map(applyEdit))
+      }
+
+      // 只有被编辑的正好是会话最新一条时才更新会话列表预览
+      const latest = updatedCache.length > 0 ? updatedCache[updatedCache.length - 1] : null
+      if (latest && latest.id === messageId) {
+        setChats((prevChats) => prevChats.map((chat) => (
+          chat.id === chatId ? { ...chat, lastMessage: content } : chat
+        )))
+      }
+      return
+    }
+
+    // 删除事件只投递给本人：同一账号的其他在线设备据此移除本地副本。
+    // 与撤回不同，这里不动服务端消息内容，仅从本地缓存剔除。
+    if (msg.type === 'delete') {
+      const data = msg.data as Record<string, unknown>
+      const messageId = String(data.message_id || '')
+      const chatId = String(data.chat_id || '')
+      if (!messageId || !chatId) return
+
+      // 删除是私有状态：事件只推给删除者本人在线的其他设备。
+      // 非当前会话也必须落到本地缓存，否则下次进入会被历史接口重新带回来（本端已删除）。
+      persistMessages(chatId, loadChatMessages(chatId).filter((m) => m.id !== messageId))
+      if (activeChatIdRef.current === chatId) {
+        setMessages((prevMsgs) => prevMsgs.filter((m) => m.id !== messageId))
+      }
       return
     }
 
@@ -1693,15 +1794,33 @@ export default function ChatPage() {
   }, [processWsMessage, persistAndSetMessages, selectedChatId, typingChatId, user])
 
   // applyBatchSync 把批量同步结果合并进各会话的本地缓存。
-  // 只处理非当前会话：当前会话仍走 fetchRemoteMessages 的完整合并逻辑（含本地临时消息替换）。
+  // 只处理非当前会话的消息合并：当前会话仍走 fetchRemoteMessages 的完整合并逻辑（含本地临时消息替换）。
+  // 但「删除」与「原位变更（编辑/撤回）」必须在这里落地：历史接口不会返回已删除消息，
+  // 编辑/撤回又不改变消息 seq，只按 seq 补拉会一直显示旧内容。
   // 已在本地被「清空历史」丢弃的消息（seq <= cleared_seq）不会重新出现。
   const applyBatchSync = useCallback<(items: ChatSyncItem[], round?: number) => void>((items, round = 0) => {
-    const followUps: { chatId: string; lastSeq: number }[] = []
+    const followUps: { chatId: string; lastSeq: number; deletedSeq: number; updatedSeq: number }[] = []
+    const previewUpdates: { chatId: string; lastMessage: string }[] = []
+    let cursorsChanged = false
     for (const item of items) {
       const prev = seqCursorRef.current.get(item.chatId) || 0
+      const prevDeleted = deletedSeqCursorRef.current.get(item.chatId) || 0
+      const prevUpdated = updatedSeqCursorRef.current.get(item.chatId) || 0
       let newest = item.latestSeq
+
+      const deletedSet = new Set(item.deletedMessageIds || [])
+      const cleared = item.clearedSeq || 0
+
+      if (deletedSet.size > 0) {
+        // 墓碑先落地：不论是否当前会话，都要从本地缓存里剔除，否则下次进入会被历史合并带回来。
+        const kept = loadChatMessages(item.chatId).filter((m) => !deletedSet.has(m.id))
+        persistMessages(item.chatId, kept)
+        if (activeChatIdRef.current === item.chatId) {
+          setMessages((prevMsgs) => prevMsgs.filter((m) => !deletedSet.has(m.id)))
+        }
+      }
+
       if (item.chatId !== activeChatIdRef.current) {
-        const cleared = item.clearedSeq || 0
         const byId = new Map<string, Message>()
         for (const cached of loadChatMessages(item.chatId)) {
           if (cleared > 0 && cached.seq && cached.seq <= cleared) continue
@@ -1709,7 +1828,7 @@ export default function ChatPage() {
         }
         for (const raw of item.messages) {
           const mapped = mapSyncMessage(raw, item.chatId, getCorrectSenderName)
-          if (!mapped.id) continue
+          if (!mapped.id || deletedSet.has(mapped.id)) continue
           byId.set(mapped.id, mapped)
           if (mapped.seq) newest = Math.max(newest, mapped.seq)
         }
@@ -1720,16 +1839,73 @@ export default function ChatPage() {
           persistMessages(item.chatId, merged)
         }
       }
+
+      // 原位变更：编辑/撤回不改变 seq，必须单独应用；同一消息取版本最高的一条，
+      // 再按 version 只升不降写入，乱序/重复日志不会把新内容改回旧内容。
+      if (item.changes && item.changes.length > 0) {
+        const changeById = new Map<string, ChatSyncChange>()
+        for (const ch of item.changes) {
+          if (!ch.messageId) continue
+          if (cleared > 0 && ch.messageSeq > 0 && ch.messageSeq <= cleared) continue
+          const existing = changeById.get(ch.messageId)
+          if (!existing || ch.version > existing.version) changeById.set(ch.messageId, ch)
+        }
+        if (changeById.size > 0) {
+          const applyChange = (m: Message): Message => {
+            const ch = changeById.get(m.id)
+            if (!ch) return m
+            if (ch.version <= (m.version ?? 0)) return m
+            if (ch.changeType === 'withdraw') {
+              return { ...m, content: '[消息已撤回]', messageType: 'withdrawn' as const, mediaUrl: undefined, mediaMeta: undefined, version: ch.version }
+            }
+            return { ...m, content: ch.content, version: ch.version, editedAt: new Date().toISOString() }
+          }
+          const updatedCache = loadChatMessages(item.chatId).map(applyChange)
+          persistMessages(item.chatId, updatedCache)
+          if (activeChatIdRef.current === item.chatId) {
+            setMessages((prevMsgs) => prevMsgs.map(applyChange))
+          }
+          // 被变更的正好是会话最新一条时同步更新会话列表预览
+          const latest = updatedCache.length > 0 ? updatedCache[updatedCache.length - 1] : null
+          if (latest && changeById.has(latest.id)) {
+            previewUpdates.push({ chatId: item.chatId, lastMessage: latest.content })
+          }
+        }
+      }
+
       if (newest > prev) seqCursorRef.current.set(item.chatId, newest)
-      if (item.hasMore && item.messages.length > 0) {
-        followUps.push({ chatId: item.chatId, lastSeq: newest })
+      if (item.deletedSeq > prevDeleted) { deletedSeqCursorRef.current.set(item.chatId, item.deletedSeq); cursorsChanged = true }
+      if (item.updatedSeq > prevUpdated) { updatedSeqCursorRef.current.set(item.chatId, item.updatedSeq); cursorsChanged = true }
+
+      if ((item.hasMore && item.messages.length > 0) || item.deletedHasMore || item.updatedHasMore) {
+        followUps.push({
+          chatId: item.chatId,
+          lastSeq: newest,
+          deletedSeq: deletedSeqCursorRef.current.get(item.chatId) || prevDeleted,
+          updatedSeq: updatedSeqCursorRef.current.get(item.chatId) || prevUpdated,
+        })
       }
     }
-    // 单会话增量超过一页时最多再补一轮，避免重连时无限翻页
-    if (round < 1 && followUps.length > 0) {
-      syncChatMessages(followUps).then((more) => applyBatchSync(more, round + 1)).catch(() => {})
+    if (previewUpdates.length > 0) {
+      setChats((prevChats) => prevChats.map((chat) => {
+        const pu = previewUpdates.find((p) => p.chatId === chat.id)
+        return pu ? { ...chat, lastMessage: pu.lastMessage } : chat
+      }))
     }
-  }, [getCorrectSenderName])
+    if (cursorsChanged) persistSyncCursors()
+    // 单会话增量超过一页时最多再补一轮，避免重连时无限翻页。
+    // 失败按指数退避重试：游标幂等，重试无副作用；补拉是整条链路可靠性的唯一兜底。
+    if (round < 1 && followUps.length > 0) {
+      const fetchMore = (attempt: number) => {
+        syncChatMessages(followUps)
+          .then((more) => applyBatchSync(more, round + 1))
+          .catch(() => {
+            if (attempt < 2) setTimeout(() => fetchMore(attempt + 1), 1000 * Math.pow(3, attempt))
+          })
+      }
+      fetchMore(0)
+    }
+  }, [getCorrectSenderName, persistSyncCursors])
 
   // 首次连接由「进入会话」的 effect 负责拉取，这里只在断线重连后补拉，避免正常挂载时重复请求
   const hasOpenedWsRef = useRef(false)
@@ -1748,15 +1924,28 @@ export default function ChatPage() {
       const cursor = seqCursorRef.current.get(chatId) || 0
       fetchRemoteMessages(chatId, cursor > 0 ? cursor : undefined).catch(() => {})
     }
-    // 其他会话不再逐个请求，一次批量同步补齐；Bot 会话不参与（无成员位点）
-    const cursors: { chatId: string; lastSeq: number }[] = []
-    for (const [id, seq] of seqCursorRef.current) {
-      if (id === chatId) continue
-      if (!chatsRef.current.some((c) => c.id === id && c.type !== 'bot')) continue
-      cursors.push({ chatId: id, lastSeq: seq })
+    // 其他会话不再逐个请求，一次批量同步补齐；Bot 会话不参与（无成员位点）。
+    // 当前会话也放进批量同步，只用于领取「删除墓碑」与「原位变更」——消息合并在 applyBatchSync 中被跳过。
+    const cursors: { chatId: string; lastSeq: number; deletedSeq: number; updatedSeq: number }[] = []
+    for (const chat of chatsRef.current) {
+      if (chat.type === 'bot') continue
+      cursors.push({
+        chatId: chat.id,
+        lastSeq: seqCursorRef.current.get(chat.id) || 0,
+        deletedSeq: deletedSeqCursorRef.current.get(chat.id) || 0,
+        updatedSeq: updatedSeqCursorRef.current.get(chat.id) || 0,
+      })
     }
     if (cursors.length > 0) {
-      syncChatMessages(cursors).then((items) => applyBatchSync(items)).catch(() => {})
+      // 游标幂等，失败可安全重试（1s / 3s 退避）；一次失败就放弃等于把丢消息留到下次重连。
+      const runSync = (attempt: number) => {
+        syncChatMessages(cursors)
+          .then((items) => { if (items.length > 0) applyBatchSync(items) })
+          .catch(() => {
+            if (attempt < 2) setTimeout(() => runSync(attempt + 1), 1000 * Math.pow(3, attempt))
+          })
+      }
+      runSync(0)
     }
     refreshConversations().catch(() => {})
   }, [fetchRemoteMessages, refreshConversations, applyBatchSync])
@@ -1855,13 +2044,15 @@ export default function ChatPage() {
 
   const handleSaveEdit = async () => {
     if (!editingMessage || !selectedChatId) return
+    // 回传客户端当前持有的版本，服务端版本不一致时返回 409，避免覆盖其他端的编辑
+    const expectedVersion = editingMessage.version ?? 0
     try {
-      await editMessage(editingMessage.id, editContent)
+      await editMessage(editingMessage.id, editContent, expectedVersion)
       
-      // 更新当前聊天的消息列表
+      // 更新当前聊天的消息列表（版本号同步 +1，之后再次编辑才能带对版本）
       const updatedMessages = messages.map(m => 
         m.id === editingMessage.id 
-          ? { ...m, content: editContent, editedAt: new Date().toISOString() } 
+          ? { ...m, content: editContent, editedAt: new Date().toISOString(), version: expectedVersion + 1 } 
           : m
       )
       persistAndSetMessages(selectedChatId, updatedMessages)
@@ -1888,7 +2079,20 @@ export default function ChatPage() {
       
       setShowEditModal(false)
       setEditingMessage(null)
-    } catch {
+    } catch (err: any) {
+      const status = err?.original?.response?.status ?? err?.response?.status
+      if (status === 409) {
+        // 版本冲突：说明其他设备已先完成编辑。拉取最新内容回填编辑框，让用户确认后再提交，
+        // 而不是用本地旧内容覆盖，或直接丢掉这次编辑。
+        await fetchRemoteMessages(selectedChatId)
+        const latest = loadChatMessages(selectedChatId).find(m => m.id === editingMessage.id)
+        if (latest) {
+          setEditingMessage(latest)
+          setEditContent(latest.content)
+        }
+        alert('这条消息已在其他设备被修改，已为你刷新最新内容，请确认后再提交')
+        return
+      }
       alert('编辑失败')
     }
   }
@@ -1921,6 +2125,23 @@ export default function ChatPage() {
       const errorMsg = error?.response?.data?.message || error?.message || '撤回失败'
       alert(errorMsg)
     }
+  }
+
+  // handleDeleteMessage 删除成功后的本地落地：服务端已把该消息从本人口径隐藏，
+  // 这里只需从当前会话与缓存中移除（删除不回写消息内容，也不通知其他成员）。
+  const handleDeleteMessage = (messageId: string) => {
+    if (!selectedChatId) return
+    const updated = loadChatMessages(selectedChatId).filter((m) => m.id !== messageId)
+    persistAndSetMessages(selectedChatId, updated)
+
+    setChats((prevChats) => prevChats.map((chat) => {
+      if (chat.id !== selectedChatId) return chat
+      const latest = updated.length > 0 ? updated[updated.length - 1] : null
+      return {
+        ...chat,
+        lastMessage: latest ? latest.content : '',
+      }
+    }))
   }
 
   const handleForwardMessage = (message: Message) => {
@@ -2163,6 +2384,9 @@ export default function ChatPage() {
       }
     } else {
       const chatType = selectedChat.type === 'group' ? 2 : 1
+      // 一次用户发送动作只生成一个幂等键：WS 成功即生效，
+      // 若走 REST 兜底或用户重试则复用同一个键，服务端只会落一条消息。
+      const requestId = newRequestId()
       const mentionUserIds: string[] = [...pendingMentionIds]
       if (selectedChat?.type === 'group') {
         for (const bot of groupBots) {
@@ -2196,10 +2420,11 @@ export default function ChatPage() {
         }
         wsSend({
           type: 'message',
+          request_id: requestId,
           data: msgData,
         })
       } else {
-        sendMessage(chatId, trimContent).catch(() => {})
+        sendMessage(chatId, trimContent, 'text', undefined, chatType === 2 ? 'group' : 'private', requestId).catch(() => {})
       }
       setPendingMentionIds([])
     }
@@ -2312,6 +2537,8 @@ export default function ChatPage() {
             return String(raw)
           })(),
           isBot: isThisBotMsg,
+          // 搜索结果同样携带版本号，保证从搜索进入编辑时不会误用旧版本
+          version: m.version != null ? Number(m.version) : undefined,
         }
       })
       setHistoryAllMessages(msgs)
@@ -3282,6 +3509,7 @@ export default function ChatPage() {
                         onEdit={handleEditMessage}
                         onForward={handleForwardMessage}
                         onWithdraw={handleWithdrawMessage}
+                        onDelete={handleDeleteMessage}
                         onFileOpen={handleFileOpen}
                       />
                     </div>

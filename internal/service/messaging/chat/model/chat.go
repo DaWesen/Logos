@@ -217,7 +217,10 @@ type LocationContent struct {
 type Message struct {
 	ID string `gorm:"type:varchar(64);primaryKey" json:"id"`
 	// Seq 会话内单调递增序号，用于稳定排序与增量/游标拉取（仅追加字段，前端可忽略）
-	Seq            int64          `gorm:"index;default:0" json:"seq"`
+	Seq int64 `gorm:"index;default:0" json:"seq"`
+	// Version 编辑版本号，每次成功编辑 +1；编辑时以客户端持有的版本做乐观锁，
+	// 版本不匹配则拒绝写入，避免多端并发编辑互相覆盖（丢失更新）。
+	Version        int64          `gorm:"not null;default:0" json:"version"`
 	RequestID      string         `gorm:"type:varchar(64);index" json:"request_id"`
 	ConversationID string         `gorm:"type:varchar(100);index" json:"conversation_id"`
 	ChatID         string         `gorm:"type:varchar(100);index" json:"chat_id"`
@@ -259,6 +262,19 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 		m.MentionUserIDs = make(StringArray, 0)
 	}
 	return nil
+}
+
+// MessageIdempotency 发送幂等键记录：同一发送者 + 同一 request_id 只对应一条消息，
+// MessageID 指向首次请求创建的消息，重复请求据此回放。
+type MessageIdempotency struct {
+	SenderID  string    `gorm:"type:varchar(64);primaryKey" json:"sender_id"`
+	RequestID string    `gorm:"type:varchar(64);primaryKey" json:"request_id"`
+	MessageID string    `gorm:"type:varchar(64);not null" json:"message_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (MessageIdempotency) TableName() string {
+	return "message_idempotency"
 }
 
 type Conversation struct {
@@ -382,6 +398,63 @@ func (ConversationParticipant) TableName() string {
 	return "conversation_participants"
 }
 
+// MessageDeletion 是「单条消息删除」的墓碑记录。
+//
+// 语义：删除只对删除者本人生效，不改变消息本身，也不影响会话内其他成员的视角
+// （与撤回不同：撤回由发送者在时限内发起，对所有人生效并改写消息状态）。
+//
+// 为什么需要独立的删除序列 ID：
+//   - 消息 seq 表达的是「消息的先后」，无法表达「序号很小的老消息在今天被删除」；
+//   - 客户端补拉用的 last_seq 游标只能表达「新增」，删除必须有自己的游标；
+//   - 自增主键在这里天然单调、无锁，直接充当删除游标（deleted_seq），
+//     省掉一张额外的 per-user 位点表。
+//
+// 唯一键 (user_id, message_id) 是幂等的来源：重复删除只会命中冲突，不会产生重复墓碑。
+type MessageDeletion struct {
+	ID        int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserID    string `gorm:"type:varchar(64);not null;uniqueIndex:idx_deletion_user_msg,priority:1;index:idx_deletion_user_chat,priority:1" json:"user_id"`
+	MessageID string `gorm:"type:varchar(64);not null;uniqueIndex:idx_deletion_user_msg,priority:2" json:"message_id"`
+	ChatID    string `gorm:"type:varchar(100);not null;index:idx_deletion_user_chat,priority:2" json:"chat_id"`
+	// MessageSeq 冗余被删消息的会话内序号，用于清空历史时按水位线批量清理墓碑。
+	MessageSeq int64     `gorm:"not null;default:0" json:"message_seq"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (MessageDeletion) TableName() string {
+	return "message_deletions"
+}
+
+const (
+	// MessageChangeEdit 编辑：内容被改写，seq 不变。
+	MessageChangeEdit = "edit"
+	// MessageChangeWithdraw 撤回：内容被替换为占位文本，seq 不变。
+	MessageChangeWithdraw = "withdraw"
+)
+
+// MessageChange 是「原位变更」日志（编辑/撤回）。
+//
+// 消息 seq 只表达「有新消息」，无法表达「旧消息内容被改写」；离线设备重连后按 seq 补拉
+// 只会拿到新消息，旧消息会一直停留在旧内容。因此每次原位变更追加一行，
+// 自增 ID 天然单调，直接充当 updated_seq 游标（与 deleted_seq 同一思路）。
+// 客户端按 (chat_id, updated_seq) 增量补拉，再按 version 幂等应用：
+// version 不比自己本地新就忽略，所以重复/乱序下发不会把新内容改回旧内容。
+type MessageChange struct {
+	ID         int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	ChatID     string `gorm:"type:varchar(100);not null;index:idx_change_chat,priority:1" json:"chat_id"`
+	MessageID  string `gorm:"type:varchar(64);not null" json:"message_id"`
+	ChangeType string `gorm:"type:varchar(16);not null" json:"change_type"`
+	Content    string `gorm:"type:text" json:"content"`
+	Version    int64  `gorm:"not null;default:0" json:"version"`
+	// MessageSeq 冗余被变更消息的会话内 seq，用于跳过本人已清空的历史（seq <= cleared_seq）。
+	MessageSeq int64     `gorm:"not null;default:0" json:"message_seq"`
+	ActorID    string    `gorm:"type:varchar(64)" json:"actor_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (MessageChange) TableName() string {
+	return "message_changes"
+}
+
 // ConversationSeq 维护每个会话的 seq 分配器。
 // 通过 INSERT ... ON CONFLICT DO NOTHING 保证行存在，再 FOR UPDATE 行锁原子自增，
 // 从而在多副本并发写入时为同一会话分配严格单调递增且不重复的 seq。
@@ -395,20 +468,38 @@ func (ConversationSeq) TableName() string {
 	return "conversation_seqs"
 }
 
-// SyncCursor 是客户端为单个会话维护的同步游标（已见过的最大 seq）。
+// SyncCursor 是客户端为单个会话维护的同步游标。
+//   - LastSeq：已见过的最大消息 seq；
+//   - DeletedSeq：已见过的最大删除墓碑 ID（删除动作与消息先后无关，故必须独立游标）；
+//   - UpdatedSeq：已见过的最大原位变更日志 ID（编辑/撤回不改 seq，必须独立游标）。
 type SyncCursor struct {
-	ChatID  string `json:"chat_id"`
-	LastSeq int64  `json:"last_seq"`
+	ChatID     string `json:"chat_id"`
+	LastSeq    int64  `json:"last_seq"`
+	DeletedSeq int64  `json:"deleted_seq"`
+	UpdatedSeq int64  `json:"updated_seq"`
 }
 
 // ChatSyncResult 是单个会话的增量同步结果。
-// LatestSeq 让客户端即使本次没有消息也能推进游标；ClearedSeq 让客户端丢弃已被本人清空的本地缓存。
+// LatestSeq / DeletedSeq 让客户端即使本次没有数据也能推进两个游标；
+// ClearedSeq 让客户端丢弃已被本人清空的本地缓存。
 type ChatSyncResult struct {
 	ChatID     string     `json:"chat_id"`
 	Messages   []*Message `json:"messages"`
 	LatestSeq  int64      `json:"latest_seq"`
 	ClearedSeq int64      `json:"cleared_seq"`
 	HasMore    bool       `json:"has_more"`
+	// DeletedMessageIDs 自 DeletedSeq 游标以来被本人删除的消息 ID，客户端应据此移除本地副本。
+	DeletedMessageIDs []string `json:"deleted_message_ids"`
+	// DeletedSeq 客户端应推进到的删除游标（本次没有墓碑时回显入参，便于直接覆盖写回）。
+	DeletedSeq int64 `json:"deleted_seq"`
+	// DeletedHasMore 墓碑还有更多，客户端可用返回的 DeletedSeq 继续拉取。
+	DeletedHasMore bool `json:"deleted_has_more"`
+	// Changes 自 UpdatedSeq 游标以来的原位变更（编辑/撤回），客户端按 version 幂等应用。
+	Changes []*MessageChange `json:"changes"`
+	// UpdatedSeq 客户端应推进到的变更游标（本次没有变更时回显入参）。
+	UpdatedSeq int64 `json:"updated_seq"`
+	// UpdatedHasMore 变更日志还有更多，客户端可用返回的 UpdatedSeq 继续拉取。
+	UpdatedHasMore bool `json:"updated_has_more"`
 }
 
 // MessageReadReceipt 是消息已读回执的聚合结果，不落库：
@@ -448,6 +539,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&GroupMember{},
 		&ConversationParticipant{},
 		&ConversationSeq{},
+		&MessageDeletion{},
 	); err != nil {
 		return err
 	}

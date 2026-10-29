@@ -29,13 +29,19 @@ func toInt64(s string) int64 {
 }
 
 type ChatService interface {
-	SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error)
+	// SendMessage 发送消息；requestID 非空时按 (senderID, requestID) 幂等，
+	// replayed=true 表示本次为幂等回放（消息已存在，调用方不应再次推送）。
+	SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string, requestID string) (*model.Message, []string, bool, error)
 	GetMessageHistory(userID, chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error)
 	SearchMessages(userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
 	MarkMessagesRead(msgIDs []string, userID, chatID string) error
 	WithdrawMessage(msgID, userID string) error
-	EditMessage(msgID, userID, content string) (*model.Message, error)
+	// EditMessage 编辑消息内容；expectedVersion 为客户端持有的消息版本（乐观锁），
+	// 与服务端版本不一致时返回 ErrChatMessageConflict，不做覆盖写入。
+	EditMessage(msgID, userID, content string, expectedVersion int64) (*model.Message, error)
 	DeleteChatHistory(userID, chatID string) error
+	// DeleteMessage 单条消息删除：仅对请求者本人隐藏，不影响会话内其他成员（与撤回不同）。
+	DeleteMessage(userID, messageID string) error
 	EnsureChatAccess(userID, chatID string, chatType model.ChatType) error
 
 	CreateGroup(name, ownerID string, memberIDs []string, metadata map[string]string) (*model.Group, error)
@@ -151,6 +157,8 @@ func (s *ChatServiceImpl) StartEventConsumer() error {
 		}
 	}()
 
+	s.startChangeLogCleanup()
+
 	return nil
 }
 
@@ -175,6 +183,11 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			return err
 		}
 		return s.handleMessageReadEvent(readEvent)
+
+	case types.EventTypeMessageWithdraw, types.EventTypeMessageDelete, types.EventTypeMessageEdit:
+		// 这三类事件由本服务发布，仅用于通知客户端；服务层不再二次消费，
+		// 显式忽略以避免落进 default 刷"未知事件类型"告警。
+		return nil
 
 	case types.EventTypeMessage, "":
 		event, err := types.MessageEventFromJSON(msg.Value)
@@ -358,6 +371,7 @@ func (s *ChatServiceImpl) persistIncomingMessage(event *types.MessageEvent) erro
 	now := time.Now()
 	msg := &model.Message{
 		ID:             msgID,
+		RequestID:      event.RequestID,
 		ConversationID: event.ChatID,
 		ChatID:         event.ChatID,
 		ChatType:       int(event.ChatType),
@@ -383,12 +397,31 @@ func (s *ChatServiceImpl) persistIncomingMessage(event *types.MessageEvent) erro
 		logger.StringField("media_url", event.MediaURL),
 		logger.IntField("type", int(event.MessageType)))
 
-	if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
+	// 携带客户端幂等键时按 (sender_id, request_id) 落库：
+	// 网关重发（WS/TCP 重试）或客户端切换到 REST 兜底时只会留下一条消息。
+	replayed := false
+	if event.RequestID != "" {
+		created, stored, err := s.repo.CreateMessageIdempotent(s.ctx, msg)
+		if err != nil {
+			return err
+		}
+		if stored != nil {
+			msg = stored
+		}
+		replayed = !created
+		logger.Info("按幂等键落库消息",
+			logger.StringField("msg_id", msg.ID),
+			logger.StringField("sender_id", event.SenderID),
+			logger.StringField("request_id", event.RequestID),
+			logger.BoolField("replayed", replayed))
+	} else if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
 		return err
 	}
 
-	if err := s.repo.UpdateConversationLastMessage(s.ctx, event.ChatID, msgID); err != nil {
-		logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
+	if !replayed {
+		if err := s.repo.UpdateConversationLastMessage(s.ctx, event.ChatID, msg.ID); err != nil {
+			logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
+		}
 	}
 
 	return nil
@@ -800,7 +833,7 @@ func privateChatTarget(chatID, senderID string) (userA, userB, target string, pa
 	return userA, userB, userA, true, nil
 }
 
-func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string) (*model.Message, []string, error) {
+func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string, requestID string) (*model.Message, []string, bool, error) {
 	var actualChatID string
 	var targetUserID string
 
@@ -810,14 +843,14 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 			logger.Warn("越权向他人私聊会话发送消息已拦截",
 				logger.StringField("sender_id", senderID),
 				logger.StringField("chat_id", chatID))
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		targetUserID = target
 		if paired {
 			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, userA, userB)
 			if err != nil {
 				logger.Error("获取或创建私聊会话失败", logger.ErrorField(err))
-				return nil, nil, err
+				return nil, nil, false, err
 			}
 			actualChatID = conv.ID
 			logger.Info("私聊消息，使用会话 ID",
@@ -828,7 +861,7 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, senderID, targetUserID)
 			if err != nil {
 				logger.Error("获取或创建私聊会话失败", logger.ErrorField(err))
-				return nil, nil, err
+				return nil, nil, false, err
 			}
 			actualChatID = conv.ID
 			logger.Info("私聊消息，使用会话 ID",
@@ -867,7 +900,7 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 			logger.Warn("检查群成员身份失败", logger.ErrorField(err))
 		}
 		if member == nil {
-			return nil, nil, fmt.Errorf("您不是该群组成员，无法发送消息")
+			return nil, nil, false, fmt.Errorf("您不是该群组成员，无法发送消息")
 		}
 		// 禁言拦截：只把禁言状态写库而不拦发送等于禁言无效
 		if err := checkMuted(member, time.Now()); err != nil {
@@ -876,7 +909,7 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 				logger.StringField("user_id", senderID),
 				logger.StringField("mute_type", member.MuteType.String()),
 				logger.ErrorField(err))
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 	}
 
@@ -888,10 +921,10 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		if err != nil {
 			// 失败关闭：审核服务不可用时拒绝发送，避免未经审核的内容流入群聊
 			logger.Error("消息审核调用失败，按失败关闭策略拒绝发送", logger.ErrorField(err))
-			return nil, nil, types.ErrContentModerationUnavailable
+			return nil, nil, false, types.ErrContentModerationUnavailable
 		}
 		if rejected {
-			return nil, nil, types.ErrContentRejected
+			return nil, nil, false, types.ErrContentRejected
 		}
 	}
 
@@ -916,13 +949,41 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		MentionUserIDs: model.StringArray(mentionIDs),
 	}
 
-	if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
+	replayed := false
+	if requestID != "" {
+		// 幂等路径：同一发送者重复提交同一 request_id 只会落一条消息，
+		// 重复请求回放首次创建的消息（replayed=true），避免网络重试造成重复消息。
+		msg.RequestID = requestID
+		created, stored, err := s.repo.CreateMessageIdempotent(s.ctx, msg)
+		if err != nil {
+			logger.Error("创建消息失败", logger.ErrorField(err))
+			return nil, nil, false, err
+		}
+		if stored == nil {
+			logger.Error("幂等写入未返回消息")
+			return nil, nil, false, fmt.Errorf("幂等写入未返回消息")
+		}
+		// 防跨会话复用：同一 request_id 只能命中同一会话，否则说明客户端复用了键。
+		if !created && stored.ChatID != actualChatID {
+			logger.Warn("幂等键跨会话复用已拒绝",
+				logger.StringField("sender_id", senderID),
+				logger.StringField("request_id", requestID),
+				logger.StringField("expected_chat_id", actualChatID),
+				logger.StringField("got_chat_id", stored.ChatID))
+			return nil, nil, false, types.ErrChatBadRequest
+		}
+		msg = stored
+		replayed = !created
+	} else if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
 		logger.Error("创建消息失败", logger.ErrorField(err))
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
-	if err := s.repo.UpdateConversationLastMessage(s.ctx, actualChatID, msgID); err != nil {
-		logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
+	// 回放请求不能再次推进会话最后消息，否则并发重复请求会把指针反复指向同一旧消息。
+	if !replayed {
+		if err := s.repo.UpdateConversationLastMessage(s.ctx, actualChatID, msg.ID); err != nil {
+			logger.Warn("更新会话最后消息失败", logger.ErrorField(err))
+		}
 	}
 
 	var recipientIDs []string
@@ -948,13 +1009,14 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 	}
 
 	logger.Info("发送消息",
-		logger.StringField("msg_id", msgID),
+		logger.StringField("msg_id", msg.ID),
 		logger.StringField("chat_id", actualChatID),
 		logger.IntField("chat_type", int(chatType)),
 		logger.IntField("recipient_count", len(recipientIDs)),
+		logger.BoolField("replayed", replayed),
 	)
 
-	return msg, recipientIDs, nil
+	return msg, recipientIDs, replayed, nil
 }
 
 func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType model.ChatType, beforeTime time.Time, limit int, afterSeq int64) ([]*model.Message, bool, error) {
@@ -977,7 +1039,7 @@ func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType mode
 	// 用于客户端 WS 断线重连后，填补 Redis PubSub 实时扇出丢失的窗口。
 	// afterSeq == 0：保持原有「取最近 limit 条 + 反转成升序」的历史分页语义。
 	if afterSeq > 0 {
-		messages, err := s.repo.GetMessagesAfterSeq(s.ctx, chatID, afterSeq, limit+1)
+		messages, err := s.repo.GetMessagesAfterSeq(s.ctx, userID, chatID, afterSeq, limit+1)
 		if err != nil {
 			logger.Error("获取增量消息失败", logger.ErrorField(err))
 			return nil, false, err
@@ -992,7 +1054,7 @@ func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType mode
 	// 如果是私聊且 chatID 是用户 ID，需要先获取当前用户 ID 来构建会话 ID
 	// 注意：这里我们假设调用方会处理这个问题，或者我们需要修改方法签名来传入 senderID
 	// 暂时保持原样，先让发送消息能工作
-	messages, err := s.repo.GetMessagesByChatID(s.ctx, chatID, beforeTime, limit+1, clearedSeq)
+	messages, err := s.repo.GetMessagesByChatID(s.ctx, userID, chatID, beforeTime, limit+1, clearedSeq)
 	if err != nil {
 		logger.Error("获取消息历史失败", logger.ErrorField(err))
 		return nil, false, err
@@ -1032,7 +1094,7 @@ func (s *ChatServiceImpl) SearchMessages(userID, chatID string, chatType model.C
 	if pageSize > 100 {
 		pageSize = 100
 	}
-	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize, s.clearedSeqFor(chatID, userID))
+	return s.repo.SearchMessages(s.ctx, userID, chatID, chatType, keyword, startTime, endTime, page, pageSize, s.clearedSeqFor(chatID, userID))
 }
 
 // MarkMessagesRead 将会话已读位点推进到位（位点化）：
@@ -1095,7 +1157,15 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 		return fmt.Errorf("超过撤回时限")
 	}
 
-	if err := s.repo.WithdrawMessage(s.ctx, msgID); err != nil {
+	if err := s.repo.WithdrawMessage(s.ctx, msgID, &model.MessageChange{
+		ChatID:     msg.ChatID,
+		MessageID:  msgID,
+		ChangeType: model.MessageChangeWithdraw,
+		Content:    "[消息已撤回]",
+		Version:    msg.Version + 1,
+		MessageSeq: msg.Seq,
+		ActorID:    userID,
+	}); err != nil {
 		logger.Error("撤回消息失败", logger.ErrorField(err))
 		return err
 	}
@@ -1109,6 +1179,8 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 		case types.ChatTypeGroup:
 			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
 		}
+		// 撤回同样要通知发送者本人的其他在线设备，否则同账号多端会一直显示原文。
+		recipientIDs = appendUnique(recipientIDs, msg.SenderID)
 		if len(recipientIDs) == 0 {
 			recipientIDs = []string{msg.SenderID}
 		}
@@ -1119,6 +1191,7 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 			ChatID:       msg.ChatID,
 			ChatType:     chatType,
 			SenderID:     msg.SenderID,
+			Version:      msg.Version + 1,
 			RecipientIDs: recipientIDs,
 			Timestamp:    time.Now(),
 		}
@@ -1130,26 +1203,109 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 	return nil
 }
 
-func (s *ChatServiceImpl) EditMessage(msgID, userID, content string) (*model.Message, error) {
+// EditMessage 编辑本人发送的消息。
+//
+// 并发控制采用乐观锁：客户端把读到的 message.version 原样回传，服务端以
+// `WHERE id=? AND version=?` 原子条件更新。两个端同时编辑时只有一个成功，
+// 另一个收到 ErrChatMessageConflict（409），由客户端刷新后再提交，
+// 而不是让后写者静默覆盖先写者的内容（丢失更新）。
+func (s *ChatServiceImpl) EditMessage(msgID, userID, content string, expectedVersion int64) (*model.Message, error) {
+	if userID == "" || msgID == "" {
+		return nil, types.ErrChatBadRequest
+	}
+	if expectedVersion < 0 {
+		return nil, types.ErrChatBadRequest
+	}
+
 	msg, err := s.repo.GetMessageByID(s.ctx, msgID)
 	if err != nil {
 		logger.Error("获取消息失败", logger.ErrorField(err))
-		return nil, fmt.Errorf("消息不存在")
+		return nil, err
 	}
-	if msg == nil {
-		return nil, fmt.Errorf("消息不存在")
+	// 不存在与非发送者统一返回同一错误，避免用错误码差异探测他人消息。
+	if msg == nil || msg.SenderID != userID {
+		return nil, types.ErrChatMessageNotFound
+	}
+	// 已撤回的消息内容已不可恢复，不允许再编辑（否则会把"已撤回"覆盖回正文）。
+	if msg.Status == model.MessageStatusWithdrawn.String() {
+		return nil, types.ErrChatMessageNotFound
 	}
 
-	if msg.SenderID != userID {
-		return nil, fmt.Errorf("只能编辑自己的消息")
-	}
-
-	if err := s.repo.EditMessage(s.ctx, msgID, content); err != nil {
+	updated, err := s.repo.EditMessage(s.ctx, msgID, content, expectedVersion, &model.MessageChange{
+		ChatID:     msg.ChatID,
+		MessageID:  msgID,
+		ChangeType: model.MessageChangeEdit,
+		Content:    content,
+		MessageSeq: msg.Seq,
+		ActorID:    userID,
+	})
+	if err != nil {
 		logger.Error("编辑消息失败", logger.ErrorField(err))
 		return nil, err
 	}
+	if !updated {
+		// 条件更新未命中：版本已被其他端推进（或消息在读取后被删除/撤回）。
+		logger.Warn("编辑消息版本冲突",
+			logger.StringField("message_id", msgID),
+			logger.StringField("user_id", userID),
+			logger.IntField("expected_version", int(expectedVersion)))
+		return nil, types.ErrChatMessageConflict
+	}
 
-	return s.repo.GetMessageByID(s.ctx, msgID)
+	edited, err := s.repo.GetMessageByID(s.ctx, msgID)
+	if err != nil {
+		logger.Error("读取编辑后的消息失败", logger.ErrorField(err))
+		return nil, err
+	}
+	s.publishEditEvent(edited)
+	return edited, nil
+}
+
+// publishEditEvent 把编辑结果广播给会话内全部成员（含发送者自己的其他在线设备）。
+//
+// 与删除（只投递本人）不同，编辑是全局状态：所有成员都应看到最新内容。
+// 事件带 version，接收端只在版本更新时应用，因此重复/乱序投递不会回退内容。
+// 发布失败只告警：内容已落库，接收端重新拉历史仍能拿到新版本，不把通知失败升级成请求失败。
+func (s *ChatServiceImpl) publishEditEvent(msg *model.Message) {
+	if s.eventBus == nil || msg == nil {
+		return
+	}
+
+	recipientIDs := s.editRecipients(msg)
+	chatType := types.ChatType(msg.ChatType)
+
+	event := &types.MessageEditEvent{
+		EventType:    types.EventTypeMessageEdit,
+		MessageID:    msg.ID,
+		ChatID:       msg.ChatID,
+		ChatType:     chatType,
+		SenderID:     msg.SenderID,
+		Content:      msg.Content,
+		Version:      msg.Version,
+		RecipientIDs: recipientIDs,
+		Timestamp:    time.Now(),
+	}
+	if err := s.eventBus.PublishOutgoingEditEvent(s.ctx, event); err != nil {
+		logger.Error("发布编辑事件失败", logger.ErrorField(err))
+	}
+}
+
+// editRecipients 计算编辑事件的接收者：会话内全部成员，且一定包含发送者本人。
+// getPrivateChatRecipient 只返回对方，发送者本人的其他在线设备必须显式补上，
+// 否则同账号多端中只有发起编辑的那一端能看到新内容。
+func (s *ChatServiceImpl) editRecipients(msg *model.Message) []string {
+	var recipientIDs []string
+	switch types.ChatType(msg.ChatType) {
+	case types.ChatTypePrivate:
+		recipientIDs = s.getPrivateChatRecipient(msg.ChatID, msg.SenderID)
+	case types.ChatTypeGroup:
+		recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
+	}
+	recipientIDs = appendUnique(recipientIDs, msg.SenderID)
+	if len(recipientIDs) == 0 {
+		recipientIDs = []string{msg.SenderID}
+	}
+	return recipientIDs
 }
 
 // DeleteChatHistory 清空「本人视角」的会话历史。
@@ -1186,6 +1342,81 @@ func (s *ChatServiceImpl) DeleteChatHistory(userID, chatID string) error {
 		logger.Error("清空聊天记录失败", logger.ErrorField(err))
 		return err
 	}
+
+	// 墓碑清理：seq <= 水位线的消息已被清空隐藏，客户端也不会再拉取，
+	// 对应的删除墓碑失去信息价值。清理失败只影响存储体积，不影响正确性，因此只告警。
+	if err := s.repo.PurgeMessageDeletions(s.ctx, userID, chatID, maxSeq); err != nil {
+		logger.Warn("清理已清空历史的删除墓碑失败",
+			logger.StringField("chat_id", chatID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+	}
+	return nil
+}
+
+// DeleteMessage 单条消息删除：只对请求者本人隐藏，不改原文、不影响会话内其他成员。
+//
+// 与撤回的边界（面试常问）：
+//   - 撤回由发送者发起、有 2 分钟时限、对所有人生效，落库方式是改写 messages.status；
+//   - 删除由任意成员发起、无时限、仅对本人生效，落库方式是写 message_deletions 墓碑；
+//   - 两者可以叠加：已撤回的消息仍可被删除，删除不会把状态改回 sent。
+//
+// 幂等：唯一键 (user_id, message_id) + ON CONFLICT DO NOTHING。重复删除（弱网重试、
+// 多端同时操作）返回成功，且不会产生第二条墓碑。
+//
+// 防枚举：消息不存在与无权访问返回同一个 ErrChatMessageNotFound，
+// 避免攻击者用错误码差异探测他人会话里的 message_id。
+func (s *ChatServiceImpl) DeleteMessage(userID, messageID string) error {
+	if userID == "" || messageID == "" {
+		return types.ErrChatBadRequest
+	}
+
+	msg, err := s.repo.GetMessageByID(s.ctx, messageID)
+	if err != nil {
+		logger.Error("查询待删除消息失败", logger.ErrorField(err))
+		return err
+	}
+	if msg == nil {
+		return types.ErrChatMessageNotFound
+	}
+	if err := s.EnsureChatAccess(userID, msg.ChatID, model.ChatType(msg.ChatType)); err != nil {
+		logger.Warn("拒绝越权删除消息",
+			logger.StringField("user_id", userID),
+			logger.StringField("message_id", messageID),
+			logger.ErrorField(err))
+		return types.ErrChatMessageNotFound
+	}
+
+	created, err := s.repo.DeleteMessageForUser(s.ctx, userID, msg.ID, msg.ChatID, msg.Seq)
+	if err != nil {
+		logger.Error("写入删除墓碑失败", logger.ErrorField(err))
+		return err
+	}
+
+	logger.Info("删除消息（仅本人视角）",
+		logger.StringField("user_id", userID),
+		logger.StringField("chat_id", msg.ChatID),
+		logger.StringField("message_id", msg.ID),
+		logger.BoolField("duplicated", !created))
+
+	// 只投递给本人：会话内其他成员不应知道「谁删了哪条消息」。
+	// 首次删除才推送；重复删除已由首次推送覆盖，离线设备靠同步接口的墓碑补齐。
+	if created && s.eventBus != nil {
+		event := &types.MessageDeleteEvent{
+			EventType:    types.EventTypeMessageDelete,
+			MessageID:    msg.ID,
+			ChatID:       msg.ChatID,
+			ChatType:     types.ChatType(msg.ChatType),
+			OwnerID:      userID,
+			RecipientIDs: []string{userID},
+			Timestamp:    time.Now(),
+		}
+		if err := s.eventBus.PublishOutgoingDeleteEvent(s.ctx, event); err != nil {
+			// 推送失败不影响删除结果：墓碑已落库，其他设备会在下次同步时补齐。
+			logger.Error("发布删除事件失败", logger.ErrorField(err))
+		}
+	}
+
 	return nil
 }
 
@@ -2319,7 +2550,52 @@ const (
 	// defaultSyncLimit / maxSyncLimit 每会话返回条数：默认 50，上限 200。
 	defaultSyncLimit = 50
 	maxSyncLimit     = 200
+	// syncChatConcurrency 单次离线同步并行处理的会话数上限。
+	// 每个会话要串行执行 3 次 DAO 查询，串行处理 100 个会话就是 300 次往返；
+	// 固定 8 路能把重连首屏延迟压到约 1/8，同时每个 goroutine 会占用一条数据库连接，
+	// 不设上限会在重连高峰打满连接池、挤占其他请求，因此取 8。
+	syncChatConcurrency = 8
 )
+
+const (
+	// changeLogRetention 原位变更日志保留期。超过保留期后，长期离线设备重新进入会话时
+	// 会走完整历史拉取（拿到的是变更后的内容），不再需要增量补拉，日志可以回收。
+	changeLogRetention = 7 * 24 * time.Hour
+	// changeLogCleanupInterval 清理周期；清理是幂等的低优先级任务，不需要太频繁。
+	changeLogCleanupInterval = 6 * time.Hour
+)
+
+// startChangeLogCleanup 启动原位变更日志的后台回收。
+// message_changes 是会话级共享日志（同一会话的所有成员共用），
+// 不能像墓碑那样按某个用户的 cleared_seq 删除（别人可能还需要补拉），只能按时间保留期回收。
+func (s *ChatServiceImpl) startChangeLogCleanup() {
+	go func() {
+		s.purgeExpiredChanges(time.Now())
+		ticker := time.NewTicker(changeLogCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-ticker.C:
+				s.purgeExpiredChanges(time.Now())
+			}
+		}
+	}()
+}
+
+// purgeExpiredChanges 删除保留期之外的变更日志，返回删除行数。
+func (s *ChatServiceImpl) purgeExpiredChanges(now time.Time) int64 {
+	n, err := s.repo.PurgeMessageChangesBefore(s.ctx, now.Add(-changeLogRetention))
+	if err != nil {
+		logger.Warn("清理过期原位变更日志失败", logger.ErrorField(err))
+		return 0
+	}
+	if n > 0 {
+		logger.Info("已清理过期原位变更日志", logger.Int64Field("rows", n))
+	}
+	return n
+}
 
 // SyncOfflineMessages 批量补齐客户端离线期间的增量消息。
 //
@@ -2348,6 +2624,8 @@ func (s *ChatServiceImpl) SyncOfflineMessages(userID string, cursors []model.Syn
 
 	chatIDs := make([]string, 0, len(cursors))
 	cursorByChat := make(map[string]int64, len(cursors))
+	deletedCursorByChat := make(map[string]int64, len(cursors))
+	updatedCursorByChat := make(map[string]int64, len(cursors))
 	for _, c := range cursors {
 		if c.ChatID == "" {
 			continue
@@ -2356,6 +2634,8 @@ func (s *ChatServiceImpl) SyncOfflineMessages(userID string, cursors []model.Syn
 			continue
 		}
 		cursorByChat[c.ChatID] = c.LastSeq
+		deletedCursorByChat[c.ChatID] = c.DeletedSeq
+		updatedCursorByChat[c.ChatID] = c.UpdatedSeq
 		chatIDs = append(chatIDs, c.ChatID)
 	}
 	if len(chatIDs) == 0 {
@@ -2372,8 +2652,16 @@ func (s *ChatServiceImpl) SyncOfflineMessages(userID string, cursors []model.Syn
 		return nil, err
 	}
 
-	results := make([]*model.ChatSyncResult, 0, len(chatIDs))
-	for _, chatID := range chatIDs {
+	// 固定 syncChatConcurrency 路的并发信号量 + WaitGroup：并发是为了压重连首屏延迟
+	// （每会话 3 次串行往返，串行处理 100 个会话就是 300 次），但每个 goroutine 会占用
+	// 一条数据库连接，无上限并发会在重连高峰打满连接池，所以用 channel 做硬上限。
+	// 结果按下标落位到 results，每个 goroutine 只写自己的下标、不共享写，
+	// 因此无需额外加锁，且返回顺序天然与入参 chatIDs 一致。
+	results := make([]*model.ChatSyncResult, len(chatIDs))
+	errs := make([]error, len(chatIDs))
+	token := make(chan struct{}, syncChatConcurrency)
+	var wg sync.WaitGroup
+	for i, chatID := range chatIDs {
 		wm, ok := watermarks[chatID]
 		if !ok {
 			logger.Debug("离线同步跳过非成员会话",
@@ -2381,30 +2669,104 @@ func (s *ChatServiceImpl) SyncOfflineMessages(userID string, cursors []model.Syn
 				logger.StringField("chat_id", chatID))
 			continue
 		}
-
-		afterSeq := cursorByChat[chatID]
-		if afterSeq < wm.ClearedSeq {
-			afterSeq = wm.ClearedSeq
-		}
-
-		messages, err := s.repo.GetMessagesAfterSeq(s.ctx, chatID, afterSeq, limit+1)
+		wg.Add(1)
+		go func(i int, chatID string, wm dao.ParticipantWatermark) {
+			defer wg.Done()
+			token <- struct{}{}
+			defer func() { <-token }()
+			results[i], errs[i] = s.syncOneChat(userID, chatID, wm,
+				latestSeqs[chatID], cursorByChat[chatID],
+				deletedCursorByChat[chatID], updatedCursorByChat[chatID], limit)
+		}(i, chatID, wm)
+	}
+	wg.Wait()
+	for _, err := range errs {
 		if err != nil {
 			return nil, err
 		}
-		hasMore := len(messages) > limit
-		if hasMore {
-			messages = messages[:limit]
-		}
-
-		results = append(results, &model.ChatSyncResult{
-			ChatID:     chatID,
-			Messages:   messages,
-			LatestSeq:  latestSeqs[chatID],
-			ClearedSeq: wm.ClearedSeq,
-			HasMore:    hasMore,
-		})
 	}
-	return results, nil
+	// 非成员会话的下标处为空，按下标顺序压缩到返回切片（不依赖 append 的完成顺序）。
+	ordered := make([]*model.ChatSyncResult, len(chatIDs))
+	n := 0
+	for _, r := range results {
+		if r != nil {
+			ordered[n] = r
+			n++
+		}
+	}
+	return ordered[:n], nil
+}
+
+// syncOneChat 处理单个会话的离线增量：消息、删除墓碑、原位变更各一次查询。
+// 供 SyncOfflineMessages 并行调用，只读写入参与自身局部变量，不共享状态。
+func (s *ChatServiceImpl) syncOneChat(userID, chatID string, wm dao.ParticipantWatermark, latestSeq, afterSeq, deletedAfter, updatedAfter int64, limit int) (*model.ChatSyncResult, error) {
+	if afterSeq < wm.ClearedSeq {
+		afterSeq = wm.ClearedSeq
+	}
+
+	messages, err := s.repo.GetMessagesAfterSeq(s.ctx, userID, chatID, afterSeq, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+
+	// 删除墓碑：删除动作无法用消息 seq 游标表达（老消息也可能在今天被删），
+	// 因此每条会话额外维护 deleted_seq 游标，按墓碑自增 ID 增量下发被删消息 ID。
+	deletions, err := s.repo.GetMessageDeletionsAfter(s.ctx, userID, chatID, deletedAfter, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	deletedHasMore := len(deletions) > limit
+	if deletedHasMore {
+		deletions = deletions[:limit]
+	}
+	deletedIDs := make([]string, 0, len(deletions))
+	nextDeleted := deletedAfter
+	for _, d := range deletions {
+		deletedIDs = append(deletedIDs, d.MessageID)
+		nextDeleted = d.ID
+	}
+
+	// 原位变更日志：编辑/撤回不改变消息 seq，必须用独立的 updated_seq 游标补拉，
+	// 否则离线期间被改写的旧消息在重连后永远停留在旧内容。
+	// 已被本人清空的历史（seq <= cleared_seq）不再可见，其变更无需下发，
+	// 但游标仍要推进，避免每次同步都重复拉取同一批无效日志。
+	changes, err := s.repo.GetMessageChangesAfter(s.ctx, chatID, updatedAfter, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	updatedHasMore := len(changes) > limit
+	if updatedHasMore {
+		changes = changes[:limit]
+	}
+	nextUpdated := updatedAfter
+	visibleChanges := make([]*model.MessageChange, 0, len(changes))
+	for _, ch := range changes {
+		if ch.ID > nextUpdated {
+			nextUpdated = ch.ID
+		}
+		if wm.ClearedSeq > 0 && ch.MessageSeq > 0 && ch.MessageSeq <= wm.ClearedSeq {
+			continue
+		}
+		visibleChanges = append(visibleChanges, ch)
+	}
+
+	return &model.ChatSyncResult{
+		ChatID:            chatID,
+		Messages:          messages,
+		LatestSeq:         latestSeq,
+		ClearedSeq:        wm.ClearedSeq,
+		HasMore:           hasMore,
+		DeletedMessageIDs: deletedIDs,
+		DeletedSeq:        nextDeleted,
+		DeletedHasMore:    deletedHasMore,
+		Changes:           visibleChanges,
+		UpdatedSeq:        nextUpdated,
+		UpdatedHasMore:    updatedHasMore,
+	}, nil
 }
 
 func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []string, senderID string) ([]*model.Message, error) {
@@ -2436,7 +2798,8 @@ func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []strin
 			"original_msg_id": originalMsg.ID,
 		}
 
-		msg, recipientIDs, err := s.SendMessage(senderID, targetChatID, chatType, model.MessageType(originalMsg.MessageType), originalMsg.Content, metadata, "", nil)
+		// 转发是服务端内部动作，不携带客户端幂等键（每个目标会话各自生成新消息）。
+		msg, recipientIDs, _, err := s.SendMessage(senderID, targetChatID, chatType, model.MessageType(originalMsg.MessageType), originalMsg.Content, metadata, "", nil, "")
 		if err != nil {
 			logger.Error("转发消息失败",
 				logger.StringField("target_chat_id", targetChatID),

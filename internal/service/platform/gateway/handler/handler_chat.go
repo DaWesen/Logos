@@ -13,6 +13,7 @@ import (
 
 	"Logos/config"
 	"Logos/internal/service/messaging/types"
+	"Logos/internal/service/platform/gateway"
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
 
@@ -123,6 +124,8 @@ func (h *Handler) SendMediaMessage(c *gin.Context) {
 		Content     string          `json:"content"`
 		ReplyTo     string          `json:"reply_to,omitempty"`
 		MentionIDs  []string        `json:"mention_user_ids,omitempty"`
+		// RequestID 客户端幂等键，与文本发送共用同一套语义：重试不会产生重复媒体消息。
+		RequestID string `json:"request_id,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
@@ -138,7 +141,16 @@ func (h *Handler) SendMediaMessage(c *gin.Context) {
 
 	logger.Info("SendMediaMessage", logger.StringField("chat_id", req.ChatID), logger.StringField("media_url", req.MediaURL), logger.IntField("message_type", req.MessageType))
 
+	// request_id 落库字段上限 64 字节，超长直接拒绝
+	if len(req.RequestID) > 64 {
+		c.JSON(http.StatusBadRequest, model.BadRequest("request_id 过长（最多 64 字节）"))
+		return
+	}
+
 	messageID := uuid.New().String()
+	if req.RequestID != "" {
+		messageID = gateway.DeriveMessageID(senderID, req.RequestID)
+	}
 	event := types.NewMediaMessageEvent(
 		messageID,
 		req.ChatID,
@@ -153,6 +165,8 @@ func (h *Handler) SendMediaMessage(c *gin.Context) {
 		req.MentionIDs,
 		[]string{},
 	)
+	// 透传幂等键，Chat 服务落库时按 (sender_id, request_id) 幂等回放
+	event.RequestID = req.RequestID
 
 	eventBus := types.GetEventBus()
 	if err := eventBus.PublishMessageEvent(c.Request.Context(), event); err != nil {
@@ -463,11 +477,15 @@ func (h *Handler) GetMessageReadReceipts(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
 }
 
-// syncOfflineBody 离线同步入参：每个会话带一个「已见过的最大 seq」游标。
+// syncOfflineBody 离线同步入参：每个会话带三个独立游标
+// （last_seq 表达新增、deleted_seq 表达删除、updated_seq 表达编辑/撤回，
+// 后两者都不可由 last_seq 推导）。
 type syncOfflineBody struct {
 	Cursors []struct {
-		ChatID  string `json:"chat_id" binding:"required"`
-		LastSeq int64  `json:"last_seq"`
+		ChatID     string `json:"chat_id" binding:"required"`
+		LastSeq    int64  `json:"last_seq"`
+		DeletedSeq int64  `json:"deleted_seq"`
+		UpdatedSeq int64  `json:"updated_seq"`
 	} `json:"cursors" binding:"required,min=1,max=100"`
 	Limit int `json:"limit"`
 }
@@ -485,7 +503,12 @@ func (h *Handler) SyncChatMessages(c *gin.Context) {
 	}
 	cursors := make([]*pb.ChatSyncCursor, 0, len(body.Cursors))
 	for _, cur := range body.Cursors {
-		cursors = append(cursors, &pb.ChatSyncCursor{ChatId: cur.ChatID, LastSeq: cur.LastSeq})
+		cursors = append(cursors, &pb.ChatSyncCursor{
+			ChatId:     cur.ChatID,
+			LastSeq:    cur.LastSeq,
+			DeletedSeq: cur.DeletedSeq,
+			UpdatedSeq: cur.UpdatedSeq,
+		})
 	}
 	resp, err := h.ChatClient.SyncOfflineMessages(c.Request.Context(), &pb.SyncOfflineMessagesRequest{
 		Cursors: cursors,
@@ -512,6 +535,28 @@ func (h *Handler) WithdrawChatMessage(c *gin.Context) {
 		return
 	}
 	resp, err := h.ChatClient.WithdrawMessage(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if !checkChatCode(c, resp.Code, resp.Message) {
+		return
+	}
+	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
+}
+
+// DeleteChatMessage 删除单条消息：仅隐藏请求者本人的副本，不撤回、不影响会话其他成员。
+func (h *Handler) DeleteChatMessage(c *gin.Context) {
+	if h.ChatClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+	var req pb.DeleteMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	resp, err := h.ChatClient.DeleteMessage(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -683,17 +728,51 @@ func (h *Handler) KickGroupMember(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
 }
 
+// muteGroupMemberBody 是禁言接口的网关侧 DTO。
+// 前端以「时长（分钟，0 表示永久）」表达禁言，而 pb 用枚举 mute_type + 绝对时间 mute_until。
+// 不能直接绑定到 pb.MuteGroupMemberRequest：mute_until 是 google.protobuf.Timestamp，
+// encoding/json 只认 {seconds,nanos}，传分钟数或 RFC3339 都会在绑定阶段 400。
+type muteGroupMemberBody struct {
+	GroupID string `json:"group_id" binding:"required"`
+	UserID  string `json:"user_id" binding:"required"`
+	// Duration 禁言时长（分钟），0 表示永久；用指针区分「未传」与「传 0」，避免漏传即永久禁言
+	Duration *int64 `json:"duration" binding:"required"`
+}
+
+// maxMuteMinutes 禁言时长上限（1 年），防止超大时长导致时间溢出或误操作
+const maxMuteMinutes = 60 * 24 * 365
+
 func (h *Handler) MuteGroupMember(c *gin.Context) {
 	if h.ChatClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
 		return
 	}
-	var req pb.MuteGroupMemberRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var body muteGroupMemberBody
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ChatClient.MuteGroupMember(c.Request.Context(), &req)
+	if *body.Duration < 0 {
+		c.JSON(http.StatusBadRequest, model.BadRequest("duration 不能为负数"))
+		return
+	}
+
+	req := &pb.MuteGroupMemberRequest{
+		GroupId: body.GroupID,
+		UserId:  body.UserID,
+	}
+	if *body.Duration == 0 {
+		req.MuteType = pb.MuteType_MUTE_TYPE_PERMANENT
+	} else {
+		if *body.Duration > maxMuteMinutes {
+			c.JSON(http.StatusBadRequest, model.BadRequest("禁言时长超出上限（最多 1 年）"))
+			return
+		}
+		req.MuteType = pb.MuteType_MUTE_TYPE_TEMPORARY
+		req.MuteUntil = timestamppb.New(time.Now().Add(time.Duration(*body.Duration) * time.Minute))
+	}
+
+	resp, err := h.ChatClient.MuteGroupMember(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return

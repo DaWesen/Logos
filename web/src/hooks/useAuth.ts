@@ -56,6 +56,8 @@ export function useAuth() {
   }, [])
 
   const logout = useCallback(() => {
+    // 先让服务端把当前令牌写入撤销黑名单（不 await：失败也要完成本地登出）
+    void userApi.logout()
     localStorage.removeItem('aim_token')
     localStorage.removeItem('aim_user')
     setToken(null)

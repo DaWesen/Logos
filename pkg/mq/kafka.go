@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,12 +73,44 @@ func InitProducer(brokers []string) (*Producer, error) {
 			Balancer:     &kafka.Hash{}, // 按 Key（chatID/userID）哈希分区，保证同一会话落同一分区，消息有序
 			WriteTimeout: 5 * time.Second,
 			ReadTimeout:  5 * time.Second,
-			RequiredAcks: kafka.RequireOne, // 只需要leader确认就返回，更快
-			BatchSize:    1,                // 每条消息立即发送，不批量
+			RequiredAcks: resolveRequiredAcks(config.GetConfig().Kafka),
+			BatchSize:    1, // 每条消息立即发送，不批量
 			BatchTimeout: 1 * time.Millisecond,
 		},
 	}
 	return producer, nil
+}
+
+// resolveRequiredAcks 把配置字符串映射为 kafka-go 的确认级别。
+// 默认 all：leader 落盘即返回（RequireOne）在 leader 宕机时仍可能丢消息，
+// 只有等 ISR 全部确认，配合 ReplicationFactor >= 2 才具备 broker 级容灾。
+func resolveRequiredAcks(cfg config.Kafka) kafka.RequiredAcks {
+	switch strings.ToLower(strings.TrimSpace(cfg.RequiredAcks)) {
+	case "none":
+		return kafka.RequireNone
+	case "leader", "one":
+		return kafka.RequireOne
+	default:
+		return kafka.RequireAll
+	}
+}
+
+// kafkaPartitions 新建 topic 的分区数，未配置时默认 6。
+// 分区数是出站并行度的上限：topic 建好后无法减少分区，扩容只能新增。
+func kafkaPartitions(cfg config.Kafka) int {
+	if cfg.Partitions > 0 {
+		return cfg.Partitions
+	}
+	return 6
+}
+
+// kafkaReplicationFactor 副本数，未配置时默认 1（开发单 broker）。
+// 生产环境应配置 >= 2，否则任一 broker 宕机都会让对应分区不可读不可写。
+func kafkaReplicationFactor(cfg config.Kafka) int {
+	if cfg.ReplicationFactor > 0 {
+		return cfg.ReplicationFactor
+	}
+	return 1
 }
 
 func NewConsumer(topic string, groupID string) *Consumer {
@@ -134,6 +167,7 @@ func (m *KafkaManager) CreateTopic(topic string) error {
 		return fmt.Errorf("kafka manager is nil")
 	}
 
+	kafkaConfig := config.GetConfig().Kafka
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		conn, err := kafka.Dial("tcp", m.brokers[0])
@@ -145,8 +179,8 @@ func (m *KafkaManager) CreateTopic(topic string) error {
 
 		err = conn.CreateTopics(kafka.TopicConfig{
 			Topic:             topic,
-			NumPartitions:     3,
-			ReplicationFactor: 1,
+			NumPartitions:     kafkaPartitions(kafkaConfig),
+			ReplicationFactor: kafkaReplicationFactor(kafkaConfig),
 		})
 		conn.Close()
 
@@ -487,52 +521,27 @@ func CreateTopics(ctx context.Context) error {
 		return nil
 	}
 
-	topicConfigs := []kafka.TopicConfig{
-		{
-			Topic:             "user_events",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "knowledge_events",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "question_events",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "im_messages",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "chat_messages",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "chat_outgoing",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "notifications",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             TopicDocumentProcessed,
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-		{
-			Topic:             "bot_events",
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
+	// 分区数与副本数统一从配置读取：分区数决定出站并行度上限，副本数决定 broker 容灾能力。
+	partitions := kafkaPartitions(kafkaConfig)
+	replication := kafkaReplicationFactor(kafkaConfig)
+	topicNames := []string{
+		"user_events",
+		"knowledge_events",
+		"question_events",
+		"im_messages",
+		"chat_messages",
+		"chat_outgoing",
+		"notifications",
+		TopicDocumentProcessed,
+		"bot_events",
+	}
+	topicConfigs := make([]kafka.TopicConfig, 0, len(topicNames))
+	for _, name := range topicNames {
+		topicConfigs = append(topicConfigs, kafka.TopicConfig{
+			Topic:             name,
+			NumPartitions:     partitions,
+			ReplicationFactor: replication,
+		})
 	}
 
 	for _, tc := range topicConfigs {

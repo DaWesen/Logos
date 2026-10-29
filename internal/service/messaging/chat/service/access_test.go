@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"Logos/internal/service/messaging/chat/dao"
 	"Logos/internal/service/messaging/chat/model"
@@ -40,6 +42,19 @@ type stubChatRepo struct {
 	watermarks map[string]dao.ParticipantWatermark
 	chatSeqs   map[string]int64
 	chatMsgs   map[string][]*model.Message
+	// deleted 按用户维度记录已删除消息 ID（删除是私有状态，必须按 viewer 过滤）
+	deleted map[string]map[string]bool
+	// deletions 按写入顺序保存墓碑，ID 单调递增，模拟自增主键
+	deletions []*model.MessageDeletion
+	// changes 按写入顺序保存原位变更日志，ID 单调递增，模拟自增主键
+	changes []*model.MessageChange
+	purged  []purgeCall
+}
+
+type purgeCall struct {
+	chatID  string
+	userID  string
+	upToSeq int64
 }
 
 type clearCall struct {
@@ -58,6 +73,18 @@ func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string)
 
 func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64, error) {
 	return r.maxSeqs[chatID], nil
+}
+
+// GetAllGroupMemberIDs 按「groupID|userID」键前缀汇总群成员，供编辑事件接收者计算使用。
+func (r *stubChatRepo) GetAllGroupMemberIDs(_ context.Context, groupID string) ([]string, error) {
+	prefix := groupID + "|"
+	var ids []string
+	for key := range r.members {
+		if strings.HasPrefix(key, prefix) {
+			ids = append(ids, strings.TrimPrefix(key, prefix))
+		}
+	}
+	return ids, nil
 }
 
 func (r *stubChatRepo) ClearConversationForUser(_ context.Context, conversationID, userID string, seq int64) error {
@@ -99,18 +126,161 @@ func (r *stubChatRepo) GetMaxSeqByChatIDs(_ context.Context, chatIDs []string) (
 	return out, nil
 }
 
-// GetMessagesAfterSeq 按 seq 升序返回增量，行为与真实实现一致（limit 由调用方给 limit+1）。
-func (r *stubChatRepo) GetMessagesAfterSeq(_ context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
+// GetMessagesAfterSeq 按 seq 升序返回增量，行为与真实实现一致（limit 由调用方给 limit+1）：
+// 先过滤本人删除过的消息（删除是私有状态），再按 seq 截断。
+func (r *stubChatRepo) GetMessagesAfterSeq(_ context.Context, userID, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
 	var out []*model.Message
 	for _, m := range r.chatMsgs[chatID] {
-		if m.Seq > afterSeq {
-			out = append(out, m)
+		if m.Seq <= afterSeq {
+			continue
 		}
+		if r.deleted[userID][m.ID] {
+			continue
+		}
+		out = append(out, m)
 	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (r *stubChatRepo) GetMessageByID(_ context.Context, id string) (*model.Message, error) {
+	return r.messages[id], nil
+}
+
+// EditMessage 模拟 SQL 条件更新（WHERE id=? AND version=?）：只有版本匹配才写入并自增，
+// 与真实实现一致，同时在「同一事务」内追加变更日志。
+func (r *stubChatRepo) EditMessage(_ context.Context, msgID, content string, expectedVersion int64, change *model.MessageChange) (bool, error) {
+	m, ok := r.messages[msgID]
+	if !ok || m == nil || m.Version != expectedVersion {
+		return false, nil
+	}
+	m.Content = content
+	m.Status = model.MessageStatusEdited.String()
+	m.Version++
+	if change != nil {
+		change.Version = expectedVersion + 1
+		change.CreatedAt = time.Now()
+		r.appendChange(change)
+	}
+	return true, nil
+}
+
+// WithdrawMessage 模拟真实事务：改状态 + version+1，并追加撤回变更日志。
+func (r *stubChatRepo) WithdrawMessage(_ context.Context, msgID string, change *model.MessageChange) error {
+	m := r.messages[msgID]
+	if m == nil {
+		return nil
+	}
+	m.Status = model.MessageStatusWithdrawn.String()
+	m.Content = "[消息已撤回]"
+	m.Version++
+	if change != nil {
+		change.Version = m.Version
+		change.CreatedAt = time.Now()
+		r.appendChange(change)
+	}
+	return nil
+}
+
+// appendChange 给日志分配自增 ID（模拟数据库自增主键）并保存。
+func (r *stubChatRepo) appendChange(change *model.MessageChange) {
+	change.ID = int64(len(r.changes) + 1)
+	r.changes = append(r.changes, change)
+}
+
+// GetMessageChangesAfter 模拟 `WHERE chat_id=? AND id>? ORDER BY id ASC LIMIT`。
+func (r *stubChatRepo) GetMessageChangesAfter(_ context.Context, chatID string, afterID int64, limit int) ([]*model.MessageChange, error) {
+	var out []*model.MessageChange
+	for _, ch := range r.changes {
+		if ch.ChatID != chatID || ch.ID <= afterID {
+			continue
+		}
+		out = append(out, ch)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// PurgeMessageChangesBefore 模拟按保留期删除日志，返回删除行数。
+func (r *stubChatRepo) PurgeMessageChangesBefore(_ context.Context, before time.Time) (int64, error) {
+	if before.IsZero() {
+		return 0, nil
+	}
+	kept := make([]*model.MessageChange, 0, len(r.changes))
+	var removed int64
+	for _, ch := range r.changes {
+		if ch.CreatedAt.Before(before) {
+			removed++
+			continue
+		}
+		kept = append(kept, ch)
+	}
+	r.changes = kept
+	return removed, nil
+}
+
+func (r *stubChatRepo) GetClearedSeq(_ context.Context, conversationID, _ string) (int64, error) {
+	return r.watermarks[conversationID].ClearedSeq, nil
+}
+
+// DeleteMessageForUser 模拟唯一键 (user_id, message_id) + ON CONFLICT DO NOTHING：
+// 重复删除返回 created=false 且不产生第二条墓碑。
+func (r *stubChatRepo) DeleteMessageForUser(_ context.Context, userID, messageID, chatID string, messageSeq int64) (bool, error) {
+	if r.deleted == nil {
+		r.deleted = make(map[string]map[string]bool)
+	}
+	if r.deleted[userID] == nil {
+		r.deleted[userID] = make(map[string]bool)
+	}
+	if r.deleted[userID][messageID] {
+		return false, nil
+	}
+	r.deleted[userID][messageID] = true
+	// 自增主键按写入顺序单调递增，与真实表一致。
+	r.deletions = append(r.deletions, &model.MessageDeletion{
+		ID:         int64(len(r.deletions) + 1),
+		UserID:     userID,
+		MessageID:  messageID,
+		ChatID:     chatID,
+		MessageSeq: messageSeq,
+	})
+	return true, nil
+}
+
+func (r *stubChatRepo) GetMessageDeletionsAfter(_ context.Context, userID, chatID string, afterID int64, limit int) ([]*model.MessageDeletion, error) {
+	var out []*model.MessageDeletion
+	for _, d := range r.deletions {
+		if d.UserID != userID || d.ChatID != chatID || d.ID <= afterID {
+			continue
+		}
+		out = append(out, d)
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+// PurgeMessageDeletions 只记录调用参数并从墓碑列表移除；
+// 真实实现中这些消息已位于清空水位线之下，客户端不会再拉取，故 stub 不模拟"恢复可见性"。
+func (r *stubChatRepo) PurgeMessageDeletions(_ context.Context, userID, chatID string, upToSeq int64) error {
+	r.purged = append(r.purged, purgeCall{chatID: chatID, userID: userID, upToSeq: upToSeq})
+	if upToSeq <= 0 {
+		return nil
+	}
+	kept := make([]*model.MessageDeletion, 0, len(r.deletions))
+	for _, d := range r.deletions {
+		if d.UserID == userID && d.ChatID == chatID && d.MessageSeq <= upToSeq {
+			continue
+		}
+		kept = append(kept, d)
+	}
+	r.deletions = kept
+	return nil
 }
 
 func newAccessService(repo dao.ChatRepository) *ChatServiceImpl {

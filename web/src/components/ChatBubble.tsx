@@ -1,9 +1,9 @@
 import type { Message } from '@/types'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Bot, Copy, Languages, Check, FileText, Download, Edit, RotateCcw, Share2 } from 'lucide-react'
+import { Bot, Copy, Languages, Check, FileText, Download, Edit, RotateCcw, Share2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { translateMessage, toMediaUrl, withdrawMessage, editMessage } from '@/api/chat'
+import { translateMessage, toMediaUrl, withdrawMessage, editMessage, deleteMessage } from '@/api/chat'
 import { getAISettings } from '@/api/settings'
 import './ChatBubble.css'
 
@@ -17,6 +17,8 @@ interface Props {
   onEdit?: (message: Message) => void
   onForward?: (message: Message) => void
   onWithdraw?: (messageId: string) => void
+  // onDelete 删除单条消息（仅对本人生效）；onWithdraw 是撤回（对所有人生效），两者语义不同
+  onDelete?: (messageId: string) => void
   onFileOpen?: (url: string, filename: string) => void
 }
 
@@ -28,11 +30,12 @@ const getAvatarChar = (name?: string, isOwn?: boolean) => {
   return name.charAt(0).toUpperCase()
 }
 
-export default function ChatBubble({ message, isOwn, showAvatar = true, receipt, showReadCount, onEdit, onForward, onWithdraw, onFileOpen }: Props) {
+export default function ChatBubble({ message, isOwn, showAvatar = true, receipt, showReadCount, onEdit, onForward, onWithdraw, onDelete, onFileOpen }: Props) {
   const [translated, setTranslated] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [withdrawing, setWithdrawing] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [showLangPicker, setShowLangPicker] = useState(false)
 
   const handleTranslate = async (targetLang: string) => {
@@ -76,6 +79,19 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, receipt,
       alert('撤回失败')
     } finally {
       setWithdrawing(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (deleting || message.id.startsWith('local-')) return
+    setDeleting(true)
+    try {
+      await deleteMessage(message.id)
+      onDelete?.(message.id)
+    } catch {
+      alert('删除失败')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -265,6 +281,11 @@ export default function ChatBubble({ message, isOwn, showAvatar = true, receipt,
             <button className="bubble-action" onClick={handleForward} title="转发">
               <Share2 size={13} />
             </button>
+            {!message.id.startsWith('local-') && (
+              <button className="bubble-action" onClick={handleDelete} title="删除（仅自己可见）" disabled={deleting}>
+                <Trash2 size={13} />
+              </button>
+            )}
             {isOwn && !message.id.startsWith('local-') && (
               <>
                 <button className="bubble-action" onClick={handleEdit} title="编辑">

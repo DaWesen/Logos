@@ -7,6 +7,7 @@ import (
 	"Logos/config"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 var (
@@ -46,15 +47,31 @@ func (m *JWTManager) GetTokenExpireHours() int {
 	return m.tokenExpireHours
 }
 
+// RemainingTTL 返回令牌剩余有效期；已过期或缺少 exp 时返回 0。
+// 登出拉黑时用它作为 Redis TTL：令牌自然过期后黑名单自动清理，不会无限堆积。
+func (c *Claims) RemainingTTL() time.Duration {
+	if c == nil || c.ExpiresAt == nil {
+		return 0
+	}
+	ttl := time.Until(c.ExpiresAt.Time)
+	if ttl < 0 {
+		return 0
+	}
+	return ttl
+}
+
 // GenerateToken 生成访问令牌
 func (m *JWTManager) GenerateToken(userID, role string) (string, error) {
+	now := time.Now()
 	claims := Claims{
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(m.tokenExpireHours) * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
+			// jti：每个令牌唯一标识，登出时按它拉黑单个令牌（不需要为每个 token 建索引）
+			ID:        uuid.NewString(),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(m.tokenExpireHours) * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
 		},
 	}
 
@@ -70,6 +87,10 @@ func (m *JWTManager) GenerateToken(userID, role string) (string, error) {
 // ParseToken 解析访问令牌
 func (m *JWTManager) ParseToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		// 固定算法：只接受 HS256，避免 alg 混淆（例如把 header 改成 none / RS256 骗过校验）
+		if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, ErrInvalidToken
+		}
 		return []byte(m.secretKey), nil
 	})
 
@@ -92,6 +113,7 @@ func (m *JWTManager) GenerateRefreshToken(userID string) (string, error) {
 	claims := RefreshClaims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.NewString(),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(m.refreshExpireDays) * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),

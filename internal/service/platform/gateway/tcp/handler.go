@@ -11,6 +11,8 @@ import (
 
 	"Logos/internal/service/messaging/types"
 	"Logos/internal/service/platform/gateway"
+	"Logos/pkg/auth"
+	"Logos/pkg/cache"
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
@@ -101,6 +103,7 @@ type Handler struct {
 	manager    *ConnectionManager
 	unified    *gateway.UnifiedConnectionManager
 	jwtManager *jwt.JWTManager
+	revoker    *auth.Revoker
 	eventBus   *types.EventBus
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -112,6 +115,7 @@ func NewHandler(mgr *ConnectionManager) *Handler {
 		manager:    mgr,
 		unified:    gateway.GetUnifiedConnectionManager(),
 		jwtManager: jwt.NewJWTManager(),
+		revoker:    auth.NewRevoker(cache.NewRedisCache()),
 		eventBus:   types.GetEventBus(),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -311,6 +315,10 @@ func (h *Handler) handleConnect(conn *TCPConnection, msg *IncomingMessage) {
 		h.sendError(conn, msg.RequestID, 401, "令牌无效")
 		return
 	}
+	if h.revoker.IsRevoked(h.ctx, claims) {
+		h.sendError(conn, msg.RequestID, 401, "令牌已失效")
+		return
+	}
 
 	sessionID := uuid.New().String()
 	conn.UserID = claims.UserID
@@ -383,6 +391,11 @@ func (h *Handler) handleChatMessageSend(conn *TCPConnection, msg *IncomingMessag
 		h.sendError(conn, msg.RequestID, 401, "未连接")
 		return
 	}
+	// request_id 作为幂等键落库（varchar(64)），超长直接拒绝
+	if len(msg.RequestID) > 64 {
+		h.sendError(conn, msg.RequestID, 400, "request_id 过长（最多 64 字节）")
+		return
+	}
 
 	var payload MessagePayload
 	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
@@ -412,7 +425,11 @@ func (h *Handler) handleChatMessageSend(conn *TCPConnection, msg *IncomingMessag
 		}
 	}
 
+	// 与 WS 入口一致：携带幂等键时派生确定性消息 ID，重发不产生重复消息
 	messageID := uuid.New().String()
+	if msg.RequestID != "" {
+		messageID = gateway.DeriveMessageID(conn.UserID, msg.RequestID)
+	}
 	event := types.NewMessageEvent(
 		messageID,
 		payload.ChatID,
@@ -425,6 +442,7 @@ func (h *Handler) handleChatMessageSend(conn *TCPConnection, msg *IncomingMessag
 		payload.MentionIDs,
 		nil,
 	)
+	event.RequestID = msg.RequestID
 
 	if err := h.eventBus.PublishMessageEvent(h.ctx, event); err != nil {
 		h.sendError(conn, msg.RequestID, 500, "发送消息失败")

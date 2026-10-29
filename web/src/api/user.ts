@@ -94,6 +94,16 @@ export async function updateProfile(data: Record<string, unknown>) {
   return extractData(res, null)
 }
 
+// logout 通知服务端撤销当前令牌；allDevices=true 时撤销该用户全部已签发令牌。
+// 失败不抛错：本地登出不应被网络问题阻塞，令牌到期后同样失效。
+export async function logout(allDevices = false): Promise<void> {
+  try {
+    await client.post('/auth/logout', null, allDevices ? { params: { all: 'true' } } : undefined)
+  } catch {
+    /* 忽略 */
+  }
+}
+
 export async function updateAvatar(file: File) {
   const form = new FormData()
   form.append('avatar', file)

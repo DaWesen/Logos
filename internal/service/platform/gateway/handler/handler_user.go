@@ -64,6 +64,45 @@ func (h *Handler) Login(c *gin.Context) {
 	})
 }
 
+// Logout 撤销当前访问令牌。
+// 默认只作废本次请求携带的令牌（单设备登出）；all=true 时写入用户级撤销水位线，
+// 使该用户此前签发的所有令牌一起失效（登出所有设备）。
+func (h *Handler) Logout(c *gin.Context) {
+	if h.JWTManager == nil || h.Revoker == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "认证服务不可用"))
+		return
+	}
+
+	// 只认 Authorization 头：URL query 里的令牌会进日志/历史，登出接口不再接受
+	tokenString := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	claims, err := h.JWTManager.ParseToken(tokenString)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, model.Error(401, "令牌无效或已过期"))
+		return
+	}
+
+	allDevices := c.Query("all") == "true" || c.Query("all") == "1"
+	if allDevices {
+		ttl := time.Duration(h.JWTManager.GetTokenExpireHours())*time.Hour + time.Minute
+		if err := h.Revoker.RevokeAll(c.Request.Context(), claims.UserID, ttl); err != nil {
+			logger.Error("登出全部设备失败", logger.ErrorField(err))
+			c.JSON(http.StatusInternalServerError, model.InternalError("登出失败"))
+			return
+		}
+	} else if claims.ID != "" {
+		if err := h.Revoker.RevokeToken(c.Request.Context(), claims.ID, claims.RemainingTTL()); err != nil {
+			logger.Error("令牌拉黑失败", logger.ErrorField(err))
+			c.JSON(http.StatusInternalServerError, model.InternalError("登出失败"))
+			return
+		}
+	}
+
+	logger.Info("用户登出",
+		logger.StringField("user_id", claims.UserID),
+		logger.BoolField("all_devices", allDevices))
+	c.JSON(http.StatusOK, model.Response{Code: 200, Message: "已登出"})
+}
+
 func (h *Handler) Register(c *gin.Context) {
 	logger.Info("Register request received")
 	if h.UserClient == nil {
@@ -204,14 +243,16 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// 优先从认证信息获取用户 ID
-	var userID int64
-	if uid, exists := c.Get("user_id"); exists {
-		if idStr, ok := uid.(string); ok {
-			if parsed, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				userID = parsed
-			}
-		}
+	// 身份只认认证中间件写入的 user_id：请求体里的 user_id 不可信，
+	// 否则任何登录用户都能改他人邮箱/手机号/头像（越权）。
+	authUserID, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
+	userID, err := strconv.ParseInt(authUserID, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, model.Error(401, "用户身份无效"))
+		return
 	}
 
 	var req pb.UpdateUserReq
@@ -221,18 +262,16 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// 如果请求里有 user_id，用请求的，否则用认证的
-	if req.UserId == 0 && userID > 0 {
-		req.UserId = userID
-	}
-
-	logger.Info("Updating user", logger.Int64Field("user_id", req.UserId))
-
-	if req.UserId == 0 {
-		logger.Error("User ID is 0, cannot update")
-		c.JSON(http.StatusBadRequest, model.BadRequest("请提供用户 ID"))
+	if req.UserId != 0 && req.UserId != userID {
+		logger.Warn("拒绝越权修改他人资料",
+			logger.Int64Field("auth_user_id", userID),
+			logger.Int64Field("body_user_id", req.UserId))
+		c.JSON(http.StatusForbidden, model.Error(403, "无权修改其他用户"))
 		return
 	}
+	req.UserId = userID
+
+	logger.Info("Updating user", logger.Int64Field("user_id", req.UserId))
 
 	resp, err := h.UserClient.UpdateUser(c.Request.Context(), &req)
 	if err != nil {
@@ -241,12 +280,20 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	logger.Info("Update user success", logger.Int64Field("user_id", req.UserId))
-
 	statusCode := 200
 	if resp != nil {
 		statusCode = mapStatusCode(resp.StatusCode)
 	}
+
+	// 改密成功后作废该用户所有旧令牌：密码变了，之前泄露的 token 必须一起失效
+	if statusCode == http.StatusOK && req.GetNewPassword() != "" && h.Revoker != nil && h.JWTManager != nil {
+		ttl := time.Duration(h.JWTManager.GetTokenExpireHours())*time.Hour + time.Minute
+		if err := h.Revoker.RevokeAll(c.Request.Context(), authUserID, ttl); err != nil {
+			logger.Error("改密后撤销旧令牌失败", logger.ErrorField(err))
+		}
+	}
+
+	logger.Info("Update user success", logger.Int64Field("user_id", req.UserId))
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 

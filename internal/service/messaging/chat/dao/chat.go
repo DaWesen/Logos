@@ -54,16 +54,27 @@ func toStrings(is []int64) []string {
 	return result
 }
 
+// notDeletedByUserSQL 从观察者视角排除其本人删除过的消息（删除是私有状态，不影响其他人）。
+// 用 NOT EXISTS 而非 LEFT JOIN：同一消息即使有重复墓碑也不会放大结果行；
+// 子查询命中 message_deletions 的 (user_id, message_id) 唯一索引，成本与消息条数同级。
+// 占位符传入 userID。
+const notDeletedByUserSQL = "NOT EXISTS (SELECT 1 FROM message_deletions d WHERE d.user_id = ? AND d.message_id = messages.id)"
+
 type ChatRepository interface {
 	CreateMessage(ctx context.Context, msg *model.Message) error
+	// CreateMessageIdempotent 以 (sender_id, request_id) 幂等键写入消息。
+	// 返回 created=false 表示该 request_id 已处理过，existing 为首次创建的消息（幂等回放）。
+	CreateMessageIdempotent(ctx context.Context, msg *model.Message) (created bool, existing *model.Message, err error)
 	UpdateMessage(ctx context.Context, msg *model.Message) error
 	GetMessageByID(ctx context.Context, id string) (*model.Message, error)
 	// GetMessagesByChatID 返回会话历史消息；minSeq > 0 时跳过 seq <= minSeq 的消息（用户已清空的部分）。
-	GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error)
+	// userID 是「观察者」，用于排除其本人删除过的消息：同一会话不同成员看到的集合可以不同。
+	GetMessagesByChatID(ctx context.Context, userID, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error)
 	// GetMessagesAfterSeq 返回会话内 seq 大于 afterSeq 的消息，按 seq 升序，用于断线重连后的增量补拉。
-	GetMessagesAfterSeq(ctx context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error)
-	// SearchMessages 会话内搜索；minSeq > 0 时跳过用户已清空的历史。
-	SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error)
+	// userID 同上，用于排除本人已删除的消息。
+	GetMessagesAfterSeq(ctx context.Context, userID, chatID string, afterSeq int64, limit int) ([]*model.Message, error)
+	// SearchMessages 会话内搜索；minSeq > 0 时跳过用户已清空的历史，且排除本人已删除的消息。
+	SearchMessages(ctx context.Context, userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error)
 	// MarkMessagesRead 逐条标记指定消息为已读。
 	// 仅用于已读回执携带的显式、有界 msgIDs（供前端展示已读态）；
 	// 未读数统计走 AdvanceReadPosition 的位点比对，不依赖本方法。
@@ -72,8 +83,18 @@ type ChatRepository interface {
 	GetMaxMessageSeq(ctx context.Context, chatID string) (int64, error)
 	// GetMaxSeqByMessageIDs 返回指定消息中的最大 seq（用于按位点标记已读）
 	GetMaxSeqByMessageIDs(ctx context.Context, msgIDs []string) (int64, error)
-	WithdrawMessage(ctx context.Context, msgID string) error
-	EditMessage(ctx context.Context, msgID, content string) error
+	// WithdrawMessage 在事务内撤回消息（写状态 + version+1）并追加一条原位变更日志。
+	// 两者同事务，保证变更日志不会与消息内容分叉；任何一步失败都整体回滚。
+	WithdrawMessage(ctx context.Context, msgID string, change *model.MessageChange) error
+	// EditMessage 按版本号做乐观锁更新内容，并将 version +1；可选地在同一事务内追加原位变更日志。
+	// updated=false 表示预期版本与服务端不一致（已被其他编辑推进）或消息已不存在，调用方应返回冲突。
+	EditMessage(ctx context.Context, msgID, content string, expectedVersion int64, change *model.MessageChange) (updated bool, err error)
+	// GetMessageChangesAfter 返回会话内 updated_seq > afterID 的原位变更，按 updated_seq 升序，
+	// 供离线设备补拉编辑/撤回（这些变更不改消息 seq，无法由 LastSeq 游标表达）。
+	GetMessageChangesAfter(ctx context.Context, chatID string, afterID int64, limit int) ([]*model.MessageChange, error)
+	// PurgeMessageChangesBefore 按保留期回收原位变更日志，返回删除行数。
+	// 变更日志是会话级共享的（不能按某个用户的 cleared_seq 删除，别人还要补拉），只能按时间回收。
+	PurgeMessageChangesBefore(ctx context.Context, before time.Time) (int64, error)
 	// GetMessagesByIDs 批量取消息，用于把客户端持有的 message_id 映射到会话内 seq。
 	GetMessagesByIDs(ctx context.Context, msgIDs []string) ([]*model.Message, error)
 	// GetReadPositions 返回会话内各成员的已读位点，已读回执由位点比对聚合得出。
@@ -87,6 +108,14 @@ type ChatRepository interface {
 	// ClearConversationForUser 把用户的清空水位线单调推进到 seq（同时推进已读位点）。
 	// 只隐藏本人视角的历史，不删除消息记录。
 	ClearConversationForUser(ctx context.Context, conversationID, userID string, seq int64) error
+	// DeleteMessageForUser 为 userID 写入「删除某条消息」的墓碑（幂等）。
+	// created=false 表示该用户此前已删除过这条消息，调用方无需重复推送事件。
+	DeleteMessageForUser(ctx context.Context, userID, messageID, chatID string, messageSeq int64) (created bool, err error)
+	// GetMessageDeletionsAfter 返回用户在会话内删除序号 > afterID 的墓碑，按删除序号升序，
+	// 供客户端用独立的 deleted_seq 游标补齐「删除」这类不可由消息 seq 表达的变更。
+	GetMessageDeletionsAfter(ctx context.Context, userID, chatID string, afterID int64, limit int) ([]*model.MessageDeletion, error)
+	// PurgeMessageDeletions 清理用户在会话内 seq <= upToSeq 的墓碑（本人已清空的历史无需再下发删除）。
+	PurgeMessageDeletions(ctx context.Context, userID, chatID string, upToSeq int64) error
 
 	GetOrCreatePrivateConversation(ctx context.Context, userID1, userID2 string) (*model.Conversation, error)
 	CreateConversation(ctx context.Context, conv *model.Conversation) error
@@ -166,29 +195,81 @@ func (r *chatRepositoryImpl) CreateMessage(ctx context.Context, msg *model.Messa
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. 确保分配器行存在（并发下可能已被创建，DoNothing 忽略冲突）
-		seqRow := &model.ConversationSeq{ChatID: msg.ChatID, LastSeq: 0, UpdatedAt: time.Now()}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(seqRow).Error; err != nil {
-			return err
-		}
-
-		// 2. 行锁 + 自增，原子取得本会话下一个 seq
-		var locked model.ConversationSeq
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("chat_id = ?", msg.ChatID).First(&locked).Error; err != nil {
-			return err
-		}
-		locked.LastSeq++
-		if err := tx.Model(&model.ConversationSeq{}).
-			Where("chat_id = ?", msg.ChatID).
-			Update("last_seq", locked.LastSeq).Error; err != nil {
-			return err
-		}
-		msg.Seq = locked.LastSeq
-
-		// 3. 写入消息（Seq 已带上）
-		return tx.Create(msg).Error
+		return r.createMessageTx(tx, msg)
 	})
+}
+
+// createMessageTx 在给定事务内分配会话 seq 并写入消息。
+func (r *chatRepositoryImpl) createMessageTx(tx *gorm.DB, msg *model.Message) error {
+	// 1. 确保分配器行存在（并发下可能已被创建，DoNothing 忽略冲突）
+	seqRow := &model.ConversationSeq{ChatID: msg.ChatID, LastSeq: 0, UpdatedAt: time.Now()}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(seqRow).Error; err != nil {
+		return err
+	}
+
+	// 2. 行锁 + 自增，原子取得本会话下一个 seq
+	var locked model.ConversationSeq
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("chat_id = ?", msg.ChatID).First(&locked).Error; err != nil {
+		return err
+	}
+	locked.LastSeq++
+	if err := tx.Model(&model.ConversationSeq{}).
+		Where("chat_id = ?", msg.ChatID).
+		Update("last_seq", locked.LastSeq).Error; err != nil {
+		return err
+	}
+	msg.Seq = locked.LastSeq
+
+	// 3. 写入消息（Seq 已带上）
+	return tx.Create(msg).Error
+}
+
+// CreateMessageIdempotent 以 (sender_id, request_id) 幂等键写入消息。
+//
+// 事务内先占位幂等键、再写消息：
+//   - 幂等键插入成功：本次是首次请求，继续写消息，任一步失败则整体回滚（占位一起释放，客户端可重试）；
+//   - 幂等键冲突（DoNothing 命中 0 行）：说明并发/重试请求已处理过，直接回放首次创建的消息。
+//
+// 冲突方会等待首个事务提交后再读到其消息，因此不会读到「占位但消息还没写」的中间态。
+func (r *chatRepositoryImpl) CreateMessageIdempotent(ctx context.Context, msg *model.Message) (bool, *model.Message, error) {
+	var created bool
+	var result *model.Message
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		claim := &model.MessageIdempotency{
+			SenderID:  msg.SenderID,
+			RequestID: msg.RequestID,
+			MessageID: msg.ID,
+			CreatedAt: time.Now(),
+		}
+		res := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(claim)
+		if res.Error != nil {
+			return res.Error
+		}
+
+		if res.RowsAffected == 0 {
+			var existingClaim model.MessageIdempotency
+			if err := tx.Where("sender_id = ? AND request_id = ?", msg.SenderID, msg.RequestID).
+				First(&existingClaim).Error; err != nil {
+				return err
+			}
+			var existing model.Message
+			if err := tx.Where("id = ?", existingClaim.MessageID).First(&existing).Error; err != nil {
+				return err
+			}
+			result = &existing
+			return nil
+		}
+
+		if err := r.createMessageTx(tx, msg); err != nil {
+			return err
+		}
+		created = true
+		result = msg
+		return nil
+	})
+	return created, result, err
 }
 
 func (r *chatRepositoryImpl) UpdateMessage(ctx context.Context, msg *model.Message) error {
@@ -207,9 +288,10 @@ func (r *chatRepositoryImpl) GetMessageByID(ctx context.Context, id string) (*mo
 // GetMessagesByChatID 返回会话历史消息。
 // 排序优先按会话内 seq（单调且无时间戳并列问题），seq 为 0 的历史兜底行排在最后；
 // beforeTime 作为游标保留：仅返回 created_at 早于该时间的消息，兼容既有分页调用方。
-func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error) {
+func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, userID, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error) {
 	var messages []*model.Message
-	query := r.db.WithContext(ctx).Where("chat_id = ?", chatID)
+	query := r.db.WithContext(ctx).Where("chat_id = ?", chatID).
+		Where(notDeletedByUserSQL, userID)
 	if minSeq > 0 {
 		query = query.Where("seq > ?", minSeq)
 	}
@@ -222,10 +304,12 @@ func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, chatID str
 
 // GetMessagesAfterSeq 增量补拉：只取 seq 严格大于 afterSeq 的消息，按 seq 升序返回，
 // 使调用方无需再反转即可直接追加到会话末尾。用于 WS 断线重连后填补 PubSub 丢失的窗口。
-func (r *chatRepositoryImpl) GetMessagesAfterSeq(ctx context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
+// 同时排除观察者本人删除过的消息（删除是私有状态，不影响其他成员）。
+func (r *chatRepositoryImpl) GetMessagesAfterSeq(ctx context.Context, userID, chatID string, afterSeq int64, limit int) ([]*model.Message, error) {
 	var messages []*model.Message
 	err := r.db.WithContext(ctx).
 		Where("chat_id = ? AND seq > ?", chatID, afterSeq).
+		Where(notDeletedByUserSQL, userID).
 		Order("seq ASC").
 		Limit(limit).
 		Find(&messages).Error
@@ -331,11 +415,12 @@ func (r *chatRepositoryImpl) GetReadPositions(ctx context.Context, conversationI
 	return positions, err
 }
 
-func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error) {
+func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error) {
 	var messages []*model.Message
 	var total int64
 
-	query := r.db.WithContext(ctx).Model(&model.Message{})
+	query := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where(notDeletedByUserSQL, userID)
 	if chatID != "" {
 		query = query.Where("chat_id = ?", chatID)
 	}
@@ -388,25 +473,104 @@ func (r *chatRepositoryImpl) AdvanceReadPosition(ctx context.Context, conversati
 		}).Error
 }
 
-func (r *chatRepositoryImpl) WithdrawMessage(ctx context.Context, msgID string) error {
-	return r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("id = ?", msgID).
-		Updates(map[string]interface{}{
-			"status":       model.MessageStatusWithdrawn.String(),
-			"content":      "[消息已撤回]",
-			"message_type": int(model.MessageTypeText),
-			"media_url":    "",
-			"media_meta":   nil,
-		}).Error
+// WithdrawMessage 在同一事务内撤回消息并追加原位变更日志。
+//
+// 撤回收不到 edit 的版本校验保护，这里直接把 version +1：让「撤回」也能像编辑一样
+// 参与版本比较，客户端才不会把更早发出的编辑事件应用回已撤回的消息上。
+func (r *chatRepositoryImpl) WithdrawMessage(ctx context.Context, msgID string, change *model.MessageChange) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&model.Message{}).
+			Where("id = ?", msgID).
+			Updates(map[string]interface{}{
+				"status":       model.MessageStatusWithdrawn.String(),
+				"content":      "[消息已撤回]",
+				"message_type": int(model.MessageTypeText),
+				"media_url":    "",
+				"media_meta":   nil,
+				"version":      gorm.Expr("version + 1"),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		return appendMessageChange(tx, change)
+	})
 }
 
-func (r *chatRepositoryImpl) EditMessage(ctx context.Context, msgID, content string) error {
-	return r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("id = ?", msgID).
-		Updates(map[string]interface{}{
-			"content": content,
-			"status":  model.MessageStatusEdited.String(),
-		}).Error
+// EditMessage 以 version 为乐观锁更新内容：SQL 层原子执行
+// `UPDATE messages SET content=?, status='edited', version=version+1 WHERE id=? AND version=?`。
+// 只有客户端读到的版本仍是服务端当前版本时才写入，因此两个设备并发编辑时只有一个能成功，
+// 另一个拿到 updated=false（而不是把对方的编辑静默覆盖）。条件更新无需显式事务与行锁。
+func (r *chatRepositoryImpl) EditMessage(ctx context.Context, msgID, content string, expectedVersion int64, change *model.MessageChange) (bool, error) {
+	var updated bool
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&model.Message{}).
+			Where("id = ? AND version = ?", msgID, expectedVersion).
+			Updates(map[string]interface{}{
+				"content": content,
+				"status":  model.MessageStatusEdited.String(),
+				"version": gorm.Expr("version + 1"),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// 版本已被其他编辑推进（或消息在读取后被删除/撤回）：不做任何写入，事务空提交。
+			return nil
+		}
+		updated = true
+		if change != nil {
+			// 变更日志与内容同事务提交：否则日志缺失，离线端永远补不到这次编辑。
+			change.Version = expectedVersion + 1
+			return appendMessageChange(tx, change)
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return updated, nil
+}
+
+// appendMessageChange 写入一条原位变更日志；change.CreatedAt 为空时补当前时间。
+func appendMessageChange(tx *gorm.DB, change *model.MessageChange) error {
+	if change == nil {
+		return nil
+	}
+	if change.CreatedAt.IsZero() {
+		change.CreatedAt = time.Now()
+	}
+	return tx.Create(change).Error
+}
+
+// GetMessageChangesAfter 按 updated_seq（自增 ID）升序取增量，过滤条件命中 (chat_id) 索引。
+func (r *chatRepositoryImpl) GetMessageChangesAfter(ctx context.Context, chatID string, afterID int64, limit int) ([]*model.MessageChange, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var changes []*model.MessageChange
+	err := r.db.WithContext(ctx).
+		Where("chat_id = ? AND id > ?", chatID, afterID).
+		Order("id ASC").
+		Limit(limit).
+		Find(&changes).Error
+	if err != nil {
+		return nil, err
+	}
+	return changes, nil
+}
+
+// PurgeMessageChangesBefore 按保留期回收原位变更日志。
+func (r *chatRepositoryImpl) PurgeMessageChangesBefore(ctx context.Context, before time.Time) (int64, error) {
+	if before.IsZero() {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("created_at < ?", before).
+		Delete(&model.MessageChange{})
+	return res.RowsAffected, res.Error
 }
 
 // GetClearedSeq 读取用户的清空水位线；没有参与者记录时返回 0（等价于未清空）。
@@ -457,6 +621,47 @@ func (r *chatRepositoryImpl) ClearConversationForUser(ctx context.Context, conve
 		return res.Error
 	}
 	return nil
+}
+
+// DeleteMessageForUser 写入单条消息删除墓碑。
+// 唯一键 (user_id, message_id) 保证幂等：重复删除不会产生第二行，也不会报错。
+// created=false 表示此前已删除过，调用方据此跳过重复推送。
+func (r *chatRepositoryImpl) DeleteMessageForUser(ctx context.Context, userID, messageID, chatID string, messageSeq int64) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(&model.MessageDeletion{
+			UserID:     userID,
+			MessageID:  messageID,
+			ChatID:     chatID,
+			MessageSeq: messageSeq,
+			CreatedAt:  time.Now(),
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// GetMessageDeletionsAfter 按删除序号升序返回墓碑，索引 (user_id, chat_id) + 主键避免额外排序。
+func (r *chatRepositoryImpl) GetMessageDeletionsAfter(ctx context.Context, userID, chatID string, afterID int64, limit int) ([]*model.MessageDeletion, error) {
+	var rows []*model.MessageDeletion
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND chat_id = ? AND id > ?", userID, chatID, afterID).
+		Order("id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	return rows, err
+}
+
+// PurgeMessageDeletions 清理已被清空水位线覆盖的墓碑：
+// 这些消息本来就不会再下发给本人，墓碑失去信息价值；失败只影响存储体积，不影响正确性。
+func (r *chatRepositoryImpl) PurgeMessageDeletions(ctx context.Context, userID, chatID string, upToSeq int64) error {
+	if upToSeq <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Where("user_id = ? AND chat_id = ? AND message_seq <= ?", userID, chatID, upToSeq).
+		Delete(&model.MessageDeletion{}).Error
 }
 
 func (r *chatRepositoryImpl) GetOrCreatePrivateConversation(ctx context.Context, userID1, userID2 string) (*model.Conversation, error) {
@@ -764,6 +969,7 @@ func (r *chatRepositoryImpl) GetConversationList(ctx context.Context, userID str
 // 未读数 = 会话内 seq 大于本人已读位点、且大于清空水位线的他人消息数。
 // 早期实现按会话逐条 COUNT（N+1：会话列表 100 条就是 100 次查询），
 // 现改为 JOIN 参与者表后一次 GROUP BY 聚合，查询次数与会话数无关。
+// 本人删除过的消息不计入未读：删除是显式的「我已处理」，但不再逐条回写位点。
 func (r *chatRepositoryImpl) GetUnreadCounts(ctx context.Context, userID string, chatIDs []string) (map[string]int64, error) {
 	result := make(map[string]int64)
 	if len(chatIDs) == 0 {
@@ -780,6 +986,7 @@ func (r *chatRepositoryImpl) GetUnreadCounts(ctx context.Context, userID string,
 		Where("messages.chat_id IN ?", chatIDs).
 		Where("messages.seq > p.last_read_seq AND messages.seq > p.cleared_seq").
 		Where("messages.sender_id != ?", userID).
+		Where(notDeletedByUserSQL, userID).
 		Group("messages.chat_id").
 		Scan(&rows).Error
 	if err != nil {

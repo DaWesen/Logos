@@ -79,18 +79,29 @@ const chatTypeMap: Record<string, number> = {
   broadcast: 3,
 }
 
-export async function sendMessage(chatId: string, content: string, messageType = 'text', replyTo?: string, chatType = 'private') {
+// newRequestId 生成发送幂等键：同一 request_id 重复提交（超时重试、用户连点）
+// 服务端只会落一条消息，并回放首次结果。
+export function newRequestId(): string {
+  const randomUUID = (globalThis.crypto as Crypto & { randomUUID?: () => string } | undefined)?.randomUUID
+  if (typeof randomUUID === 'function') {
+    return randomUUID.call(globalThis.crypto)
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+export async function sendMessage(chatId: string, content: string, messageType = 'text', replyTo?: string, chatType = 'private', requestId: string = newRequestId()) {
   const res = await client.post('/chat/message', {
     chat_id: chatId,
     chat_type: chatTypeMap[chatType] || 1,
     content,
     message_type: messageTypeMap[messageType] || 1,
     reply_to_message_id: replyTo || '',
+    request_id: requestId,
   })
   return extractData(res, null)
 }
 
-export async function sendMediaMessage(chatId: string, content: string, mediaUrl: string, messageType: string, mediaMeta?: string, chatType = 'private') {
+export async function sendMediaMessage(chatId: string, content: string, mediaUrl: string, messageType: string, mediaMeta?: string, chatType = 'private', requestId: string = newRequestId()) {
   const res = await client.post('/chat/media', {
     chat_id: chatId,
     chat_type: chatTypeMap[chatType] || 1,
@@ -98,6 +109,7 @@ export async function sendMediaMessage(chatId: string, content: string, mediaUrl
     media_url: mediaUrl,
     message_type: messageTypeMap[messageType] || 3,
     media_meta: mediaMeta ? JSON.parse(mediaMeta) : {},
+    request_id: requestId,
   })
   return extractData(res, null)
 }
@@ -206,21 +218,54 @@ export async function markMessagesRead(chatId: string, chatType = 1): Promise<vo
   }
 }
 
+// ChatSyncChange 原位变更（编辑/撤回）：消息 seq 不变、内容被改写，
+// 因此不能靠 lastSeq 补拉，必须用独立的 updatedSeq 游标。
+export interface ChatSyncChange {
+  messageId: string
+  chatId: string
+  // edit / withdraw
+  changeType: string
+  content: string
+  // 变更后的消息版本，客户端只在比本地新时应用，乱序/重复不会回退内容
+  version: number
+  // 被变更消息的会话内 seq，用于跳过本人已清空的历史
+  messageSeq: number
+  // 变更日志自增 ID，即 updated_seq
+  updatedSeq: number
+  changedAt: number
+}
+
 export interface ChatSyncItem {
   chatId: string
   messages: Record<string, unknown>[]
   latestSeq: number
   clearedSeq: number
   hasMore: boolean
+  // 自 deletedSeq 游标以来被本人删除的消息 ID（删除无法由消息 seq 表达，必须独立游标）
+  deletedMessageIds: string[]
+  deletedSeq: number
+  deletedHasMore: boolean
+  // 自 updatedSeq 游标以来发生的编辑/撤回（同样不改变消息 seq）
+  changes: ChatSyncChange[]
+  updatedSeq: number
+  updatedHasMore: boolean
 }
 
-// syncChatMessages 断线重连后批量补齐增量：每个会话带「已见过的最大 seq」游标，
-// 服务端一次请求返回多个会话的增量，避免按会话逐个请求。
-export async function syncChatMessages(cursors: { chatId: string; lastSeq: number }[]): Promise<ChatSyncItem[]> {
+// syncChatMessages 断线重连后批量补齐增量：每个会话带三个独立游标
+// （lastSeq 表达新增、deletedSeq 表达删除、updatedSeq 表达编辑/撤回），
+// 服务端一次请求返回多个会话的增量。
+export async function syncChatMessages(
+  cursors: { chatId: string; lastSeq: number; deletedSeq?: number; updatedSeq?: number }[]
+): Promise<ChatSyncItem[]> {
   if (cursors.length === 0) return []
   try {
     const res = await client.post('/chat/sync', {
-      cursors: cursors.slice(0, 100).map((c) => ({ chat_id: c.chatId, last_seq: c.lastSeq })),
+      cursors: cursors.slice(0, 100).map((c) => ({
+        chat_id: c.chatId,
+        last_seq: c.lastSeq,
+        deleted_seq: c.deletedSeq || 0,
+        updated_seq: c.updatedSeq || 0,
+      })),
       limit: 100,
     })
     const chats = ((res.data as { data?: { chats?: any[] } })?.data?.chats) || []
@@ -230,9 +275,25 @@ export async function syncChatMessages(cursors: { chatId: string; lastSeq: numbe
       latestSeq: Number(c.latest_seq ?? c.latestSeq ?? 0),
       clearedSeq: Number(c.cleared_seq ?? c.clearedSeq ?? 0),
       hasMore: Boolean(c.has_more ?? c.hasMore),
+      deletedMessageIds: Array.isArray(c.deleted_message_ids) ? c.deleted_message_ids.map(String) : [],
+      deletedSeq: Number(c.deleted_seq ?? c.deletedSeq ?? 0),
+      deletedHasMore: Boolean(c.deleted_has_more ?? c.deletedHasMore),
+      changes: (Array.isArray(c.changes) ? c.changes : []).map((ch: Record<string, unknown>) => ({
+        messageId: String(ch.message_id ?? ch.messageId ?? ''),
+        chatId: String(ch.chat_id ?? ch.chatId ?? ''),
+        changeType: String(ch.change_type ?? ch.changeType ?? ''),
+        content: String(ch.content ?? ''),
+        version: Number(ch.version ?? 0),
+        messageSeq: Number(ch.message_seq ?? ch.messageSeq ?? 0),
+        updatedSeq: Number(ch.updated_seq ?? ch.updatedSeq ?? 0),
+        changedAt: Number(ch.changed_at ?? ch.changedAt ?? 0),
+      })).filter((ch: ChatSyncChange) => ch.messageId),
+      updatedSeq: Number(c.updated_seq ?? c.updatedSeq ?? 0),
+      updatedHasMore: Boolean(c.updated_has_more ?? c.updatedHasMore),
     })).filter((c) => c.chatId)
-  } catch {
-    return []
+  } catch (err) {
+    // 不吞错误：断线重连后的批量补拉是全链路可靠性唯一兜底，调用方需要重试。
+    throw err
   }
 }
 
@@ -275,8 +336,16 @@ export async function withdrawMessage(messageId: string): Promise<void> {
   await client.post('/chat/withdraw', { message_id: messageId })
 }
 
-export async function editMessage(messageId: string, content: string): Promise<void> {
-  await client.put('/chat/edit', { message_id: messageId, content })
+// deleteMessage 删除单条消息：只隐藏本人视角，不撤回、不影响对方/其他群成员。
+// 服务端幂等，重复调用不会报错；其他设备通过 /chat/sync 的 deleted_seq 游标同步该删除。
+export async function deleteMessage(messageId: string): Promise<void> {
+  await client.post('/chat/delete-message', { message_id: messageId })
+}
+
+// editMessage 编辑消息：version 为客户端当前持有的消息版本（乐观锁）。
+// 服务端版本不一致时返回 409，调用方应刷新最新内容后再次提交，避免覆盖他人编辑。
+export async function editMessage(messageId: string, content: string, version = 0): Promise<void> {
+  await client.put('/chat/edit', { message_id: messageId, content, version })
 }
 
 export async function getConversationList(page = 1, pageSize = 100) {

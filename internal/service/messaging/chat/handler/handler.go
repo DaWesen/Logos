@@ -30,6 +30,11 @@ func chatErrorCode(err error) (int32, string) {
 			return 400, me.Message
 		case types.ErrChatAccessDenied.Code, types.ErrChatPermissionDenied.Code:
 			return 403, me.Message
+		case types.ErrChatMessageNotFound.Code:
+			return 404, me.Message
+		case types.ErrChatMessageConflict.Code:
+			// 409：客户端持有的版本已过期，可用最新内容修正请求后重试。
+			return 409, me.Message
 		}
 	}
 	return 500, err.Error()
@@ -59,6 +64,7 @@ func msgToProto(msg *model.Message) *pb.Message {
 		UpdatedAt:        timestamppb.New(msg.UpdatedAt),
 		ReplyToMessageId: msg.ReplyToMessage,
 		Seq:              msg.Seq,
+		Version:          msg.Version,
 	}
 }
 
@@ -80,17 +86,25 @@ func (s *ChatServiceImpl) SendMessage(ctx context.Context, req *pb.SendMessageRe
 		return &pb.SendMessageResponse{Code: 401, Message: "未提供认证信息"}, nil
 	}
 
-	msg, _, err := s.service.SendMessage(
-		senderID, req.ChatId, chatType, msgType, req.Content, req.Metadata, req.ReplyToMessageId, req.MentionUserIds,
+	// request_id 是客户端生成的幂等键，长度必须落在表字段上限内；
+	// 超长直接拒绝，避免写入时因列长度溢出变成 500。
+	if len(req.RequestId) > 64 {
+		return &pb.SendMessageResponse{Code: 400, Message: "request_id 过长（最多 64 字节）"}, nil
+	}
+
+	msg, _, replayed, err := s.service.SendMessage(
+		senderID, req.ChatId, chatType, msgType, req.Content, req.Metadata, req.ReplyToMessageId, req.MentionUserIds, req.RequestId,
 	)
 	if err != nil {
+		code, errMsg := chatErrorCode(err)
 		logger.Error("发送消息失败", logger.ErrorField(err))
-		return &pb.SendMessageResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.SendMessageResponse{Code: int32(code), Message: errMsg}, nil
 	}
 
 	return &pb.SendMessageResponse{
 		Code: 200, Message: "发送成功",
-		Data: msgToProto(msg),
+		Data:     msgToProto(msg),
+		Replayed: replayed,
 	}, nil
 }
 
@@ -181,15 +195,34 @@ func (s *ChatServiceImpl) WithdrawMessage(ctx context.Context, req *pb.WithdrawM
 	return &pb.WithdrawMessageResponse{Code: 200, Message: "撤回成功"}, nil
 }
 
+// DeleteMessage 单条消息删除（仅对请求者本人隐藏）。
+// 幂等：重复删除返回成功；消息不存在与无权访问返回同一错误，避免枚举他人消息 ID。
+func (s *ChatServiceImpl) DeleteMessage(ctx context.Context, req *pb.DeleteMessageRequest) (*pb.DeleteMessageResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.DeleteMessageResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+	if err := s.service.DeleteMessage(userID, req.MessageId); err != nil {
+		code, msg := chatErrorCode(err)
+		logger.Warn("删除消息失败",
+			logger.StringField("user_id", userID),
+			logger.StringField("message_id", req.MessageId),
+			logger.ErrorField(err))
+		return &pb.DeleteMessageResponse{Code: code, Message: msg}, nil
+	}
+	return &pb.DeleteMessageResponse{Code: 200, Message: "删除成功"}, nil
+}
+
 func (s *ChatServiceImpl) EditMessage(ctx context.Context, req *pb.EditMessageRequest) (*pb.EditMessageResponse, error) {
 	userID, err := getUserID(ctx)
 	if err != nil {
 		return &pb.EditMessageResponse{Code: 401, Message: "未提供认证信息"}, nil
 	}
-	msg, err := s.service.EditMessage(req.MessageId, userID, req.Content)
+	msg, err := s.service.EditMessage(req.MessageId, userID, req.Content, req.Version)
 	if err != nil {
+		code, msg := chatErrorCode(err)
 		logger.Error("编辑消息失败", logger.ErrorField(err))
-		return &pb.EditMessageResponse{Code: 500, Message: err.Error()}, nil
+		return &pb.EditMessageResponse{Code: code, Message: msg}, nil
 	}
 	return &pb.EditMessageResponse{
 		Code: 200, Message: "编辑成功",
@@ -549,7 +582,12 @@ func (s *ChatServiceImpl) SyncOfflineMessages(ctx context.Context, req *pb.SyncO
 
 	cursors := make([]model.SyncCursor, 0, len(req.Cursors))
 	for _, c := range req.Cursors {
-		cursors = append(cursors, model.SyncCursor{ChatID: c.ChatId, LastSeq: c.LastSeq})
+		cursors = append(cursors, model.SyncCursor{
+			ChatID:     c.ChatId,
+			LastSeq:    c.LastSeq,
+			DeletedSeq: c.DeletedSeq,
+			UpdatedSeq: c.UpdatedSeq,
+		})
 	}
 
 	results, err := s.service.SyncOfflineMessages(userID, cursors, int(req.Limit))
@@ -567,12 +605,31 @@ func (s *ChatServiceImpl) SyncOfflineMessages(ctx context.Context, req *pb.SyncO
 		for _, msg := range r.Messages {
 			msgs = append(msgs, msgToProto(msg))
 		}
+		changes := make([]*pb.MessageChange, 0, len(r.Changes))
+		for _, ch := range r.Changes {
+			changes = append(changes, &pb.MessageChange{
+				MessageId:  ch.MessageID,
+				ChatId:     ch.ChatID,
+				ChangeType: ch.ChangeType,
+				Content:    ch.Content,
+				Version:    ch.Version,
+				MessageSeq: ch.MessageSeq,
+				UpdatedSeq: ch.ID,
+				ChangedAt:  ch.CreatedAt.UnixMilli(),
+			})
+		}
 		chats = append(chats, &pb.ChatSyncResult{
-			ChatId:     r.ChatID,
-			Messages:   msgs,
-			LatestSeq:  r.LatestSeq,
-			ClearedSeq: r.ClearedSeq,
-			HasMore:    r.HasMore,
+			ChatId:            r.ChatID,
+			Messages:          msgs,
+			LatestSeq:         r.LatestSeq,
+			ClearedSeq:        r.ClearedSeq,
+			HasMore:           r.HasMore,
+			DeletedMessageIds: r.DeletedMessageIDs,
+			DeletedSeq:        r.DeletedSeq,
+			DeletedHasMore:    r.DeletedHasMore,
+			Changes:           changes,
+			UpdatedSeq:        r.UpdatedSeq,
+			UpdatedHasMore:    r.UpdatedHasMore,
 		})
 	}
 	return &pb.SyncOfflineMessagesResponse{Code: 200, Message: "同步成功", Chats: chats}, nil

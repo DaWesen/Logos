@@ -47,8 +47,9 @@ function connectWebSocket(url: string, reconnectInterval = 5000, maxRetries = 10
   wsManualClose = false
 
   try {
-    const separator = url.includes('?') ? '&' : '?'
-    const ws = new WebSocket(`${url}${separator}token=${encodeURIComponent(token)}`)
+    // 令牌走 WebSocket 子协议，而不是 URL query：URL 会进 access log、浏览器历史与 Referer，
+    // 令牌泄漏后可被直接复用。服务端从 Sec-WebSocket-Protocol 头里读取。
+    const ws = new WebSocket(url, ['access_token', token])
     wsInstance = ws
 
     ws.onopen = () => {

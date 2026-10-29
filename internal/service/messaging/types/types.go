@@ -71,6 +71,12 @@ var (
 	ErrChatPermissionDenied = &MessagingError{Code: 50409, Message: "当前角色无权执行该操作"}
 	// ErrChatBadRequest 请求参数不合法（缺字段、超出批量上限等），客户端修正请求后可重试。
 	ErrChatBadRequest = &MessagingError{Code: 50400, Message: "请求参数不合法"}
+	// ErrChatMessageNotFound 目标消息不存在，或请求者无权访问其所在会话。
+	// 两种情况故意返回同一错误：否则攻击者可用错误码差异枚举他人会话里的 message_id。
+	ErrChatMessageNotFound = &MessagingError{Code: 50404, Message: "消息不存在"}
+	// ErrChatMessageConflict 编辑消息时客户端持有的版本已过期（其他端已先编辑成功）。
+	// 返回 409 而非覆盖写入，客户端应重新拉取最新内容后再提交，避免并发编辑丢失更新。
+	ErrChatMessageConflict = &MessagingError{Code: 50410, Message: "消息内容已变更，请刷新后重试"}
 )
 
 type MessagingError struct {

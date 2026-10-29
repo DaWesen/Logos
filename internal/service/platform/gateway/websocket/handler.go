@@ -12,6 +12,8 @@ import (
 	"Logos/config"
 	"Logos/internal/service/messaging/types"
 	"Logos/internal/service/platform/gateway"
+	"Logos/pkg/auth"
+	"Logos/pkg/cache"
 	"Logos/pkg/client"
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
@@ -26,6 +28,22 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin:     checkOrigin,
+}
+
+// wsAuthSubprotocol 前端通过子协议把令牌传给网关：`new WebSocket(url, ["access_token", token])`。
+// 相比 `?token=`，令牌不会出现在 URL，因而不会进 access log、浏览器历史或 Referer。
+const wsAuthSubprotocol = "access_token"
+
+// wsTokenFromSubprotocol 从 Sec-WebSocket-Protocol 头里取 token。
+// 头形如 `access_token, <jwt>`，按逗号切分后取协议名后面那个元素。
+func wsTokenFromSubprotocol(r *http.Request) string {
+	parts := strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",")
+	for i, p := range parts {
+		if strings.TrimSpace(p) == wsAuthSubprotocol && i+1 < len(parts) {
+			return strings.TrimSpace(parts[i+1])
+		}
+	}
+	return ""
 }
 
 // checkOrigin 校验 WebSocket 请求来源
@@ -56,6 +74,7 @@ type Handler struct {
 	manager    *ConnectionManager
 	unified    *gateway.UnifiedConnectionManager
 	jwtManager *jwt.JWTManager
+	revoker    *auth.Revoker
 	eventBus   *types.EventBus
 	userClient *client.UserClient
 	ctx        context.Context
@@ -68,6 +87,7 @@ func NewHandler() *Handler {
 		manager:    NewConnectionManager(),
 		unified:    gateway.GetUnifiedConnectionManager(),
 		jwtManager: jwt.NewJWTManager(),
+		revoker:    auth.NewRevoker(cache.NewRedisCache()),
 		eventBus:   types.GetEventBus(),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -145,6 +165,22 @@ func (h *Handler) handleChatEvent(msg *mq.Message) error {
 		}
 		return h.handleMessageWithdrawEvent(withdrawEvent)
 
+	case types.EventTypeMessageDelete:
+		deleteEvent, err := types.MessageDeleteEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析删除事件失败", logger.ErrorField(err))
+			return err
+		}
+		return h.handleMessageDeleteEvent(deleteEvent)
+
+	case types.EventTypeMessageEdit:
+		editEvent, err := types.MessageEditEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析编辑事件失败", logger.ErrorField(err))
+			return err
+		}
+		return h.handleMessageEditEvent(editEvent)
+
 	case types.EventTypeMessage, "":
 		event, err := types.MessageEventFromJSON(msg.Value)
 		if err != nil {
@@ -220,6 +256,7 @@ func (h *Handler) handleMessageWithdrawEvent(event *types.MessageWithdrawEvent) 
 			"chat_id":    event.ChatID,
 			"chat_type":  event.ChatType,
 			"sender_id":  event.SenderID,
+			"version":    event.Version,
 			"timestamp":  event.Timestamp.UnixMilli(),
 		},
 		Timestamp: time.Now().UnixMilli(),
@@ -241,6 +278,87 @@ func (h *Handler) handleMessageWithdrawEvent(event *types.MessageWithdrawEvent) 
 		logger.StringField("message_id", event.MessageID),
 		logger.IntField("recipient_count", len(event.RecipientIDs)))
 
+	return nil
+}
+
+// handleMessageDeleteEvent 处理消息删除事件。
+// 删除是「用户私有状态」，只推给删除者本人的全部在线设备；缺失 RecipientIDs 时按 OwnerID 兜底，
+// 绝不回退成会话内广播（否则会向其他成员泄露「谁删了哪条消息」）。
+func (h *Handler) handleMessageDeleteEvent(event *types.MessageDeleteEvent) error {
+	recipients := event.RecipientIDs
+	if len(recipients) == 0 && event.OwnerID != "" {
+		recipients = []string{event.OwnerID}
+	}
+	if len(recipients) == 0 {
+		logger.Warn("删除事件缺少接收者，跳过",
+			logger.StringField("chat_id", event.ChatID),
+			logger.StringField("message_id", event.MessageID))
+		return nil
+	}
+
+	eventData := OutgoingMessage{
+		Type: MessageTypeDelete,
+		Payload: map[string]interface{}{
+			"message_id": event.MessageID,
+			"chat_id":    event.ChatID,
+			"chat_type":  event.ChatType,
+			"timestamp":  event.Timestamp.UnixMilli(),
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	data, err := json.Marshal(eventData)
+	if err != nil {
+		logger.Error("序列化删除事件失败", logger.ErrorField(err))
+		return err
+	}
+
+	h.unified.SendToUsers(recipients, data)
+
+	logger.Info("删除通知已转发（仅本人多端）",
+		logger.StringField("message_id", event.MessageID),
+		logger.StringField("owner_id", event.OwnerID),
+		logger.IntField("recipient_count", len(recipients)))
+	return nil
+}
+
+// handleMessageEditEvent 把编辑后的内容转发给会话内所有成员（含发送者自己的其他在线设备）。
+// 接收端按 version 幂等应用，乱序/重复投递不会把新内容改回旧内容。
+// 缺少 RecipientIDs 时直接跳过而不是广播：广播会把私聊内容推给无关用户。
+func (h *Handler) handleMessageEditEvent(event *types.MessageEditEvent) error {
+	if len(event.RecipientIDs) == 0 {
+		logger.Warn("编辑事件缺少接收者，跳过",
+			logger.StringField("chat_id", event.ChatID),
+			logger.StringField("message_id", event.MessageID))
+		return nil
+	}
+
+	eventData := OutgoingMessage{
+		Type: MessageTypeEdit,
+		Payload: map[string]interface{}{
+			"message_id": event.MessageID,
+			"chat_id":    event.ChatID,
+			"chat_type":  event.ChatType,
+			"sender_id":  event.SenderID,
+			"content":    event.Content,
+			"version":    event.Version,
+			"timestamp":  event.Timestamp.UnixMilli(),
+		},
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	data, err := json.Marshal(eventData)
+	if err != nil {
+		logger.Error("序列化编辑事件失败", logger.ErrorField(err))
+		return err
+	}
+
+	h.unified.SendToUsers(event.RecipientIDs, data)
+
+	logger.Info("编辑通知已转发",
+		logger.StringField("message_id", event.MessageID),
+		logger.IntField("version", int(event.Version)),
+		logger.IntField("recipient_count", len(event.RecipientIDs)))
 	return nil
 }
 
@@ -472,9 +590,20 @@ func (h *Handler) broadcastToRelevantUsers(event *types.MessageEvent, data []byt
 
 // HandleWebSocket 处理 WebSocket 升级和连接
 func (h *Handler) HandleWebSocket(c *gin.Context) {
-	queryToken := c.Query("token")
+	// 首选子协议传令牌；仍保留 URL query 兜底以兼容旧客户端，但会记警告，后续版本删除。
+	token := wsTokenFromSubprotocol(c.Request)
+	authSource := "subprotocol"
+	if token == "" {
+		token = c.Query("token")
+		authSource = "query"
+	}
 
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	// 仅在客户端请求了该子协议时才回写，否则浏览器会因"服务端选了未请求的协议"而断开。
+	u := upgrader
+	if strings.Contains(c.Request.Header.Get("Sec-WebSocket-Protocol"), wsAuthSubprotocol) {
+		u.Subprotocols = []string{wsAuthSubprotocol}
+	}
+	conn, err := u.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logger.Error("WebSocket 升级失败", logger.ErrorField(err))
 		return
@@ -487,11 +616,24 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		done:     make(chan struct{}),
 	}
 
-	if queryToken != "" {
-		claims, err := h.jwtManager.ParseToken(queryToken)
+	if authSource == "query" && token != "" {
+		logger.Warn("WebSocket 通过 URL query 传递令牌（已弃用，请改用 Sec-WebSocket-Protocol）")
+	}
+
+	if token != "" {
+		claims, err := h.jwtManager.ParseToken(token)
 		if err != nil {
-			logger.Warn("WebSocket query token 认证失败", logger.ErrorField(err))
+			logger.Warn("WebSocket token 认证失败", logger.ErrorField(err))
 			h.sendError(wsConn, "", 401, "令牌无效")
+			wsConn.Conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+			wsConn.Conn.Close()
+			return
+		}
+		// 已登出的令牌不允许建立长连接（否则 HTTP 侧撤销对 WS 不生效）
+		if h.revoker.IsRevoked(c.Request.Context(), claims) {
+			logger.Warn("WebSocket token 已撤销", logger.StringField("user_id", claims.UserID))
+			h.sendError(wsConn, "", 401, "令牌已失效")
 			wsConn.Conn.WriteMessage(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
 			wsConn.Conn.Close()
@@ -538,9 +680,10 @@ func (h *Handler) HandleWebSocket(c *gin.Context) {
 		}
 		h.sendMessage(wsConn, response)
 
-		logger.Info("WebSocket 已通过 query token 连接",
+		logger.Info("WebSocket 已认证连接",
 			logger.StringField("user_id", wsConn.UserID),
-			logger.StringField("session_id", sessionID))
+			logger.StringField("session_id", sessionID),
+			logger.StringField("auth_source", authSource))
 	}
 
 	var wg sync.WaitGroup
@@ -693,6 +836,13 @@ func (h *Handler) handleConnect(conn *Connection, msg *IncomingMessage) {
 		conn.Conn.Close()
 		return
 	}
+	if h.revoker.IsRevoked(h.ctx, claims) {
+		h.sendError(conn, msg.RequestID, 401, "令牌已失效")
+		conn.Conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		conn.Conn.Close()
+		return
+	}
 
 	sessionID := uuid.New().String()
 	conn.UserID = claims.UserID
@@ -780,6 +930,12 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 		h.sendError(conn, msg.RequestID, 401, "未连接")
 		return
 	}
+	// request_id 会作为幂等键落库（varchar(64)），超长直接拒绝，
+	// 否则会在消费端写入失败并触发 Kafka 重投。
+	if len(msg.RequestID) > 64 {
+		h.sendError(conn, msg.RequestID, 400, "request_id 过长（最多 64 字节）")
+		return
+	}
 
 	// 解析 payload
 	payloadBytes, err := json.Marshal(msg.Payload)
@@ -822,8 +978,13 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 		}
 	}
 
-	// 生成消息ID
+	// 生成消息ID：携带客户端幂等键时派生确定性 ID，
+	// 同一 (sender, request_id) 无论重发多少次都映射到同一个消息 ID，
+	// 从而复用落库主键幂等与客户端按 ID 去重，避免重复消息。
 	messageID := uuid.New().String()
+	if msg.RequestID != "" {
+		messageID = gateway.DeriveMessageID(conn.UserID, msg.RequestID)
+	}
 
 	// 前端发送消息链路开始（仅记录长度，不落消息明文）
 	if messagePayload.ChatType == 1 {
@@ -851,6 +1012,9 @@ func (h *Handler) handleChatMessage(conn *Connection, msg *IncomingMessage) {
 	if len(messagePayload.Extra) > 0 {
 		event.Extra = messagePayload.Extra
 	}
+	// 透传幂等键：Chat 服务据此按 (sender_id, request_id) 幂等落库，
+	// 与 REST 入口共用同一张幂等表，保证跨链路重发不产生重复消息。
+	event.RequestID = msg.RequestID
 
 	// 发布到 Kafka
 	if messagePayload.ChatType == 1 {

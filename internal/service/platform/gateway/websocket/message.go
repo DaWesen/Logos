@@ -18,6 +18,10 @@ const (
 	MessageTypeReadReceipt MessageType = "read_receipt"
 	// MessageTypeWithdraw 消息撤回
 	MessageTypeWithdraw MessageType = "withdraw"
+	// MessageTypeDelete 消息删除（仅对本人可见性，只推给删除者自己的设备）
+	MessageTypeDelete MessageType = "delete"
+	// MessageTypeEdit 消息编辑（广播给会话内所有成员，含发送者本人的其他设备）
+	MessageTypeEdit MessageType = "edit"
 	// MessageTypeOnlineStatus 在线状态变更
 	MessageTypeOnlineStatus MessageType = "online_status"
 	// MessageTypeError 错误消息
