@@ -369,10 +369,13 @@ type ConversationParticipant struct {
 	LastReadAt     time.Time `json:"last_read_at"`
 	// LastReadSeq 会话已读位点：<= 该 seq 的消息视为已读，未读数由 seq 位点比对得出，
 	// 避免逐条 UPDATE messages.is_read 的全表写放大。
-	LastReadSeq int64     `gorm:"default:0" json:"last_read_seq"`
-	JoinedAt    time.Time `json:"joined_at"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	LastReadSeq int64 `gorm:"default:0" json:"last_read_seq"`
+	// ClearedSeq 清空历史水位线：seq <= 该值的消息不再对本人可见。
+	// 清空只影响本人视角，不物理删除消息，对方历史与审计数据保持完整。
+	ClearedSeq int64     `gorm:"column:cleared_seq;not null;default:0" json:"cleared_seq"`
+	JoinedAt   time.Time `json:"joined_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 func (ConversationParticipant) TableName() string {

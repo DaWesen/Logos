@@ -58,10 +58,12 @@ type ChatRepository interface {
 	CreateMessage(ctx context.Context, msg *model.Message) error
 	UpdateMessage(ctx context.Context, msg *model.Message) error
 	GetMessageByID(ctx context.Context, id string) (*model.Message, error)
-	GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int) ([]*model.Message, error)
+	// GetMessagesByChatID 返回会话历史消息；minSeq > 0 时跳过 seq <= minSeq 的消息（用户已清空的部分）。
+	GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error)
 	// GetMessagesAfterSeq 返回会话内 seq 大于 afterSeq 的消息，按 seq 升序，用于断线重连后的增量补拉。
 	GetMessagesAfterSeq(ctx context.Context, chatID string, afterSeq int64, limit int) ([]*model.Message, error)
-	SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error)
+	// SearchMessages 会话内搜索；minSeq > 0 时跳过用户已清空的历史。
+	SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error)
 	// MarkMessagesRead 逐条标记指定消息为已读。
 	// 仅用于已读回执携带的显式、有界 msgIDs（供前端展示已读态）；
 	// 未读数统计走 AdvanceReadPosition 的位点比对，不依赖本方法。
@@ -72,7 +74,11 @@ type ChatRepository interface {
 	GetMaxSeqByMessageIDs(ctx context.Context, msgIDs []string) (int64, error)
 	WithdrawMessage(ctx context.Context, msgID string) error
 	EditMessage(ctx context.Context, msgID, content string) error
-	DeleteChatHistory(ctx context.Context, chatID string) error
+	// GetClearedSeq 返回用户在会话内的清空水位线（无记录时为 0）。
+	GetClearedSeq(ctx context.Context, conversationID, userID string) (int64, error)
+	// ClearConversationForUser 把用户的清空水位线单调推进到 seq（同时推进已读位点）。
+	// 只隐藏本人视角的历史，不删除消息记录。
+	ClearConversationForUser(ctx context.Context, conversationID, userID string, seq int64) error
 
 	GetOrCreatePrivateConversation(ctx context.Context, userID1, userID2 string) (*model.Conversation, error)
 	CreateConversation(ctx context.Context, conv *model.Conversation) error
@@ -193,9 +199,12 @@ func (r *chatRepositoryImpl) GetMessageByID(ctx context.Context, id string) (*mo
 // GetMessagesByChatID 返回会话历史消息。
 // 排序优先按会话内 seq（单调且无时间戳并列问题），seq 为 0 的历史兜底行排在最后；
 // beforeTime 作为游标保留：仅返回 created_at 早于该时间的消息，兼容既有分页调用方。
-func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int) ([]*model.Message, error) {
+func (r *chatRepositoryImpl) GetMessagesByChatID(ctx context.Context, chatID string, beforeTime time.Time, limit int, minSeq int64) ([]*model.Message, error) {
 	var messages []*model.Message
 	query := r.db.WithContext(ctx).Where("chat_id = ?", chatID)
+	if minSeq > 0 {
+		query = query.Where("seq > ?", minSeq)
+	}
 	if !beforeTime.IsZero() {
 		query = query.Where("created_at < ?", beforeTime)
 	}
@@ -236,13 +245,16 @@ func (r *chatRepositoryImpl) GetMaxSeqByMessageIDs(ctx context.Context, msgIDs [
 	return maxSeq, err
 }
 
-func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int) ([]*model.Message, int64, error) {
+func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error) {
 	var messages []*model.Message
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.Message{})
 	if chatID != "" {
 		query = query.Where("chat_id = ?", chatID)
+	}
+	if minSeq > 0 {
+		query = query.Where("seq > ?", minSeq)
 	}
 	if chatType > 0 {
 		query = query.Where("chat_type = ?", chatType)
@@ -311,8 +323,54 @@ func (r *chatRepositoryImpl) EditMessage(ctx context.Context, msgID, content str
 		}).Error
 }
 
-func (r *chatRepositoryImpl) DeleteChatHistory(ctx context.Context, chatID string) error {
-	return r.db.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&model.Message{}).Error
+// GetClearedSeq 读取用户的清空水位线；没有参与者记录时返回 0（等价于未清空）。
+func (r *chatRepositoryImpl) GetClearedSeq(ctx context.Context, conversationID, userID string) (int64, error) {
+	var seq int64
+	err := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+		Select("COALESCE(cleared_seq, 0)").
+		Scan(&seq).Error
+	return seq, err
+}
+
+// ClearConversationForUser 单调推进用户的清空水位线：
+//   - 使用 GREATEST 保证重复调用/乱序调用不会把水位线回退（幂等）；
+//   - 同时推进 last_read_seq，避免清空后未读数仍按旧位点计算；
+//   - 参与者记录不存在时补建，保证新会话也能清空。
+func (r *chatRepositoryImpl) ClearConversationForUser(ctx context.Context, conversationID, userID string, seq int64) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"cleared_seq":   gorm.Expr("GREATEST(cleared_seq, ?)", seq),
+		"last_read_seq": gorm.Expr("GREATEST(last_read_seq, ?)", seq),
+		"updated_at":    now,
+	}
+	res := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+		Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected > 0 {
+		return nil
+	}
+
+	p := &model.ConversationParticipant{
+		ConversationID: conversationID,
+		UserID:         userID,
+		ClearedSeq:     seq,
+		LastReadSeq:    seq,
+		JoinedAt:       now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := r.db.WithContext(ctx).Create(p).Error; err != nil {
+		// 并发补建可能撞唯一索引：对方已插入时再更新一次即可，仍保持幂等。
+		res := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+			Where("conversation_id = ? AND user_id = ?", conversationID, userID).
+			Updates(updates)
+		return res.Error
+	}
+	return nil
 }
 
 func (r *chatRepositoryImpl) GetOrCreatePrivateConversation(ctx context.Context, userID1, userID2 string) (*model.Conversation, error) {

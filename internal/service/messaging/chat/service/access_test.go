@@ -33,7 +33,14 @@ type stubChatRepo struct {
 	dao.ChatRepository
 	groups  map[string]*model.Group
 	members map[string]*model.GroupMember
-	deleted []string
+	maxSeqs map[string]int64
+	cleared []clearCall
+}
+
+type clearCall struct {
+	chatID string
+	userID string
+	seq    int64
 }
 
 func (r *stubChatRepo) GetGroupByID(_ context.Context, groupID string) (*model.Group, error) {
@@ -44,8 +51,12 @@ func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string)
 	return r.members[groupID+"|"+userID], nil
 }
 
-func (r *stubChatRepo) DeleteChatHistory(_ context.Context, chatID string) error {
-	r.deleted = append(r.deleted, chatID)
+func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64, error) {
+	return r.maxSeqs[chatID], nil
+}
+
+func (r *stubChatRepo) ClearConversationForUser(_ context.Context, conversationID, userID string, seq int64) error {
+	r.cleared = append(r.cleared, clearCall{chatID: conversationID, userID: userID, seq: seq})
 	return nil
 }
 
@@ -188,7 +199,9 @@ func TestAuthorizeIncomingMessage(t *testing.T) {
 	}
 }
 
-func TestDeleteChatHistoryPermission(t *testing.T) {
+// TestClearChatHistoryWatermark 清空历史不再是全局删除：只把请求者自己的 cleared_seq
+// 推进到会话当前最大 seq，其他成员的历史保持完整。
+func TestClearChatHistoryWatermark(t *testing.T) {
 	tests := []struct {
 		name       string
 		userID     string
@@ -196,13 +209,12 @@ func TestDeleteChatHistoryPermission(t *testing.T) {
 		memberRole model.GroupMemberRole
 		isGroup    bool
 		want       error
-		deleted    bool
+		cleared    bool
 	}{
-		{name: "群主可清空", userID: "u1", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleOwner, deleted: true},
-		{name: "管理员可清空", userID: "u1", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleAdmin, deleted: true},
-		{name: "普通成员不可清空", userID: "u1", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleMember, want: types.ErrChatPermissionDenied},
+		{name: "群主可清空自己的历史", userID: "u1", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleOwner, cleared: true},
+		{name: "普通成员也可清空自己的历史", userID: "u1", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleMember, cleared: true},
 		{name: "非群成员不可清空", userID: "u2", chatID: "group-1", isGroup: true, memberRole: model.GroupMemberRoleMember, want: types.ErrChatAccessDenied},
-		{name: "私聊参与者可清空", userID: "1001", chatID: "private_1001_1002", deleted: true},
+		{name: "私聊参与者可清空", userID: "1001", chatID: "private_1001_1002", cleared: true},
 		{name: "私聊旁观者不可清空", userID: "1003", chatID: "private_1001_1002", want: types.ErrChatAccessDenied},
 	}
 
@@ -211,12 +223,13 @@ func TestDeleteChatHistoryPermission(t *testing.T) {
 			repo := &stubChatRepo{
 				groups:  map[string]*model.Group{},
 				members: map[string]*model.GroupMember{},
+				maxSeqs: map[string]int64{tt.chatID: 42},
 			}
 			if tt.isGroup {
 				repo.groups[tt.chatID] = &model.Group{ID: tt.chatID}
 			}
-			// 只有「当事人」在成员表里出现，非群成员查不到记录
-			if tt.userID == "u1" {
+			// 只有 u1 在成员表里出现（群主/普通成员由用例决定），u2 查不到记录
+			if tt.isGroup && tt.userID == "u1" {
 				repo.members[tt.chatID+"|"+tt.userID] = &model.GroupMember{GroupID: tt.chatID, UserID: tt.userID, Role: tt.memberRole}
 			}
 			svc := newAccessService(repo)
@@ -225,12 +238,16 @@ func TestDeleteChatHistoryPermission(t *testing.T) {
 			if err != tt.want {
 				t.Fatalf("期望错误 %v，实际 %v", tt.want, err)
 			}
-			if tt.deleted {
-				if len(repo.deleted) != 1 {
-					t.Fatalf("期望执行一次清空，实际 %v", repo.deleted)
+			if tt.cleared {
+				if len(repo.cleared) != 1 {
+					t.Fatalf("期望推进一次水位线，实际 %v", repo.cleared)
 				}
-			} else if len(repo.deleted) != 0 {
-				t.Fatalf("不应执行清空，实际 %v", repo.deleted)
+				got := repo.cleared[0]
+				if got.userID != tt.userID || got.chatID != tt.chatID || got.seq != 42 {
+					t.Fatalf("水位线参数不符: %+v", got)
+				}
+			} else if len(repo.cleared) != 0 {
+				t.Fatalf("不应推进水位线，实际 %v", repo.cleared)
 			}
 		})
 	}

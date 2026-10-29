@@ -964,6 +964,13 @@ func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType mode
 		return nil, false, err
 	}
 
+	// 清空历史后，用户视角里 seq <= clearedSeq 的消息不可见；
+	// 增量补拉的游标同样不能低于该水位线，否则重连会把已清空的历史重新拉回来。
+	clearedSeq := s.clearedSeqFor(chatID, userID)
+	if afterSeq < clearedSeq {
+		afterSeq = clearedSeq
+	}
+
 	// afterSeq > 0：增量补拉路径。只返回 seq 大于该游标的消息，已按 seq 升序，无需反转。
 	// 用于客户端 WS 断线重连后，填补 Redis PubSub 实时扇出丢失的窗口。
 	// afterSeq == 0：保持原有「取最近 limit 条 + 反转成升序」的历史分页语义。
@@ -983,7 +990,7 @@ func (s *ChatServiceImpl) GetMessageHistory(userID, chatID string, chatType mode
 	// 如果是私聊且 chatID 是用户 ID，需要先获取当前用户 ID 来构建会话 ID
 	// 注意：这里我们假设调用方会处理这个问题，或者我们需要修改方法签名来传入 senderID
 	// 暂时保持原样，先让发送消息能工作
-	messages, err := s.repo.GetMessagesByChatID(s.ctx, chatID, beforeTime, limit+1)
+	messages, err := s.repo.GetMessagesByChatID(s.ctx, chatID, beforeTime, limit+1, clearedSeq)
 	if err != nil {
 		logger.Error("获取消息历史失败", logger.ErrorField(err))
 		return nil, false, err
@@ -1023,7 +1030,7 @@ func (s *ChatServiceImpl) SearchMessages(userID, chatID string, chatType model.C
 	if pageSize > 100 {
 		pageSize = 100
 	}
-	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize)
+	return s.repo.SearchMessages(s.ctx, chatID, chatType, keyword, startTime, endTime, page, pageSize, s.clearedSeqFor(chatID, userID))
 }
 
 // MarkMessagesRead 将会话已读位点推进到位（位点化）：
@@ -1143,47 +1150,55 @@ func (s *ChatServiceImpl) EditMessage(msgID, userID, content string) (*model.Mes
 	return s.repo.GetMessageByID(s.ctx, msgID)
 }
 
-// DeleteChatHistory 清空整个会话的消息，是破坏性操作，必须做双重校验：
-// 群聊要求操作者是群主或管理员；私聊要求操作者是会话参与方。
-// 仅校验「群成员」不够——普通成员清空会把其他成员的历史一并删除。
+// DeleteChatHistory 清空「本人视角」的会话历史。
+//
+// 早先实现直接 DELETE 会话全部消息，私聊里会把对方的记录一并销毁、群聊里普通成员的清空诉求
+// 又因权限被拒；现改为按参与者维护 cleared_seq 水位线（与已读位点同构）：
+//   - 只隐藏本人 seq <= 水位线的消息，对方/其他成员的历史与审计数据不受影响；
+//   - 水位线单调推进（GREATEST），重复调用幂等，不会因并发回退；
+//   - 同时推进 last_read_seq，清空后未读数归零。
+//
+// 任何成员只能清空自己，因此不再需要区分群主/管理员。
 func (s *ChatServiceImpl) DeleteChatHistory(userID, chatID string) error {
-	if chatID == "" || userID == "" {
-		return types.ErrChatAccessDenied
-	}
-
-	group, err := s.repo.GetGroupByID(s.ctx, chatID)
-	if err != nil {
-		logger.Error("查询群组失败", logger.ErrorField(err))
-		return err
-	}
-	if group != nil {
-		member, err := s.repo.GetGroupMember(s.ctx, chatID, userID)
-		if err != nil {
-			logger.Error("查询群成员失败", logger.ErrorField(err))
-			return err
-		}
-		if member == nil {
-			return types.ErrChatAccessDenied
-		}
-		if member.Role == model.GroupMemberRoleMember {
-			return types.ErrChatPermissionDenied
-		}
-	} else if err := checkPrivateChatAccess(chatID, userID); err != nil {
-		logger.Warn("拒绝越权清空私聊历史",
+	if err := s.EnsureChatAccess(userID, chatID, 0); err != nil {
+		logger.Warn("拒绝越权清空会话历史",
 			logger.StringField("user_id", userID),
-			logger.StringField("chat_id", chatID))
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(err))
 		return err
 	}
 
-	logger.Info("\x1b[36m🔵 [Chat] 清理聊天记录\x1b[0m",
-		logger.StringField("chat_id", chatID),
-		logger.StringField("operator_id", userID))
-	if err := s.repo.DeleteChatHistory(s.ctx, chatID); err != nil {
-		logger.Error("\x1b[31m🔴 [Chat] 清理聊天记录失败\x1b[0m", logger.ErrorField(err))
+	// 以当前最大 seq 作为水位线：此刻之前的消息视为已清空。
+	// 失败时不清空（失败关闭），避免水位线取到 0 导致"清空无效"。
+	maxSeq, err := s.repo.GetMaxMessageSeq(s.ctx, chatID)
+	if err != nil {
+		logger.Error("查询会话最大消息位点失败", logger.ErrorField(err))
 		return err
 	}
-	logger.Info("\x1b[32m🟢 [Chat] 清理聊天记录成功\x1b[0m", logger.StringField("chat_id", chatID))
+
+	logger.Info("清空聊天记录（按用户水位线）",
+		logger.StringField("chat_id", chatID),
+		logger.StringField("operator_id", userID),
+		logger.IntField("cleared_seq", int(maxSeq)))
+	if err := s.repo.ClearConversationForUser(s.ctx, chatID, userID, maxSeq); err != nil {
+		logger.Error("清空聊天记录失败", logger.ErrorField(err))
+		return err
+	}
 	return nil
+}
+
+// clearedSeqFor 返回用户在会话内的清空水位线。
+// 读取失败按 0（未清空）处理：这只影响本人历史可见性，不构成越权或数据丢失。
+func (s *ChatServiceImpl) clearedSeqFor(chatID, userID string) int64 {
+	seq, err := s.repo.GetClearedSeq(s.ctx, chatID, userID)
+	if err != nil {
+		logger.Warn("读取清空水位线失败，按未清空处理",
+			logger.StringField("chat_id", chatID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return 0
+	}
+	return seq
 }
 
 // EnsureChatAccess 是 IM 所有读写入口的统一访问闸门（失败关闭）：
