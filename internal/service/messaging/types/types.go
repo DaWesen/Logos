@@ -69,6 +69,8 @@ var (
 	ErrChatAccessDenied = &MessagingError{Code: 50403, Message: "无权访问该会话"}
 	// ErrChatPermissionDenied 已通过会话访问校验，但当前角色无权执行该操作（如普通成员清空群历史）。
 	ErrChatPermissionDenied = &MessagingError{Code: 50409, Message: "当前角色无权执行该操作"}
+	// ErrChatBadRequest 请求参数不合法（缺字段、超出批量上限等），客户端修正请求后可重试。
+	ErrChatBadRequest = &MessagingError{Code: 50400, Message: "请求参数不合法"}
 )
 
 type MessagingError struct {

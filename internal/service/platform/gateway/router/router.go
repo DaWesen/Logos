@@ -375,6 +375,9 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 			chat.POST("/delete", h.DeleteChat)
 			chat.POST("/delete-history", h.DeleteChatHistory)
 
+			// 已读回执（发送者视角的已读人数）
+			chat.POST("/read-receipts", h.GetMessageReadReceipts)
+
 			// 会话列表
 			chat.GET("/conversations", h.GetConversationList)
 			chat.GET("/unread", h.GetUnreadCount)

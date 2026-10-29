@@ -74,6 +74,10 @@ type ChatRepository interface {
 	GetMaxSeqByMessageIDs(ctx context.Context, msgIDs []string) (int64, error)
 	WithdrawMessage(ctx context.Context, msgID string) error
 	EditMessage(ctx context.Context, msgID, content string) error
+	// GetMessagesByIDs 批量取消息，用于把客户端持有的 message_id 映射到会话内 seq。
+	GetMessagesByIDs(ctx context.Context, msgIDs []string) ([]*model.Message, error)
+	// GetReadPositions 返回会话内各成员的已读位点，已读回执由位点比对聚合得出。
+	GetReadPositions(ctx context.Context, conversationID string) ([]ReadPosition, error)
 	// GetClearedSeq 返回用户在会话内的清空水位线（无记录时为 0）。
 	GetClearedSeq(ctx context.Context, conversationID, userID string) (int64, error)
 	// ClearConversationForUser 把用户的清空水位线单调推进到 seq（同时推进已读位点）。
@@ -243,6 +247,32 @@ func (r *chatRepositoryImpl) GetMaxSeqByMessageIDs(ctx context.Context, msgIDs [
 		Select("COALESCE(MAX(seq), 0)").
 		Scan(&maxSeq).Error
 	return maxSeq, err
+}
+
+// ReadPosition 是会话成员的已读位点投影，用于聚合已读回执。
+type ReadPosition struct {
+	UserID      string `gorm:"column:user_id"`
+	LastReadSeq int64  `gorm:"column:last_read_seq"`
+}
+
+func (r *chatRepositoryImpl) GetMessagesByIDs(ctx context.Context, msgIDs []string) ([]*model.Message, error) {
+	if len(msgIDs) == 0 {
+		return nil, nil
+	}
+	var messages []*model.Message
+	err := r.db.WithContext(ctx).Where("id IN ?", msgIDs).Find(&messages).Error
+	return messages, err
+}
+
+// GetReadPositions 一次取回会话内所有成员的已读位点（会话成员数有上限），
+// 由服务层在内存中按消息 seq 聚合，避免为每条消息各发一次 COUNT。
+func (r *chatRepositoryImpl) GetReadPositions(ctx context.Context, conversationID string) ([]ReadPosition, error) {
+	var positions []ReadPosition
+	err := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
+		Where("conversation_id = ?", conversationID).
+		Select("user_id, last_read_seq").
+		Scan(&positions).Error
+	return positions, err
 }
 
 func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error) {

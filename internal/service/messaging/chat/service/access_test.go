@@ -31,10 +31,12 @@ func TestMain(m *testing.M) {
 // stubChatRepo 只实现访问控制路径用到的查询，其余方法由内嵌接口兜底（误调用会 panic）。
 type stubChatRepo struct {
 	dao.ChatRepository
-	groups  map[string]*model.Group
-	members map[string]*model.GroupMember
-	maxSeqs map[string]int64
-	cleared []clearCall
+	groups    map[string]*model.Group
+	members   map[string]*model.GroupMember
+	maxSeqs   map[string]int64
+	cleared   []clearCall
+	messages  map[string]*model.Message
+	positions map[string][]dao.ReadPosition
 }
 
 type clearCall struct {
@@ -58,6 +60,20 @@ func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64
 func (r *stubChatRepo) ClearConversationForUser(_ context.Context, conversationID, userID string, seq int64) error {
 	r.cleared = append(r.cleared, clearCall{chatID: conversationID, userID: userID, seq: seq})
 	return nil
+}
+
+func (r *stubChatRepo) GetMessagesByIDs(_ context.Context, msgIDs []string) ([]*model.Message, error) {
+	out := make([]*model.Message, 0, len(msgIDs))
+	for _, id := range msgIDs {
+		if m, ok := r.messages[id]; ok {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+func (r *stubChatRepo) GetReadPositions(_ context.Context, conversationID string) ([]dao.ReadPosition, error) {
+	return r.positions[conversationID], nil
 }
 
 func newAccessService(repo dao.ChatRepository) *ChatServiceImpl {

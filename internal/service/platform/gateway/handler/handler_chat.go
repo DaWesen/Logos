@@ -427,6 +427,42 @@ func (h *Handler) MarkChatMessagesRead(c *gin.Context) {
 	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
 }
 
+// readReceiptsBody 已读回执查询入参。
+// 用独立 DTO 而不是直接绑定 pb：protobuf 的字段名与 JSON 契约不同，
+// 且 message_ids 需要显式的批量上限校验。
+type readReceiptsBody struct {
+	ChatID         string   `json:"chat_id" binding:"required"`
+	ChatType       int      `json:"chat_type"`
+	MessageIDs     []string `json:"message_ids" binding:"required,min=1,max=50"`
+	IncludeReaders bool     `json:"include_readers"`
+}
+
+func (h *Handler) GetMessageReadReceipts(c *gin.Context) {
+	if h.ChatClient == nil {
+		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
+		return
+	}
+	var body readReceiptsBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	resp, err := h.ChatClient.GetMessageReadReceipts(c.Request.Context(), &pb.GetMessageReadReceiptsRequest{
+		ChatId:         body.ChatID,
+		ChatType:       pb.ChatType(body.ChatType),
+		MessageIds:     body.MessageIDs,
+		IncludeReaders: body.IncludeReaders,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
+		return
+	}
+	if !checkChatCode(c, resp.Code, resp.Message) {
+		return
+	}
+	c.JSON(http.StatusOK, model.Response{Code: http.StatusOK, Message: "success", Data: resp})
+}
+
 func (h *Handler) WithdrawChatMessage(c *gin.Context) {
 	if h.ChatClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))

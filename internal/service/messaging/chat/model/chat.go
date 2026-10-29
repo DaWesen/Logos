@@ -395,6 +395,18 @@ func (ConversationSeq) TableName() string {
 	return "conversation_seqs"
 }
 
+// MessageReadReceipt 是消息已读回执的聚合结果，不落库：
+// 由会话参与者的已读位点（last_read_seq）与该消息 seq 比对得出，
+// 因此消息写入路径无需为每条消息 × 每个成员写已读记录。
+type MessageReadReceipt struct {
+	MessageID   string   `json:"message_id"`
+	Seq         int64    `json:"seq"`
+	ReadCount   int      `json:"read_count"`
+	MemberCount int      `json:"member_count"`
+	AllRead     bool     `json:"all_read"`
+	ReaderIDs   []string `json:"reader_ids,omitempty"`
+}
+
 type ConversationItem struct {
 	ChatID      string    `json:"chat_id"`
 	ChatType    int       `json:"chat_type"`

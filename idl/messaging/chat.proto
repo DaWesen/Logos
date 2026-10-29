@@ -373,6 +373,38 @@ message GetUnreadCountResponse {
   int32 total = 4;
 }
 
+// 消息已读回执
+// 不存储「消息 × 成员」的逐条已读记录，而是复用会话已读位点 last_read_seq：
+// 发送者查询时用一次位点比对反查出多少成员已读到该消息 seq，消息写入路径零额外写入。
+message MessageReadReceipt {
+  string message_id = 1;
+  int64 seq = 2;
+  // 已读人数（不含消息发送者）
+  int32 read_count = 3;
+  // 会话内当前可读成员数（不含消息发送者），用于展示「N/M 已读」
+  int32 member_count = 4;
+  bool all_read = 5;
+  // 已读成员明细：默认不返回，避免窥探他人阅读行为
+  repeated string reader_ids = 6;
+}
+
+// 获取消息已读回执请求
+message GetMessageReadReceiptsRequest {
+  string chat_id = 1;
+  ChatType chat_type = 2;
+  // 一次最多 50 条，仅返回请求者本人发送的消息
+  repeated string message_ids = 3;
+  // 是否返回已读成员明细（仅成员数不超过阈值时生效）
+  bool include_readers = 4;
+}
+
+// 获取消息已读回执响应
+message GetMessageReadReceiptsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated MessageReadReceipt receipts = 3;
+}
+
 // 转发消息请求
 message ForwardMessageRequest {
   string message_id = 1;
@@ -480,6 +512,9 @@ service ChatService {
   
   // 获取未读消息数
   rpc GetUnreadCount(GetUnreadCountRequest) returns (GetUnreadCountResponse);
+
+  // 获取消息已读回执（发送者视角的已读人数）
+  rpc GetMessageReadReceipts(GetMessageReadReceiptsRequest) returns (GetMessageReadReceiptsResponse);
   
   // 转发消息
   rpc ForwardMessage(ForwardMessageRequest) returns (ForwardMessageResponse);

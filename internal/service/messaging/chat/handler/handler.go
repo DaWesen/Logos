@@ -21,11 +21,14 @@ func getUserID(ctx context.Context) (string, error) {
 }
 
 // chatErrorCode 把服务层错误映射为业务码：
-// 鉴权/权限类错误返回 403（客户端应停止重试），其余视为系统错误返回 500。
+// 参数错误返回 400，鉴权/权限类错误返回 403（客户端应停止重试），其余视为系统错误返回 500。
 func chatErrorCode(err error) (int32, string) {
 	var me *types.MessagingError
 	if errors.As(err, &me) {
-		if me.Code == types.ErrChatAccessDenied.Code || me.Code == types.ErrChatPermissionDenied.Code {
+		switch me.Code {
+		case types.ErrChatBadRequest.Code:
+			return 400, me.Message
+		case types.ErrChatAccessDenied.Code, types.ErrChatPermissionDenied.Code:
 			return 403, me.Message
 		}
 	}
@@ -506,6 +509,36 @@ func (s *ChatServiceImpl) GetUnreadCount(ctx context.Context, req *pb.GetUnreadC
 		Counts: pbCounts,
 		Total:  int32(total),
 	}, nil
+}
+
+func (s *ChatServiceImpl) GetMessageReadReceipts(ctx context.Context, req *pb.GetMessageReadReceiptsRequest) (*pb.GetMessageReadReceiptsResponse, error) {
+	userID, err := getUserID(ctx)
+	if err != nil {
+		return &pb.GetMessageReadReceiptsResponse{Code: 401, Message: "未提供认证信息"}, nil
+	}
+
+	receipts, err := s.service.GetMessageReadReceipts(userID, req.ChatId, req.MessageIds, req.IncludeReaders)
+	if err != nil {
+		code, msg := chatErrorCode(err)
+		logger.Warn("查询已读回执失败",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", req.ChatId),
+			logger.ErrorField(err))
+		return &pb.GetMessageReadReceiptsResponse{Code: code, Message: msg}, nil
+	}
+
+	pbReceipts := make([]*pb.MessageReadReceipt, 0, len(receipts))
+	for _, r := range receipts {
+		pbReceipts = append(pbReceipts, &pb.MessageReadReceipt{
+			MessageId:   r.MessageID,
+			Seq:         r.Seq,
+			ReadCount:   int32(r.ReadCount),
+			MemberCount: int32(r.MemberCount),
+			AllRead:     r.AllRead,
+			ReaderIds:   r.ReaderIDs,
+		})
+	}
+	return &pb.GetMessageReadReceiptsResponse{Code: 200, Message: "查询成功", Receipts: pbReceipts}, nil
 }
 
 func (s *ChatServiceImpl) ForwardMessage(ctx context.Context, req *pb.ForwardMessageRequest) (*pb.ForwardMessageResponse, error) {

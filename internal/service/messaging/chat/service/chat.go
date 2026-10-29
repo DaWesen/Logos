@@ -58,6 +58,7 @@ type ChatService interface {
 	GetConversationList(userID string, page, pageSize int) ([]*model.ConversationItem, int64, error)
 	GetUnreadCounts(userID string, chatIDs []string) (map[string]int64, error)
 	GetTotalUnreadCount(userID string) (int64, error)
+	GetMessageReadReceipts(userID, chatID string, messageIDs []string, includeReaders bool) ([]*model.MessageReadReceipt, error)
 	ForwardMessage(messageID string, targetChatIDs []string, senderID string) ([]*model.Message, error)
 	DeleteChat(chatID string, userID string, chatType model.ChatType) error
 }
@@ -2216,6 +2217,99 @@ func (s *ChatServiceImpl) GetUnreadCounts(userID string, chatIDs []string) (map[
 
 func (s *ChatServiceImpl) GetTotalUnreadCount(userID string) (int64, error) {
 	return s.repo.GetTotalUnreadCount(s.ctx, userID)
+}
+
+const (
+	// maxReadReceiptBatch 单次查询的消息条数上限，避免一次请求拉出整页历史成员矩阵。
+	maxReadReceiptBatch = 50
+	// maxReadReceiptReaders 返回已读成员明细的最大成员数，超过则只返回人数。
+	maxReadReceiptReaders = 100
+)
+
+// GetMessageReadReceipts 按发送者视角聚合已读回执。
+//
+// 设计要点：
+//   - 不落「消息 × 成员」的已读记录（大群下写放大为 O(消息数 × 成员数)），
+//     而是复用会话已读位点 last_read_seq：成员位点 ≥ 消息 seq 即视为已读；
+//   - 只返回请求者本人发送的消息，避免成员互相窥探阅读行为；
+//   - 一次拉取参与者位点后在内存聚合，查询次数与消息条数无关；
+//   - 成员数超过阈值时不返回明细，只返回人数，控制响应体积。
+func (s *ChatServiceImpl) GetMessageReadReceipts(userID, chatID string, messageIDs []string, includeReaders bool) ([]*model.MessageReadReceipt, error) {
+	if userID == "" || chatID == "" {
+		return nil, types.ErrChatAccessDenied
+	}
+	if len(messageIDs) == 0 {
+		return nil, types.ErrChatBadRequest
+	}
+	if len(messageIDs) > maxReadReceiptBatch {
+		return nil, types.ErrChatBadRequest
+	}
+	if err := s.EnsureChatAccess(userID, chatID, model.ChatType(0)); err != nil {
+		logger.Warn("拒绝越权查询已读回执",
+			logger.StringField("user_id", userID),
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(err))
+		return nil, err
+	}
+
+	// 广播会话没有成员位点概念，不提供回执。
+	if chatID == "broadcast" {
+		return []*model.MessageReadReceipt{}, nil
+	}
+
+	messages, err := s.repo.GetMessagesByIDs(s.ctx, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 {
+		return []*model.MessageReadReceipt{}, nil
+	}
+
+	positions, err := s.repo.GetReadPositions(s.ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 按请求顺序输出，同一会话内的成员位点只取一次。
+	byID := make(map[string]*model.Message, len(messages))
+	for _, msg := range messages {
+		byID[msg.ID] = msg
+	}
+
+	receipts := make([]*model.MessageReadReceipt, 0, len(messageIDs))
+	seen := make(map[string]struct{}, len(messageIDs))
+	for _, id := range messageIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+
+		msg := byID[id]
+		// 消息必须属于当前会话且由请求者发送，否则不返回（既不报错也不泄露）。
+		if msg == nil || msg.ChatID != chatID || msg.SenderID != userID {
+			continue
+		}
+
+		receipt := &model.MessageReadReceipt{
+			MessageID: msg.ID,
+			Seq:       msg.Seq,
+		}
+		for _, p := range positions {
+			if p.UserID == msg.SenderID {
+				continue
+			}
+			receipt.MemberCount++
+			if msg.Seq > 0 && p.LastReadSeq >= msg.Seq {
+				receipt.ReadCount++
+				if includeReaders && len(positions) <= maxReadReceiptReaders {
+					receipt.ReaderIDs = append(receipt.ReaderIDs, p.UserID)
+				}
+			}
+		}
+		receipt.AllRead = receipt.MemberCount > 0 && receipt.ReadCount >= receipt.MemberCount
+		receipts = append(receipts, receipt)
+	}
+	return receipts, nil
 }
 
 func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []string, senderID string) ([]*model.Message, error) {
