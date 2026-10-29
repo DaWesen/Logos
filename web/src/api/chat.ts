@@ -151,13 +151,23 @@ export async function getChatHistory(chatId: string, limit = 50, before?: string
   }
 }
 
-export async function searchChatMessages(chatId: string, query: string, startTime?: string, endTime?: string) {
+// toRFC3339 把 <input type="date"> 的日期（YYYY-MM-DD）补成后端要求的 RFC3339 时间。
+// 结束日期取当天 23:59:59，避免把结束当天的消息排除在外。
+function toRFC3339(value?: string, endOfDay = false): string {
+  if (!value) return ''
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value)
+  const d = new Date(dateOnly ? `${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}` : value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toISOString()
+}
+
+export async function searchChatMessages(chatId: string, keyword: string, startTime?: string, endTime?: string) {
   try {
     const res = await client.post('/chat/search', {
       chat_id: chatId,
-      query,
-      start_time: startTime || '',
-      end_time: endTime || '',
+      keyword,
+      start_time: toRFC3339(startTime),
+      end_time: toRFC3339(endTime, true),
     })
     return extractArray(res)
   } catch {

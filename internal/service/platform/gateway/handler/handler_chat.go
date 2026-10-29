@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func checkChatCode(c *gin.Context, code int32, message string) bool {
@@ -280,17 +281,69 @@ func (h *Handler) TranslateChatMessage(c *gin.Context) {
 	})
 }
 
+// searchMessagesBody 是网关侧的搜索请求 DTO。
+// 不能直接把 JSON 绑定到 pb.SearchMessagesRequest：其中的 start_time/end_time 是
+// google.protobuf.Timestamp，前端传 RFC3339 字符串会在绑定阶段报错（整个搜索接口 400）。
+type searchMessagesBody struct {
+	ChatID    string `json:"chat_id"`
+	ChatType  int32  `json:"chat_type"`
+	Keyword   string `json:"keyword"`
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time"`
+	Page      int32  `json:"page"`
+	PageSize  int32  `json:"page_size"`
+}
+
+func parseOptionalTime(value, field string) (*timestamppb.Timestamp, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil, fmt.Errorf("%s 需为 RFC3339 时间格式", field)
+	}
+	return timestamppb.New(t), nil
+}
+
 func (h *Handler) SearchChatMessages(c *gin.Context) {
 	if h.ChatClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
 		return
 	}
-	var req pb.SearchMessagesRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var body searchMessagesBody
+	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	resp, err := h.ChatClient.SearchMessages(c.Request.Context(), &req)
+	if strings.TrimSpace(body.ChatID) == "" {
+		c.JSON(http.StatusBadRequest, model.BadRequest("chat_id is required"))
+		return
+	}
+	if strings.TrimSpace(body.Keyword) == "" {
+		c.JSON(http.StatusBadRequest, model.BadRequest("keyword is required"))
+		return
+	}
+	startTime, err := parseOptionalTime(body.StartTime, "start_time")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+	endTime, err := parseOptionalTime(body.EndTime, "end_time")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
+		return
+	}
+
+	req := &pb.SearchMessagesRequest{
+		ChatId:    body.ChatID,
+		ChatType:  pb.ChatType(body.ChatType),
+		Keyword:   body.Keyword,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Page:      body.Page,
+		PageSize:  body.PageSize,
+	}
+	resp, err := h.ChatClient.SearchMessages(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
