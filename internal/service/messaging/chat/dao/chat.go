@@ -673,29 +673,36 @@ func (r *chatRepositoryImpl) GetConversationList(ctx context.Context, userID str
 	return items, total, nil
 }
 
+// GetUnreadCounts 返回各会话的未读数。
+//
+// 未读数 = 会话内 seq 大于本人已读位点、且大于清空水位线的他人消息数。
+// 早期实现按会话逐条 COUNT（N+1：会话列表 100 条就是 100 次查询），
+// 现改为 JOIN 参与者表后一次 GROUP BY 聚合，查询次数与会话数无关。
 func (r *chatRepositoryImpl) GetUnreadCounts(ctx context.Context, userID string, chatIDs []string) (map[string]int64, error) {
 	result := make(map[string]int64)
 	if len(chatIDs) == 0 {
 		return result, nil
 	}
 
-	var participants []model.ConversationParticipant
-	if err := r.db.WithContext(ctx).
-		Where("user_id = ? AND conversation_id IN ?", userID, chatIDs).
-		Find(&participants).Error; err != nil {
+	var rows []struct {
+		ChatID string
+		Count  int64
+	}
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Select("messages.chat_id AS chat_id, COUNT(*) AS count").
+		Joins("JOIN conversation_participants p ON p.conversation_id = messages.chat_id AND p.user_id = ?", userID).
+		Where("messages.chat_id IN ?", chatIDs).
+		Where("messages.seq > p.last_read_seq AND messages.seq > p.cleared_seq").
+		Where("messages.sender_id != ?", userID).
+		Group("messages.chat_id").
+		Scan(&rows).Error
+	if err != nil {
 		return result, err
 	}
 
-	for _, p := range participants {
-		var count int64
-		// 未读数 = seq 大于已读位点的消息数（排除自己发的），不再依赖逐条 is_read
-		r.db.WithContext(ctx).Model(&model.Message{}).
-			Where("chat_id = ? AND seq > ? AND sender_id != ?",
-				p.ConversationID, p.LastReadSeq, userID).
-			Count(&count)
-		result[p.ConversationID] = count
+	for _, row := range rows {
+		result[row.ChatID] = row.Count
 	}
-
 	return result, nil
 }
 
