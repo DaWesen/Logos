@@ -13,13 +13,14 @@ import (
 	"Logos/internal/service/messaging/types"
 )
 
-// TestMain 切换到仓库根目录：config.GetConfig 以 ./config 为相对路径，
-// 而 service 层的日志依赖配置初始化。
+// TestMain 切换到仓库根目录并指定测试夹具配置：config.GetConfig 默认读
+// ./config/config.yaml，而该文件不入库（含本地开发参数），CI 上缺失会 panic。
 func TestMain(m *testing.M) {
 	if wd, err := os.Getwd(); err == nil {
 		for dir := wd; ; dir = filepath.Dir(dir) {
 			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 				_ = os.Chdir(dir)
+				_ = os.Setenv("LOGOS_CONFIG_PATH", filepath.Join(dir, "config", "testdata", "config.yaml"))
 				break
 			}
 			if filepath.Dir(dir) == dir {

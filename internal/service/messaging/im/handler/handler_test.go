@@ -13,12 +13,14 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// TestMain 切换到仓库根目录：handler 里的日志依赖 ./config 配置初始化。
+// TestMain 切换到仓库根目录并指定测试夹具配置：handler 的日志依赖配置初始化，
+// 而 config/config.yaml 不入库，CI 上缺失会 panic。
 func TestMain(m *testing.M) {
 	if wd, err := os.Getwd(); err == nil {
 		for dir := wd; ; dir = filepath.Dir(dir) {
 			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 				_ = os.Chdir(dir)
+				_ = os.Setenv("LOGOS_CONFIG_PATH", filepath.Join(dir, "config", "testdata", "config.yaml"))
 				break
 			}
 			if filepath.Dir(dir) == dir {

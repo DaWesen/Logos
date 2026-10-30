@@ -265,9 +265,15 @@ type QQBridge struct {
 }
 
 func LoadConfig(path string) (*Config, error) {
-	viper.AddConfigPath(path)
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
+	// LOGOS_CONFIG_PATH 显式指定配置文件（容器挂载、CI 测试夹具等场景），
+	// 未设置时保持原有「在 path 目录下找 config.yaml」的语义。
+	if file := os.Getenv("LOGOS_CONFIG_PATH"); file != "" {
+		viper.SetConfigFile(file)
+	} else {
+		viper.AddConfigPath(path)
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+	}
 
 	viper.AutomaticEnv()
 

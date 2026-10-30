@@ -1,0 +1,10 @@
+# 单元测试用的最小配置夹具。
+#
+# 本地开发配置 config/config.yaml 被 .gitignore 排除（含本地连接参数），
+# CI 上没有该文件，而日志初始化会调用 config.GetConfig() 并 panic。
+# 测试通过 LOGOS_CONFIG_PATH 指向本文件，保证 CI 与本地行为一致。
+log:
+  level: info
+  format: json
+  output: stdout
+  file_path: ""
