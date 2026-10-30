@@ -302,19 +302,25 @@ func (eb *EventBus) SubscribeChatOutgoing(ctx context.Context, handler mq.Messag
 	return consumer.Subscribe(ctx, handler)
 }
 
-func (eb *EventBus) SubscribeNotifications(ctx context.Context, handler mq.MessageHandler) error {
+func (eb *EventBus) SubscribeNotifications(ctx context.Context, handler mq.MessageHandler, groupID ...string) error {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
-	if _, exists := eb.consumers["notification"]; exists {
-		logger.Warn("Notification消费者已存在")
+	consumerGroupID := "gateway-notification-consumer"
+	if len(groupID) > 0 && groupID[0] != "" {
+		consumerGroupID = groupID[0]
+	}
+
+	consumerKey := "notification-" + consumerGroupID
+	if _, exists := eb.consumers[consumerKey]; exists {
+		logger.Warn("Notification消费者已存在", logger.StringField("group_id", consumerGroupID))
 		return nil
 	}
 
-	consumer := mq.NewConsumer(mq.TopicNotification, "gateway-notification-consumer")
-	eb.consumers["notification"] = consumer
+	consumer := mq.NewConsumer(mq.TopicNotification, consumerGroupID)
+	eb.consumers[consumerKey] = consumer
 
-	logger.Info("开始订阅通知事件")
+	logger.Info("开始订阅通知事件", logger.StringField("group_id", consumerGroupID))
 	return consumer.Subscribe(ctx, handler)
 }
 

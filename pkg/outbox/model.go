@@ -20,13 +20,13 @@ const (
 )
 
 type OutboxMessage struct {
-	ID          string     `gorm:"primaryKey;size:36"`
-	Topic       string     `gorm:"index;size:128;not null"`
-	Key         string     `gorm:"size:256;not null"`
-	Value       JSONRaw    `gorm:"type:jsonb;not null"`
-	Status      string     `gorm:"index;size:20;not null;default:'pending'"`
-	RetryCount  int        `gorm:"not null;default:0"`
-	ErrorMessage string    `gorm:"type:text"`
+	ID           string  `gorm:"primaryKey;size:36"`
+	Topic        string  `gorm:"index;size:128;not null"`
+	Key          string  `gorm:"size:256;not null"`
+	Value        JSONRaw `gorm:"type:jsonb;not null"`
+	Status       string  `gorm:"index;size:20;not null;default:'pending'"`
+	RetryCount   int     `gorm:"not null;default:0"`
+	ErrorMessage string  `gorm:"type:text"`
 	// NextRetryAt 控制失败消息的指数退避重试时间，NULL 表示立即可投递
 	NextRetryAt *time.Time `gorm:"index"`
 	// ReplayCount 该消息被重放的次数，达到 MaxReplayCount 后不再自动重放

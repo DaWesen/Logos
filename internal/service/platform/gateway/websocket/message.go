@@ -1,7 +1,9 @@
 package websocket
 
-// MessageType 表示 WebSocket 消息类型
-type MessageType string
+import "Logos/internal/service/platform/gateway/downlink"
+
+// MessageType 表示 WebSocket 消息类型。与 TCP 共用同一套取值，避免两端漂移。
+type MessageType = downlink.Type
 
 const (
 	// MessageTypeConnect 连接消息
@@ -37,13 +39,8 @@ type IncomingMessage struct {
 	Payload   interface{} `json:"data"`
 }
 
-// OutgoingMessage 表示发送到客户端的消息
-type OutgoingMessage struct {
-	Type      MessageType `json:"type"`
-	RequestID string      `json:"request_id,omitempty"`
-	Payload   interface{} `json:"data"`
-	Timestamp int64       `json:"timestamp"`
-}
+// OutgoingMessage 是网关统一下行信封的别名：WS 与 TCP 的线上字段完全一致。
+type OutgoingMessage = downlink.Envelope
 
 // ConnectPayload 连接载荷
 type ConnectPayload struct {

@@ -3,7 +3,10 @@ package mq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +22,28 @@ type Producer struct {
 	writer *kafka.Writer
 }
 
+// messageSource 抽象 kafka.Reader 的最小能力集，便于在不依赖真实 Kafka 的单测里
+// 验证「失败重试 / 提交时机 / 死信跳过」的语义。
+type messageSource interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	CommitMessages(ctx context.Context, msgs ...kafka.Message) error
+	Close() error
+}
+
 type Consumer struct {
-	reader *kafka.Reader
+	reader messageSource
+	// deadLetter 死信投递入口，nil 时使用 publishDeadLetter（写 <topic>.dlq）。
+	deadLetter func(msg *Message, cause error) bool
+	// retryBackoff 同一条消息进程内重试的初始退避，零值时用 initialConsumerRetryBackoff。
+	retryBackoff time.Duration
+	// retryBackoffMax 重试退避上限，零值时用 maxConsumerRetryBackoff。
+	retryBackoffMax time.Duration
+	// retryJitter 抖动源，返回 [0,1) 的随机数；nil 时使用全局 math/rand。
+	// 做成字段是为了单测能注入确定性抖动，精确断言每轮退避值。
+	retryJitter func() float64
+	// retryWait 等待下一次重试，返回 false 表示 ctx 已取消。
+	// 抽成字段后单测可以只记录退避值而不真的 sleep。
+	retryWait func(ctx context.Context, d time.Duration) bool
 }
 
 type Message struct {
@@ -46,24 +69,57 @@ func NewKafkaManager(brokers []string) (*KafkaManager, error) {
 }
 
 var (
-	producerInstance *Producer
-	producerOnce     sync.Once
-)
-
-func NewProducer() *Producer {
-	producerOnce.Do(func() {
+	producerMu          sync.Mutex
+	producerInstance    *Producer
+	producerInitErr     error
+	producerLastAttempt time.Time
+	// producerRetryCooldown 初始化失败后的冷却时间：期间 NewProducer 直接返回 nil，
+	// 避免每个请求都去重连 broker（失败时 Dial 本身就有超时，重试风暴会拖垮调用方）。
+	producerRetryCooldown = 30 * time.Second
+	// producerInit / producerNow 是测试注入点：生产用真实初始化与真实时钟。
+	producerInit = func() (*Producer, error) {
 		kafkaConfig := config.GetConfig().Kafka
-		var err error
-		producerInstance, err = InitProducer(kafkaConfig.Brokers)
+		p, err := InitProducer(kafkaConfig.Brokers)
 		if err != nil {
-			logger.Warn("初始化Kafka生产者失败", logger.ErrorField(err))
+			return nil, err
 		}
-		ctx := context.Background()
-		if err := CreateTopics(ctx); err != nil {
+		if err := CreateTopics(context.Background()); err != nil {
 			logger.Warn("创建Kafka主题失败", logger.ErrorField(err))
 		}
-	})
-	return producerInstance
+		return p, nil
+	}
+	producerNow = time.Now
+)
+
+// NewProducer 返回进程内唯一的 Kafka 生产者，失败时允许冷却后重试。
+//
+// 原实现用 sync.Once：初始化失败后 once 已经触发，producerInstance 永久为 nil，
+// 之后所有 Send 都返回 "producer not initialized" —— 一次启动期 broker 抖动
+// 会让整个进程直到重启都发不出消息，且没有任何自动恢复路径。
+// 现在改为「成功才缓存、失败记冷却」：冷却期内快速返回 nil（避免重试风暴），
+// 冷却结束后重新尝试，broker 恢复后自动补齐。
+func NewProducer() *Producer {
+	producerMu.Lock()
+	defer producerMu.Unlock()
+
+	if producerInstance != nil {
+		return producerInstance
+	}
+	// 冷却期内不重试；成功过之后 producerInitErr 为 nil，不会走到这里。
+	if producerInitErr != nil && producerNow().Sub(producerLastAttempt) < producerRetryCooldown {
+		return nil
+	}
+
+	p, err := producerInit()
+	producerLastAttempt = producerNow()
+	if err != nil {
+		producerInitErr = err
+		logger.Warn("初始化Kafka生产者失败", logger.ErrorField(err))
+		return nil
+	}
+	producerInstance = p
+	producerInitErr = nil
+	return p
 }
 
 func InitProducer(brokers []string) (*Producer, error) {
@@ -130,6 +186,7 @@ func NewConsumer(topic string, groupID string) *Consumer {
 
 func (p *Producer) Send(ctx context.Context, topic string, key string, value []byte) error {
 	if p == nil || p.writer == nil {
+		obs.RecordKafkaProduce(ctx, topic, "failed", 0)
 		return fmt.Errorf("producer not initialized")
 	}
 
@@ -139,11 +196,17 @@ func (p *Producer) Send(ctx context.Context, topic string, key string, value []b
 		Value: value,
 	}
 
+	start := time.Now()
 	err := p.writer.WriteMessages(ctx, msg)
+	elapsed := time.Since(start).Seconds()
 	if err != nil {
+		// 生产失败打点走 failed；消费侧对这条消息不会有任何记录，
+		// 这是写链路唯一能暴露 broker 不可用的位置。
+		obs.RecordKafkaProduce(ctx, topic, "failed", elapsed)
 		return fmt.Errorf("发送消息失败: %w", err)
 	}
 
+	obs.RecordKafkaProduce(ctx, topic, "ok", elapsed)
 	return nil
 }
 
@@ -270,10 +333,13 @@ func (p *Producer) Close() error {
 //
 // 使用 FetchMessage 而非 ReadMessage：ReadMessage 会在返回前自动提交 offset，
 // 导致 handler 还没执行消息就被标记为已消费（at-most-once）。
-// FetchMessage 只拉取不提交，由 Subscribe 在 handler 成功后显式 CommitMessages，
-// 失败则不提交、下次拉取到同一条消息重投，实现 at-least-once。
+// FetchMessage 只拉取不提交，提交时机由 Subscribe 控制。
 //
-// 注意：调用方若直接使用 Receive 而不通过 Subscribe，需自行调用 Commit。
+// 注意：FetchMessage 会推进 reader 的内存游标，未提交的消息**不会**在本进程内被
+// 再次拉取到；因此失败必须由 Subscribe 就地重试（见 processWithRetry），
+// 否则后续消息的提交会把失败消息的 offset 一并越过，直接丢失。
+//
+// 调用方若直接使用 Receive 而不通过 Subscribe，需自行调用 Commit。
 func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
 	if c == nil || c.reader == nil {
 		return nil, fmt.Errorf("consumer not initialized")
@@ -386,30 +452,96 @@ func (c *Consumer) Commit(ctx context.Context, msg *Message) error {
 	})
 }
 
-// failureTracker 跟踪"同一条消息（topic + partition + offset）"的连续处理失败次数，
-// 用于判定毒丸消息：不同消息到达即重置计数。
-// record 返回该消息此前的连续失败次数（首次为 0）。
-type failureTracker struct {
-	topic     string
-	partition int
-	offset    int64
-	count     int
-}
+// 消费失败后的重试参数。
+const (
+	// maxConsumerFailures 同一条消息在进程内的最大处理次数：
+	// 超过后转存死信并提交 offset，避免毒丸消息永久卡住整个分区。
+	maxConsumerFailures = 5
+	// initialConsumerRetryBackoff 首次重试前的退避，之后逐次翻倍。
+	initialConsumerRetryBackoff = 200 * time.Millisecond
+	// maxConsumerRetryBackoff 单次重试退避上限，避免一条消息阻塞分区过久。
+	maxConsumerRetryBackoff = 2 * time.Second
+)
 
-func (f *failureTracker) record(msg *Message) int {
-	if msg.Topic == f.topic && msg.Partition == f.partition && msg.Offset == f.offset {
-		f.count++
-	} else {
-		f.topic, f.partition, f.offset = msg.Topic, msg.Partition, msg.Offset
-		f.count = 0
+// RetryBackoff 计算第 attempt 次失败后、下一次重试前的等待时长（attempt 从 1 开始）。
+//
+// 计算分两步：
+//  1. 指数增长：base * 2^(attempt-1)，并截断到 max；
+//  2. 等量抖动（equal jitter）：最终值落在 [d/2, d] 区间，jitter 取 [0,1)。
+//
+// 为什么需要抖动：同一条消息的失败往往来自下游整体故障，而不是这条消息本身。
+// 若退避是固定的，多个消费者/多个分区会在同一毫秒集中重试，把刚恢复的下游
+// 再次打垮（重试风暴）。抖动把重试时间摊开，同时保留一半固定等待，
+// 避免随机数把退避压到接近 0 —— 那等于没有退避。
+//
+// 纯函数 + 显式入参（含 jitter）让策略可断言：单测不需要 sleep 就能验证
+// 序列、上限与抖动区间。base <= 0 返回 0（调用方显式关闭退避）；
+// jitter <= 0 返回基础值（确定性，便于测试与排障）。
+func RetryBackoff(attempt int, base, max time.Duration, jitter float64) time.Duration {
+	if base <= 0 {
+		return 0
 	}
-	return f.count
+	if attempt < 1 {
+		attempt = 1
+	}
+
+	d := base
+	for i := 1; i < attempt; i++ {
+		if max > 0 && d >= max {
+			d = max
+			break
+		}
+		// 溢出保护：base 极大且 attempt 很高时 d*2 会变成负数，
+		// 此时直接取上限（或退回当前值），避免负数退避变成「立即重试」。
+		if d > (1<<62)/2 {
+			if max > 0 {
+				d = max
+			}
+			break
+		}
+		d *= 2
+	}
+	if max > 0 && d > max {
+		d = max
+	}
+
+	if jitter <= 0 {
+		return d
+	}
+	if jitter > 1 {
+		jitter = 1
+	}
+	half := d / 2
+	return half + time.Duration(float64(half)*jitter)
 }
 
-// reset 清零计数但保留消息定位：
-// 毒丸消息提交 offset 后再次被拉取到时，仍从第 1 次失败重新计数。
-func (f *failureTracker) reset() {
-	f.count = 0
+// retryJitter 返回 [0,1) 的抖动系数；字段为 nil 时用全局随机源。
+func (c *Consumer) retryJitterValue() float64 {
+	if c != nil && c.retryJitter != nil {
+		return c.retryJitter()
+	}
+	return rand.Float64()
+}
+
+// waitBeforeRetry 等待下一次重试；返回 false 表示 ctx 已取消，调用方应立即退出。
+func (c *Consumer) waitBeforeRetry(ctx context.Context, d time.Duration) bool {
+	if c != nil && c.retryWait != nil {
+		return c.retryWait(ctx, d)
+	}
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
 }
 
 func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error {
@@ -417,90 +549,162 @@ func (c *Consumer) Subscribe(ctx context.Context, handler MessageHandler) error 
 		return fmt.Errorf("consumer not initialized")
 	}
 
-	// maxConsumerFailures 同一条消息连续处理失败的上限：
-	// 超过后强制提交 offset 跳过该消息，避免毒丸消息永久卡死整个分区。
-	const maxConsumerFailures = 5
+	go c.consumeLoop(ctx, handler)
+	return nil
+}
 
-	go func() {
-		defer func() {
-			// 确保退出时关闭读取器
-			_ = c.Close()
-		}()
-		var failures failureTracker
-
-		for {
-			select {
-			case <-ctx.Done():
-				// 上下文已取消，优雅退出
-				return
-			default:
-				msg, err := c.Receive(ctx)
-				if err != nil {
-					// 检查是否是上下文取消或连接关闭错误
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-					// 如果是 EOF 或连接关闭错误，就不记录警告日志
-					if err.Error() != "读取消息失败: fetching message: EOF" &&
-						err.Error() != "读取消息失败: read tcp: read: connection reset by peer" {
-						logger.Warn("接收消息失败", logger.ErrorField(err))
-					}
-					// 如果是严重错误，稍等一下再重试，避免死循环
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				// 统计同一条消息（topic + partition + offset）的连续失败次数
-				failCount := failures.record(msg)
-
-				// handler 失败不提交 offset，下次循环会重新拉取到同一条消息（at-least-once 重投）
-				handlerStart := time.Now()
-				if err := handler(msg); err != nil {
-					obs.RecordKafkaConsume(ctx, msg.Topic, "failed", time.Since(handlerStart).Seconds())
-					logger.Warn("处理消息失败，不提交 offset 等待重投",
-						logger.ErrorField(err),
-						logger.StringField("topic", msg.Topic),
-						logger.Int64Field("offset", msg.Offset),
-						logger.IntField("fail_count", failCount+1))
-					// 连续失败达上限：判定为毒丸。先转存死信队列再提交 offset，
-					// 避免“直接跳过”把消息永久丢弃；转存失败时落原始负载日志，保证可人工恢复。
-					if failCount+1 >= maxConsumerFailures {
-						logger.Error("消息连续处理失败达上限，转存死信队列后跳过",
-							logger.StringField("topic", msg.Topic),
-							logger.Int64Field("offset", msg.Offset),
-							logger.IntField("fail_count", failCount+1))
-						obs.RecordKafkaPoison(ctx, msg.Topic)
-						if !c.publishDeadLetter(msg, err) {
-							logger.Error("死信转存失败，原始消息已记录，需人工恢复",
-								logger.StringField("topic", msg.Topic),
-								logger.IntField("partition", msg.Partition),
-								logger.Int64Field("offset", msg.Offset),
-								logger.StringField("raw", string(msg.Value)))
-						}
-						if cerr := c.Commit(ctx, msg); cerr != nil {
-							logger.Warn("跳过毒丸消息时提交 offset 失败",
-								logger.ErrorField(cerr),
-								logger.StringField("topic", msg.Topic),
-								logger.Int64Field("offset", msg.Offset))
-						}
-						failures.reset()
-					}
-					continue
-				}
-				obs.RecordKafkaConsume(ctx, msg.Topic, "ok", time.Since(handlerStart).Seconds())
-				// handler 成功后才提交 offset
-				if err := c.Commit(ctx, msg); err != nil {
-					logger.Warn("提交 offset 失败，下次可能重复消费",
-						logger.ErrorField(err),
-						logger.StringField("topic", msg.Topic),
-						logger.Int64Field("offset", msg.Offset))
-				}
-			}
-		}
+// consumeLoop 串行消费：拉取 → 就地重试处理 → 提交，同一时刻只持有一条消息。
+func (c *Consumer) consumeLoop(ctx context.Context, handler MessageHandler) {
+	defer func() {
+		// 确保退出时关闭读取器
+		_ = c.Close()
 	}()
 
-	return nil
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		msg, err := c.Receive(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			// io.EOF 表示 reader 已关闭（正常退出），不打 Warn；其余错误降噪后重试。
+			if !isExpectedFetchError(err) {
+				logger.Warn("接收消息失败", logger.ErrorField(err))
+			}
+			// 稍等一下再重试，避免拉取失败时死循环
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue
+		}
+
+		if !c.processWithRetry(ctx, msg, handler) {
+			return
+		}
+	}
+}
+
+// isExpectedFetchError 判断拉取错误是否属于「正常关闭」类。
+// 用 errors.Is 而不是比字符串：kafka-go 升级后错误文案随时可能变，字符串匹配会静默失效。
+func isExpectedFetchError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// ErrHandlerPanic 标记消息处理器 panic。
+//
+// 处理器 panic 若不拦截，会直接击穿 consumeLoop 的 goroutine：该分区的消费
+// 永久停止（进程还活着、位点不再推进、也没有任何指标），只能靠重启恢复。
+// 把 panic 归一成「本条消息处理失败」，才能复用既有的「就地重试 → 死信」路径。
+var ErrHandlerPanic = errors.New("message handler panicked")
+
+// invokeHandler 调用处理器并兜住 panic，返回错误而不是让 goroutine 崩溃。
+// 用独立函数而不是在循环里 defer：defer 只能兜住一次调用，
+// 这里显式把「调用 + 恢复」放在一起，语义更清楚，也便于单测直接验证。
+func invokeHandler(handler MessageHandler, msg *Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrHandlerPanic, r)
+		}
+	}()
+	return handler(msg)
+}
+
+// processWithRetry 对同一条消息就地重试，直到成功或达到 maxConsumerFailures。
+//
+// 为什么必须就地重试，而不是「失败就不提交、等下一次拉取重投」：
+// kafka-go 的 FetchMessage 会推进 reader 的内存游标，未提交的消息在本进程内不会
+// 再次返回；如果继续消费下一条，后续 CommitMessages 会把 offset 推到更大值，
+// 这条失败消息就被永久越过 —— 实际语义退化成 at-most-once（丢消息），
+// 且「连续失败计数」永远涨不上去，死信队列形同虚设。
+//
+// 返回 false 表示 ctx 已取消（调用方应立即退出循环），此时该消息未提交，
+// 重启后会从 last committed offset 重新投递。
+func (c *Consumer) processWithRetry(ctx context.Context, msg *Message, handler MessageHandler) bool {
+	base := c.retryBackoff
+	if base <= 0 {
+		base = initialConsumerRetryBackoff
+	}
+	maxBackoff := c.retryBackoffMax
+	if maxBackoff <= 0 {
+		maxBackoff = maxConsumerRetryBackoff
+	}
+
+	for attempt := 1; ; attempt++ {
+		handlerStart := time.Now()
+		err := invokeHandler(handler, msg)
+		elapsed := time.Since(handlerStart).Seconds()
+
+		if err == nil {
+			obs.RecordKafkaConsume(ctx, msg.Topic, "ok", elapsed)
+			// 处理成功后才提交 offset
+			if cerr := c.Commit(ctx, msg); cerr != nil {
+				logger.Warn("提交 offset 失败，重启后可能重复消费",
+					logger.ErrorField(cerr),
+					logger.StringField("topic", msg.Topic),
+					logger.Int64Field("offset", msg.Offset))
+			}
+			return true
+		}
+
+		// panic 单独打标签：failed 说明「业务处理出错」，panic 说明「代码有 bug」，
+		// 两者的告警等级与处置方式不同，混在一起会让真正的崩溃被普通失败淹没。
+		consumeResult := "failed"
+		if errors.Is(err, ErrHandlerPanic) {
+			consumeResult = "panic"
+		}
+		obs.RecordKafkaConsume(ctx, msg.Topic, consumeResult, elapsed)
+		logger.Warn("处理消息失败，就地重试",
+			logger.ErrorField(err),
+			logger.StringField("topic", msg.Topic),
+			logger.Int64Field("offset", msg.Offset),
+			logger.IntField("attempt", attempt))
+
+		if attempt >= maxConsumerFailures {
+			// 判定为毒丸：先转存死信队列再提交 offset，避免「直接跳过」把消息永久丢弃；
+			// 转存失败时落原始负载日志，保证可人工恢复。
+			logger.Error("消息连续处理失败达上限，转存死信队列后跳过",
+				logger.StringField("topic", msg.Topic),
+				logger.Int64Field("offset", msg.Offset),
+				logger.IntField("attempt", attempt))
+			obs.RecordKafkaPoison(ctx, msg.Topic)
+
+			deadLetter := c.deadLetter
+			if deadLetter == nil {
+				deadLetter = c.publishDeadLetter
+			}
+			if !deadLetter(msg, err) {
+				logger.Error("死信转存失败，原始消息已记录，需人工恢复",
+					logger.StringField("topic", msg.Topic),
+					logger.IntField("partition", msg.Partition),
+					logger.Int64Field("offset", msg.Offset),
+					logger.StringField("raw", string(msg.Value)))
+			}
+			if cerr := c.Commit(ctx, msg); cerr != nil {
+				logger.Warn("跳过毒丸消息时提交 offset 失败",
+					logger.ErrorField(cerr),
+					logger.StringField("topic", msg.Topic),
+					logger.Int64Field("offset", msg.Offset))
+			}
+			return true
+		}
+
+		// 记录一次真正会发生的重试（毒丸路径在上面已 return，不计入 retry）。
+		// retry 与 poison 分开统计，才能区分「下游短暂抖动」和「持续故障」。
+		obs.RecordKafkaRetry(ctx, msg.Topic)
+
+		// 退避按「第几次失败」计算（attempt 从 1 开始），指数增长 + 等量抖动，
+		// 既有上限又避免多消费者同步重试；ctx 取消时立即退出且不提交 offset。
+		if !c.waitBeforeRetry(ctx, RetryBackoff(attempt, base, maxBackoff, c.retryJitterValue())) {
+			return false
+		}
+	}
 }
 
 func (c *Consumer) Close() error {

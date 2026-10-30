@@ -179,6 +179,42 @@ func (m *UnifiedConnectionManager) SendToUser(userID string, data []byte) {
 // fanoutSem 限制并发的降级发布任务数，作为背压保护
 var fanoutSem = make(chan struct{}, maxConcurrentFanout)
 
+// dedupeUserIDs 保序去重，并剔除空 ID。
+//
+// 同一用户 ID 在目标列表里出现多次的来源不止一种：Chat 服务把发送者补进
+// 接收者列表、群成员列表本身有脏数据、多节点合并名单等。重复 ID 会让
+// LocalSendToUser 对同一批会话重复 Send，轻则客户端收到重复帧，重则把
+// 一个 500 人的群放大成 700 次投递并提前触发大群降级。
+//
+// 无重复（且无空 ID）时直接返回入参，不产生新的目标切片，
+// 让绝大多数正常消息只承担一次 map 构建，而不是额外拷贝。
+func dedupeUserIDs(userIDs []string) []string {
+	if len(userIDs) < 2 {
+		if len(userIDs) == 1 && userIDs[0] == "" {
+			return nil
+		}
+		return userIDs
+	}
+
+	seen := make(map[string]struct{}, len(userIDs))
+	unique := make([]string, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if userID == "" {
+			continue
+		}
+		if _, ok := seen[userID]; ok {
+			continue
+		}
+		seen[userID] = struct{}{}
+		unique = append(unique, userID)
+	}
+
+	if len(unique) == len(userIDs) {
+		return userIDs
+	}
+	return unique
+}
+
 // SendToUsers 投递消息给多个用户
 //
 // 小规模：本地同步投递 + 单次 Publish 携带 TargetUserIDs，减少 redis 往返。
@@ -188,6 +224,9 @@ var fanoutSem = make(chan struct{}, maxConcurrentFanout)
 //   - 并发任务数受 fanoutSem 约束，队列打满时丢弃远端发布并记录告警（离线节点靠拉取补齐），
 //     避免在消息洪峰下把网关/Redis 打满。
 func (m *UnifiedConnectionManager) SendToUsers(userIDs []string, data []byte) {
+	// 去重必须发生在本地投递和远端发布之前：否则同一用户的多端会被投递多次，
+	// 发给远端的名单也会重复，扇出规模被无谓放大。
+	userIDs = dedupeUserIDs(userIDs)
 	if len(userIDs) == 0 {
 		return
 	}
@@ -292,7 +331,9 @@ func (m *UnifiedConnectionManager) HandleRemoteMessage(msg *BroadcastMessage) {
 	case TargetModeSession:
 		m.LocalSendToSession(msg.TargetSessionID, msg.Payload)
 	case TargetModeUsers:
-		for _, uid := range msg.TargetUserIDs {
+		// 远端消息同样去重：发布方可能来自旧版本节点或合并过名单，
+		// 收到的列表不保证唯一，重复项会在本节点造成重复下行。
+		for _, uid := range dedupeUserIDs(msg.TargetUserIDs) {
 			m.LocalSendToUser(uid, msg.Payload)
 		}
 	case TargetModeBroadcast:

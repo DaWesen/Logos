@@ -15,6 +15,11 @@ import (
 const (
 	onlineStatusCachePrefix = "im:online:"
 	heartbeatTimeout        = 60
+	// onlineCacheTTL 在线缓存必须自带过期时间：缓存只是「在线」的正向标记，
+	// 若写入时不带 TTL，用户进程崩溃/断网后没有 Disconnect 事件，缓存会永久存在，
+	// 之后所有 GetOnlineStatus 都会命中缓存并报告「在线」。取 2 个心跳周期，
+	// 正常连接靠 Heartbeat 持续续期，异常连接最迟在本窗口后自动判离线。
+	onlineCacheTTL = 2 * heartbeatTimeout * time.Second
 )
 
 type IMService interface {
@@ -65,7 +70,7 @@ func (s *IMServiceImpl) Connect(ctx context.Context, userID, deviceID, sessionID
 	}
 
 	cacheKey := onlineStatusCachePrefix + userID
-	if err := s.cache.Set(ctx, cacheKey, "1", 0); err != nil {
+	if err := s.cache.Set(ctx, cacheKey, "1", onlineCacheTTL); err != nil {
 		logger.Warn("更新在线状态缓存失败", logger.ErrorField(err))
 	}
 
@@ -133,7 +138,7 @@ func (s *IMServiceImpl) GetOnlineStatus(ctx context.Context, userIDs []string) (
 			status[userID] = online
 			if online {
 				cacheKey := onlineStatusCachePrefix + userID
-				if err := s.cache.Set(ctx, cacheKey, "1", 0); err != nil {
+				if err := s.cache.Set(ctx, cacheKey, "1", onlineCacheTTL); err != nil {
 					logger.Warn("更新在线状态缓存失败", logger.ErrorField(err))
 				}
 			}
@@ -146,7 +151,7 @@ func (s *IMServiceImpl) GetOnlineStatus(ctx context.Context, userIDs []string) (
 func (s *IMServiceImpl) SetOnlineStatus(ctx context.Context, userID string, online bool) error {
 	cacheKey := onlineStatusCachePrefix + userID
 	if online {
-		if err := s.cache.Set(ctx, cacheKey, "1", 0); err != nil {
+		if err := s.cache.Set(ctx, cacheKey, "1", onlineCacheTTL); err != nil {
 			logger.Warn("设置在线状态缓存失败", logger.ErrorField(err))
 		}
 	} else {
@@ -287,18 +292,17 @@ func (s *IMServiceImpl) handlePresenceEvent(msg *mq.Message) error {
 			logger.StringField("user_id", event.UserID),
 			logger.StringField("device_id", event.DeviceID))
 	} else {
-		sessionID := "ws_" + event.UserID + "_" + event.DeviceID
-		if err := s.repo.SetUserOffline(ctx, sessionID); err != nil {
+		// Gateway 只在「用户最后一个会话断开」时发布 offline，因此这是用户级离线事件。
+		// 不能按 ws_<user>_<device> 只清单个设备记录：多设备登录时其它设备的记录会残留，
+		// 用户会一直显示在线，所以这里直接清空该用户的全部在线记录与缓存。
+		if err := s.repo.SetAllUserOffline(ctx, event.UserID); err != nil {
 			logger.Error("设置用户离线失败", logger.ErrorField(err))
 			return err
 		}
 
-		records, err := s.repo.GetOnlineRecordsByUser(ctx, event.UserID)
-		if err == nil && len(records) == 0 {
-			cacheKey := onlineStatusCachePrefix + event.UserID
-			if err := s.cache.Delete(ctx, cacheKey); err != nil {
-				logger.Warn("清除在线状态缓存失败", logger.ErrorField(err))
-			}
+		cacheKey := onlineStatusCachePrefix + event.UserID
+		if err := s.cache.Delete(ctx, cacheKey); err != nil {
+			logger.Warn("清除在线状态缓存失败", logger.ErrorField(err))
 		}
 
 		logger.Info("用户离线（来自Gateway事件）",

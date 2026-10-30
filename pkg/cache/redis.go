@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -11,6 +12,73 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// PipelineCmd 是 PipelineExec 的单条命令描述。
+//
+// 用命名类型替代匿名结构体，让校验函数、接口与实现共享同一类型；
+// 两条约束必须一致，否则调用方传 []struct{...} 会因为类型不同而编译失败。
+type PipelineCmd = struct {
+	Cmd  string
+	Args []interface{}
+}
+
+// Redis 启动重连参数。
+//
+// 原实现固定重试 30 次，每次「3s ping 超时 + 2s sleep」，最坏阻塞启动
+// 30×(3+2)=150s：容器编排的健康检查早就判定启动失败并重启，Redis 恢复后
+// 进程也未必还在。现在改成指数退避 + 更少次数：
+//   - 200ms 起步、逐次翻倍、封顶 2s，10 次合计约 13s，覆盖绝大多数「Redis 比应用晚几秒就绪」的场景；
+//   - 最终失败时关闭已创建的 client，避免连接池与后台 goroutine 泄漏。
+const (
+	redisStartupAttempts = 10
+	redisPingTimeout     = 3 * time.Second
+	redisRetryBaseDelay  = 200 * time.Millisecond
+	redisRetryMaxDelay   = 2 * time.Second
+)
+
+// StartupRetryDelay 返回第 attempt 次失败后应等待的时长（attempt 从 1 开始）。
+// 序列：200ms → 400ms → 800ms → 1.6s → 2s → 2s ……
+func StartupRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := redisRetryBaseDelay
+	for i := 1; i < attempt; i++ {
+		if d > redisRetryMaxDelay/2 {
+			return redisRetryMaxDelay
+		}
+		d *= 2
+	}
+	return d
+}
+
+// ErrUnsupportedPipelineCommand 表示 PipelineExec 收到了不支持的命令。
+//
+// 原实现遇到未知命令会把 nil 塞进结果切片（与「命令执行成功但返回 nil」无法区分），
+// 调用方以为整段管道执行成功，实际上命令被静默丢弃。
+var ErrUnsupportedPipelineCommand = errors.New("cache: pipeline 含不支持的命令")
+
+// ValidatePipelineCommands 在真正下发前校验命令与参数个数。
+//
+// 参数越界（如 ZADD 只给 2 个参数）在旧实现里会直接 index out of range panic，
+// 而现在明确返回错误，调用方可以降级为逐条命令执行。
+func ValidatePipelineCommands(cmds []PipelineCmd) error {
+	for i, cmd := range cmds {
+		need := 0
+		switch cmd.Cmd {
+		case "ZREMRANGEBYSCORE", "ZADD", "ZRANGE":
+			need = 3
+		case "PEXPIRE":
+			need = 2
+		default:
+			return fmt.Errorf("%w: 第 %d 条 %q", ErrUnsupportedPipelineCommand, i, cmd.Cmd)
+		}
+		if len(cmd.Args) < need {
+			return fmt.Errorf("cache: 第 %d 条 %s 需要 %d 个参数，实际 %d 个", i, cmd.Cmd, need, len(cmd.Args))
+		}
+	}
+	return nil
+}
 
 type Cache interface {
 	//基本操作
@@ -59,10 +127,7 @@ type Cache interface {
 
 	//Lua 脚本执行
 	EvalSha(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error)
-	PipelineExec(ctx context.Context, cmds []struct {
-		Cmd  string
-		Args []interface{}
-	}) ([]interface{}, error)
+	PipelineExec(ctx context.Context, cmds []PipelineCmd) ([]interface{}, error)
 
 	//连接管理
 	Ping(ctx context.Context) error
@@ -176,19 +241,29 @@ func InitRedis(redisConfig config.Redis) (Cache, error) {
 		PoolSize: redisConfig.PoolSize,
 	})
 
-	for i := 0; i < 30; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// 注意顺序：失败时必须先 Close client 再返回。redis.Client 内部有连接池
+	// 与后台 goroutine，直接丢弃会让它们挂到进程退出。
+	for attempt := 1; attempt <= redisStartupAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), redisPingTimeout)
 		_, err := client.Ping(ctx).Result()
 		cancel()
 		if err == nil {
 			fmt.Println("Redis连接成功")
 			return &RedisCache{client: client}, nil
 		}
-		fmt.Printf("Redis连接失败(第%d次)，重试中...: %v\n", i+1, err)
-		time.Sleep(2 * time.Second)
+
+		if attempt == redisStartupAttempts {
+			_ = client.Close()
+			return nil, fmt.Errorf("failed to connect redis after %d attempts: %w", redisStartupAttempts, err)
+		}
+
+		delay := StartupRetryDelay(attempt)
+		fmt.Printf("Redis连接失败(第%d次)，%s 后重试: %v\n", attempt, delay, err)
+		time.Sleep(delay)
 	}
 
-	return nil, fmt.Errorf("failed to connect redis after 30 attempts")
+	_ = client.Close()
+	return nil, errors.New("failed to connect redis")
 }
 
 // 设置键值对
@@ -376,13 +451,15 @@ func (c *RedisCache) EvalSha(ctx context.Context, script string, keys []string, 
 }
 
 // 管道执行多个命令
-func (c *RedisCache) PipelineExec(ctx context.Context, cmds []struct {
-	Cmd  string
-	Args []interface{}
-}) ([]interface{}, error) {
+func (c *RedisCache) PipelineExec(ctx context.Context, cmds []PipelineCmd) ([]interface{}, error) {
+	// 先校验再下发：未知命令/参数缺失必须在本地暴露，不能塞 nil 当成功
+	if err := ValidatePipelineCommands(cmds); err != nil {
+		return nil, err
+	}
+
 	pipe := c.client.Pipeline()
 
-	var results []interface{}
+	results := make([]interface{}, 0, len(cmds))
 	for _, cmd := range cmds {
 		switch cmd.Cmd {
 		case "ZREMRANGEBYSCORE":
@@ -393,8 +470,6 @@ func (c *RedisCache) PipelineExec(ctx context.Context, cmds []struct {
 			results = append(results, pipe.ZRange(ctx, safeStringConvert(cmd.Args[0]), safeInt64Convert(cmd.Args[1]), safeInt64Convert(cmd.Args[2])))
 		case "PEXPIRE":
 			results = append(results, pipe.Expire(ctx, safeStringConvert(cmd.Args[0]), time.Duration(safeInt64Convert(cmd.Args[1]))*time.Millisecond))
-		default:
-			results = append(results, nil)
 		}
 	}
 

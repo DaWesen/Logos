@@ -20,9 +20,13 @@ var (
 	kafkaConsumeCounter  metric.Int64Counter
 	kafkaConsumeDuration metric.Float64Histogram
 	kafkaPoisonCounter   metric.Int64Counter
+	kafkaProduceCounter  metric.Int64Counter
+	kafkaProduceDuration metric.Float64Histogram
+	kafkaRetryCounter    metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
+	outboxAbortNum       metric.Int64Counter
 )
 
 func initReliabilityMetrics() {
@@ -33,7 +37,7 @@ func initReliabilityMetrics() {
 
 	kafkaConsumeCounter, _ = meter.Int64Counter(
 		"logos.kafka.consume.count",
-		metric.WithDescription("Kafka 消息处理结果计数（result=ok/failed）"),
+		metric.WithDescription("Kafka 消息处理结果计数（result=ok/failed/panic）"),
 	)
 	kafkaConsumeDuration, _ = meter.Float64Histogram(
 		"logos.kafka.consume.duration",
@@ -43,6 +47,19 @@ func initReliabilityMetrics() {
 	kafkaPoisonCounter, _ = meter.Int64Counter(
 		"logos.kafka.poison.count",
 		metric.WithDescription("被判为毒丸并转存死信队列的消息数"),
+	)
+	kafkaProduceCounter, _ = meter.Int64Counter(
+		"logos.kafka.produce.count",
+		metric.WithDescription("Kafka 生产结果计数（result=ok/failed）"),
+	)
+	kafkaProduceDuration, _ = meter.Float64Histogram(
+		"logos.kafka.produce.duration",
+		metric.WithDescription("Kafka 单条消息生产耗时"),
+		metric.WithUnit("s"),
+	)
+	kafkaRetryCounter, _ = meter.Int64Counter(
+		"logos.kafka.retry.count",
+		metric.WithDescription("同一条 Kafka 消息就地重试的次数（不含最终成功那次）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -56,6 +73,10 @@ func initReliabilityMetrics() {
 	outboxDeadLetterNum, _ = meter.Int64Counter(
 		"logos.outbox.deadletter.count",
 		metric.WithDescription("Outbox 重试耗尽进入死信的消息数"),
+	)
+	outboxAbortNum, _ = meter.Int64Counter(
+		"logos.outbox.dispatch.abort.count",
+		metric.WithDescription("Outbox 单轮投递因连续失败提前熔断的次数"),
 	)
 }
 
@@ -82,6 +103,36 @@ func RecordKafkaPoison(ctx context.Context, topic string) {
 	}
 }
 
+// RecordKafkaProduce 记录一条 Kafka 消息的生产结果与耗时。
+//
+// 生产失败是「写链路」最早的可观测点：消费者侧的 failed 计数只有在消息成功入队后
+// 才会出现，broker 不可用 / 认证失败 / topic 不存在时消费侧指标完全静默，
+// 没有这条打点只能等业务反馈「消息发不出去」。
+func RecordKafkaProduce(ctx context.Context, topic, result string, durationSeconds float64) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if kafkaProduceCounter != nil {
+		kafkaProduceCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("topic", topic),
+			attribute.String("result", result),
+		))
+	}
+	if kafkaProduceDuration != nil {
+		kafkaProduceDuration.Record(ctx, durationSeconds, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// RecordKafkaRetry 记录一次就地重试。
+//
+// 与 failed 计数分开：failed 会包含最终成功前的那几次失败，无法区分
+// 「偶发抖动但重试成功」与「持续失败」。retry 计数突增而 poison 稳定，
+// 说明下游只是短暂波动，不必告警；两者同时突增才是真故障。
+func RecordKafkaRetry(ctx context.Context, topic string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if kafkaRetryCounter != nil {
+		kafkaRetryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
 // RecordOutboxDispatch 记录一条 Outbox 消息的投递结果与耗时。
 func RecordOutboxDispatch(ctx context.Context, topic, result string, durationSeconds float64) {
 	reliabilityOnce.Do(initReliabilityMetrics)
@@ -102,6 +153,169 @@ func RecordOutboxDeadLetter(ctx context.Context, topic string) {
 	reliabilityOnce.Do(initReliabilityMetrics)
 	if outboxDeadLetterNum != nil {
 		outboxDeadLetterNum.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// RecordOutboxDispatchAbort 记录一次「连败熔断」：本轮剩余消息被放回 pending。
+// 与 failed 分开统计：failed 的增量说明单条失败，abort 的增量说明下游整体不可用，
+// 后者才是需要立即告警的信号。
+func RecordOutboxDispatchAbort(ctx context.Context, topic string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if outboxAbortNum != nil {
+		outboxAbortNum.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// 网关连接生命周期指标。
+//
+// 网关是 IM 的入口，连接数的增删只能从 open/close 两个计数推导，缺少其中一个
+// 就无法回答「在线连接是在增长还是衰减」「这轮重启淘汰了多少连接」。分开打点后：
+//   - open - close 即当前在线连接，与 presence 的 Redis 视图互相校验；
+//   - event=evict/slow/auth/shutdown 能定位「用户为什么掉线」，
+//     否则所有断开在监控上都是同一个 close，无法归因。
+var (
+	gatewayConnOnce    sync.Once
+	gatewayConnCounter metric.Int64Counter
+	gatewayAuthFailNum metric.Int64Counter
+	gatewayDropNum     metric.Int64Counter
+	gatewayPruneNum    metric.Int64Counter
+	gatewayRevokeNum   metric.Int64Counter
+)
+
+func initGatewayMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	gatewayConnCounter, _ = meter.Int64Counter(
+		"logos.gateway.connection.count",
+		metric.WithDescription("网关连接事件计数（protocol=websocket/tcp, event=open/close/evict/slow/auth/shutdown）"),
+	)
+	gatewayAuthFailNum, _ = meter.Int64Counter(
+		"logos.gateway.auth.fail.count",
+		metric.WithDescription("网关认证/令牌复核失败计数（protocol, reason=invalid/revoked/expired）"),
+	)
+	gatewayDropNum, _ = meter.Int64Counter(
+		"logos.gateway.drop.count",
+		metric.WithDescription("网关下行帧丢弃计数（protocol, reason=buffer_full）"),
+	)
+	gatewayPruneNum, _ = meter.Int64Counter(
+		"logos.gateway.presence.prune.count",
+		metric.WithDescription("presence 剔除的超时会话数"),
+	)
+	gatewayRevokeNum, _ = meter.Int64Counter(
+		"logos.gateway.revocation.check.count",
+		metric.WithDescription("网关撤销查询结果计数（protocol, result=clear/revoked/unknown）"),
+	)
+}
+
+// RecordGatewayConnection 记录一次连接生命周期事件。
+func RecordGatewayConnection(ctx context.Context, protocol, event string) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayConnCounter != nil {
+		gatewayConnCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("protocol", protocol),
+			attribute.String("event", event),
+		))
+	}
+}
+
+// RecordGatewayAuthFailure 记录一次认证或长连接令牌复核失败。
+func RecordGatewayAuthFailure(ctx context.Context, protocol, reason string) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayAuthFailNum != nil {
+		gatewayAuthFailNum.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("protocol", protocol),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordGatewayDrop 记录一次下行帧丢弃（客户端缓冲满或已关闭）。
+func RecordGatewayDrop(ctx context.Context, protocol, reason string) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayDropNum != nil {
+		gatewayDropNum.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("protocol", protocol),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordPresencePruned 记录一次 presence 超时会话剔除的会话数。
+//
+// 为什么单独打点：剔除量突增意味着「大量连接没有正常注销」，常见原因是
+// 节点滚动重启时没走优雅停机、或客户端心跳机制失效。只看在线人数无法区分
+// 「用户真的下线」与「会话堆积后被批量清理」。
+func RecordPresencePruned(ctx context.Context, count int) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayPruneNum != nil && count > 0 {
+		gatewayPruneNum.Add(ctx, int64(count))
+	}
+}
+
+// RecordGatewayRevocationCheck 记录一次令牌撤销查询结果。
+//
+// result=unknown 表示 Redis 故障、撤销状态无法判断（网关按 fail-open 放行）。
+// 这个标签的价值在于：没有它，「撤销链路失效」和「所有令牌都有效」在监控上
+// 完全一样，登出/改密后的令牌可能继续使用却无人察觉。
+func RecordGatewayRevocationCheck(ctx context.Context, protocol, result string) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayRevokeNum != nil {
+		gatewayRevokeNum.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("protocol", protocol),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// 推送链路指标。
+//
+// 离线推送是「用户不上线就不会感知」的后台链路：发送失败、令牌失效只体现在
+// 业务日志里，无法从任何一个在线指标看出来。三组计数分别回答：
+//   - send（platform,result）：推送成功率与失败类型分布（retryable/permanent/unknown）；
+//   - token evicted（platform）：失效令牌被注销的数量，突增说明大量设备卸载/换机；
+//   - provider 未注册计入 skipped，避免「没配 provider」被误读成「发送失败」。
+var (
+	pushOnce     sync.Once
+	pushSendNum  metric.Int64Counter
+	pushEvictNum metric.Int64Counter
+)
+
+func initPushMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	pushSendNum, _ = meter.Int64Counter(
+		"logos.push.send.count",
+		metric.WithDescription("推送发送结果计数（platform, result=sent/failed_retryable/failed_permanent/failed_unknown/skipped）"),
+	)
+	pushEvictNum, _ = meter.Int64Counter(
+		"logos.push.token.evicted.count",
+		metric.WithDescription("因设备令牌失效而被注销的 token 数（platform）"),
+	)
+}
+
+// RecordPushSend 记录一次推送发送结果。
+func RecordPushSend(ctx context.Context, platform, result string) {
+	pushOnce.Do(initPushMetrics)
+	if pushSendNum != nil {
+		pushSendNum.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("platform", platform),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// RecordPushTokenEvicted 记录一次因供应商判定令牌失效而注销的 token。
+//
+// 与 send 的 failed_permanent 分开：failed_permanent 包含「请求本身有问题但令牌有效」
+// （如 PayloadTooLarge），只有 evicted 才是真正减少了下一次推送的设备数。
+func RecordPushTokenEvicted(ctx context.Context, platform string) {
+	pushOnce.Do(initPushMetrics)
+	if pushEvictNum != nil {
+		pushEvictNum.Add(ctx, 1, metric.WithAttributes(attribute.String("platform", platform)))
 	}
 }
 

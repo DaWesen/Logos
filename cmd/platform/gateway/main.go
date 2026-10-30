@@ -87,6 +87,7 @@ func main() {
 
 	go func() {
 		log.Printf("TCP server starting on :%d", tcpPort)
+		var acceptBackoff time.Duration
 		for {
 			select {
 			case <-ctx.Done():
@@ -100,10 +101,20 @@ func main() {
 					case <-ctx.Done():
 						return
 					default:
-						log.Printf("TCP accept error: %v", err)
-						continue
 					}
+					// Accept 失败可能是 fd 耗尽等可恢复错误：指数退避后重试，
+					// 不能原地 continue（否则会变成零间隔忙等，CPU/日志一起打满）。
+					acceptBackoff = tcp.NextAcceptBackoff(acceptBackoff)
+					log.Printf("TCP accept error: %v, retrying in %s", err, acceptBackoff)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(acceptBackoff):
+					}
+					continue
 				}
+				// 成功接受连接后重置退避，避免偶发失败拖慢后续正常路径
+				acceptBackoff = 0
 				go tcpHandler.ServeTCP(conn)
 			}
 		}
@@ -112,6 +123,12 @@ func main() {
 	httpServer := &http.Server{
 		Addr:    cfg.GetGatewayAddr(),
 		Handler: r,
+		// 抗 Slowloris：不读完请求头就永远占着连接是最廉价的 DoS。
+		// 网关同时承载 WebSocket，升级后连接已被 hijack，下面的超时不再作用于长连接，
+		// 因此这里只设置读侧与空闲超时，不设置 WriteTimeout（避免误伤升级响应）。
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	go func() {
@@ -126,7 +143,19 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down gateway...")
+	// 1. 先停止接受新连接：SIGTERM 之后到达的 WS 升级 / TCP 建连不应再进入
+	//    一个即将退出的进程（否则排空永远追不上新增）。
 	cancel()
+	_ = tcpListener.Close()
+
+	// 2. 再排空存量连接：WS 发送 CloseGoingAway 让客户端立即重连（而不是等指数退避），
+	//    TCP 注销会话并关闭 socket。排空窗口小于进程级停机窗口，
+	//    保证即使有连接卡死在写，进程也能在预期时间内退出。
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	wsRemaining := wsHandler.Shutdown(drainCtx)
+	tcpRemaining := tcpHandler.Shutdown(drainCtx)
+	drainCancel()
+	log.Printf("连接排空完成: websocket remaining=%d tcp remaining=%d", wsRemaining, tcpRemaining)
 
 	middleware.StopMetricsReporter()
 	if monitoringClient != nil {
@@ -165,14 +194,6 @@ func main() {
 		log.Println("Closing WebSocket handler...")
 		wsHandler.Close()
 		log.Println("WebSocket handler closed")
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		log.Println("Closing TCP listener...")
-		_ = tcpListener.Close()
-		log.Println("TCP listener closed")
 	}()
 
 	wg.Add(1)
