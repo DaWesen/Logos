@@ -77,17 +77,47 @@ func TestClassifyPushFailure_FCM(t *testing.T) {
 	}
 }
 
+func TestPushPlatformLabel(t *testing.T) {
+	cases := []struct {
+		platform Platform
+		want     string
+	}{
+		{PlatformIOS, "ios"},
+		{PlatformAndroid, "android"},
+		{PlatformWeb, "web"},
+		{PlatformDesktop, "desktop"},
+		{Platform("ios2"), "unknown"},
+		{Platform("IOS"), "unknown"},
+		{Platform(""), "unknown"},
+	}
+	for _, tc := range cases {
+		if got := pushPlatformLabel(tc.platform); got != tc.want {
+			t.Fatalf("pushPlatformLabel(%q) = %q, want %q", tc.platform, got, tc.want)
+		}
+	}
+}
+
 func TestClassifyPushFailure_WebPush(t *testing.T) {
-	// Web Push 没有统一的失效语义：5xx/429 判可重试，其余一律未知，
-	// 不能因为未知就注销订阅（可能是服务配置暂时错误）。
+	// RFC 8030：404 / 410 表示订阅已不存在，必须注销；429 / 5xx 可重试；
+	// 其余 4xx 是请求级永久失败，但订阅本身可能仍然有效，不注销。
 	if got := ClassifyPushFailure(PlatformWeb, 500, ""); got.Kind != PushFailureRetryable {
 		t.Fatalf("5xx 应为可重试，实际 %s", got.Kind)
 	}
-	if got := ClassifyPushFailure(PlatformWeb, 404, ""); got.Kind != PushFailureUnknown {
-		t.Fatalf("404 应为未知，实际 %s", got.Kind)
+	if got := ClassifyPushFailure(PlatformWeb, 429, ""); got.Kind != PushFailureRetryable {
+		t.Fatalf("429 应为可重试，实际 %s", got.Kind)
 	}
-	if got := ClassifyPushFailure(PlatformWeb, 404, ""); got.ShouldUnregister() {
-		t.Fatal("未知失败不应注销订阅")
+	for _, code := range []int{404, 410} {
+		got := ClassifyPushFailure(PlatformWeb, code, "")
+		if got.Kind != PushFailurePermanent || !got.ShouldUnregister() {
+			t.Fatalf("%d 应为永久失败且注销订阅，实际 kind=%s unregister=%v",
+				code, got.Kind, got.ShouldUnregister())
+		}
+	}
+	if got := ClassifyPushFailure(PlatformWeb, 400, ""); got.Kind == PushFailureRetryable || got.ShouldUnregister() {
+		t.Fatalf("400 属请求级永久失败但不注销，实际 kind=%s unregister=%v", got.Kind, got.ShouldUnregister())
+	}
+	if got := ClassifyPushFailure(PlatformWeb, 401, ""); got.Kind != PushFailureUnknown {
+		t.Fatalf("401（VAPID 鉴权失败）应为未知，实际 %s", got.Kind)
 	}
 }
 

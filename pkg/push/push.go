@@ -3,9 +3,9 @@ package push
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -49,6 +49,9 @@ type PushToken struct {
 	BundleID  string    `json:"bundle_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// WebPushKeys 仅 web 端使用。历史实现没有这两个字段，
+	// 导致浏览器订阅虽然注册成功，服务端却无法加密载荷、根本发不出去。
+	WebPushKeys *WebPushKeys `json:"web_push_keys,omitempty"`
 }
 
 type PushMessage struct {
@@ -305,9 +308,23 @@ type WebPushConfig struct {
 	Subject         string `json:"subject"`
 }
 
+// WebPushKeys 是浏览器 PushManager 订阅时生成的加密材料。
+// p256dh 是 base64url 编码的 P-256 公钥（65 字节未压缩点），auth 是 16 字节随机密钥，
+// 两者都只在注册时上传一次，发送时用于对载荷做 RFC 8291 加密。
+type WebPushKeys struct {
+	P256DH string `json:"p256dh"`
+	Auth   string `json:"auth"`
+}
+
 type WebPushProvider struct {
 	config WebPushConfig
 	client *http.Client
+
+	// VAPID 私钥解析只做一次：每次推送都解析 PEM/base64 既浪费 CPU，
+	// 也让「配置写错」的报错延迟到第一条推送才暴露。
+	keyOnce sync.Once
+	key     *ecdsa.PrivateKey
+	keyErr  error
 }
 
 func NewWebPushProvider(config WebPushConfig) *WebPushProvider {
@@ -318,30 +335,6 @@ func NewWebPushProvider(config WebPushConfig) *WebPushProvider {
 }
 
 func (p *WebPushProvider) Name() string { return "webpush" }
-
-// ErrWebPushNotImplemented 表示 Web Push 通道尚未接入真实发送实现。
-var ErrWebPushNotImplemented = errors.New("webpush provider not implemented")
-
-// Send 当前是未实现的占位：明确返回失败，而不是伪装成功。
-//
-// 原实现直接返回 Success=true，调用方会把它计入发送成功、不再重试，
-// 而设备一条通知也收不到——这是最难排查的一类「静默丢消息」。
-// 归类为 permanent（重试也不会成功），但 TokenInvalid=false：令牌本身可能有效，
-// 只是服务端没实现，绝不能因此把用户设备注销掉。
-func (p *WebPushProvider) Send(ctx context.Context, msg *PushMessage) (*PushResult, error) {
-	reason := "webpush provider not implemented"
-	return &PushResult{
-		UserID:  msg.UserID,
-		Success: false,
-		Reason:  reason,
-		Error:   reason,
-		Failure: PushFailure{
-			Kind:         PushFailurePermanent,
-			Reason:       reason,
-			TokenInvalid: false,
-		},
-	}, ErrWebPushNotImplemented
-}
 
 type PushManager struct {
 	providers map[Platform]PushProvider
@@ -542,7 +535,7 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 				Error:   fmt.Sprintf("no provider for platform %s", token.Platform),
 				Failure: PushFailure{Kind: PushFailureUnknown, Reason: "no provider registered"},
 			}
-			obs.RecordPushSend(ctx, string(token.Platform), "skipped")
+			obs.RecordPushSend(ctx, pushPlatformLabel(token.Platform), "skipped")
 			continue
 		}
 
@@ -557,7 +550,7 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 				Error:   err.Error(),
 				Failure: PushFailure{Kind: PushFailureUnknown, Reason: "context canceled"},
 			}
-			obs.RecordPushSend(ctx, string(token.Platform), "skipped")
+			obs.RecordPushSend(ctx, pushPlatformLabel(token.Platform), "skipped")
 			continue
 		}
 
@@ -571,7 +564,7 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 				Error:   ctx.Err().Error(),
 				Failure: PushFailure{Kind: PushFailureUnknown, Reason: "context canceled"},
 			}
-			obs.RecordPushSend(ctx, string(token.Platform), "skipped")
+			obs.RecordPushSend(ctx, pushPlatformLabel(token.Platform), "skipped")
 			continue
 		}
 
@@ -580,6 +573,18 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+
+			// 同一份 data 被多台设备共享，web 订阅密钥必须按设备拷贝注入，
+			// 否则会把 A 设备的密钥传给 B 设备，载荷无法解密。
+			deviceData := data
+			if tk.WebPushKeys != nil {
+				deviceData = make(map[string]string, len(data)+2)
+				for k, v := range data {
+					deviceData[k] = v
+				}
+				deviceData[webPushKeyP256DH] = tk.WebPushKeys.P256DH
+				deviceData[webPushKeyAuth] = tk.WebPushKeys.Auth
+			}
 
 			msg := &PushMessage{
 				ID:       "push_" + strconv.FormatInt(time.Now().UnixNano(), 10),
@@ -590,7 +595,7 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 				Body:     body,
 				Badge:    1,
 				Sound:    "default",
-				Data:     data,
+				Data:     deviceData,
 			}
 
 			result, err := pv.Send(ctx, msg)
@@ -612,11 +617,11 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 			if !result.Success && result.Failure.Kind == "" {
 				result.Failure = ClassifyPushFailure(tk.Platform, result.StatusCode, result.Reason)
 			}
-			obs.RecordPushSend(ctx, string(tk.Platform), pushOutcome(*result))
+			obs.RecordPushSend(ctx, pushPlatformLabel(tk.Platform), pushOutcome(*result))
 
 			if result.Failure.ShouldUnregister() {
 				m.UnregisterToken(userID, tk.DeviceID)
-				obs.RecordPushTokenEvicted(ctx, string(tk.Platform))
+				obs.RecordPushTokenEvicted(ctx, pushPlatformLabel(tk.Platform))
 				logger.Info("推送令牌已失效，已注销",
 					logger.StringField("user_id", userID),
 					logger.StringField("platform", string(tk.Platform)),
@@ -629,6 +634,19 @@ func (m *PushManager) SendToUser(ctx context.Context, userID, title, body string
 	wg.Wait()
 
 	return results
+}
+
+// pushPlatformLabel 把 token 里的 platform 收敛成受控枚举。
+//
+// platform 来自客户端注册请求，属于外部输入；直接当指标标签会让任何人都能
+// 用随机值把时序库的标签基数打爆（每个新值产生一条新时间线）。
+func pushPlatformLabel(p Platform) string {
+	switch p {
+	case PlatformIOS, PlatformAndroid, PlatformWeb, PlatformDesktop:
+		return string(p)
+	default:
+		return "unknown"
+	}
 }
 
 // pushOutcome 把结果压缩成受控的指标标签（避免把供应商 reason 当标签造成高基数）。

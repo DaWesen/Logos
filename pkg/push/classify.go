@@ -81,8 +81,10 @@ func ClassifyPushFailure(platform Platform, statusCode int, reason string) PushF
 		return classifyAPNS(statusCode, reason)
 	case PlatformAndroid:
 		return classifyFCM(statusCode, reason)
+	case PlatformWeb:
+		return classifyWebPush(statusCode, reason)
 	default:
-		// Web Push / 未知平台没有统一的失效语义，交给上层判断
+		// 未知平台没有统一的失效语义，交给上层判断
 		if statusCode >= 500 || statusCode == 429 {
 			return PushFailure{Kind: PushFailureRetryable, Reason: reason}
 		}
@@ -108,6 +110,24 @@ func classifyAPNS(statusCode int, reason string) PushFailure {
 		return PushFailure{Kind: PushFailurePermanent, Reason: reason}
 	}
 	return PushFailure{Kind: PushFailureUnknown, Reason: reason}
+}
+
+// classifyWebPush 依据 RFC 8030 的状态码语义分类。
+// 404/410 是「订阅已不存在」的权威信号（用户取消授权、浏览器卸载订阅），
+// 必须注销，否则每条通知都会打一次必然失败的端点，并把统计里的失败率长期抬高。
+func classifyWebPush(statusCode int, reason string) PushFailure {
+	switch {
+	case statusCode == 404 || statusCode == 410:
+		return PushFailure{Kind: PushFailurePermanent, Reason: reason, TokenInvalid: true}
+	case statusCode == 429 || statusCode >= 500:
+		return PushFailure{Kind: PushFailureRetryable, Reason: reason}
+	case statusCode == 401:
+		return PushFailure{Kind: PushFailureUnknown, Reason: reason}
+	case statusCode >= 400:
+		return PushFailure{Kind: PushFailurePermanent, Reason: reason}
+	default:
+		return PushFailure{Kind: PushFailureUnknown, Reason: reason}
+	}
 }
 
 func classifyFCM(statusCode int, reason string) PushFailure {
