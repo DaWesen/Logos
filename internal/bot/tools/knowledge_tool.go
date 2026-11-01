@@ -111,13 +111,21 @@ func NewKnowledgeSearchTool(svc KnowledgeSearchService) (tool.InvokableTool, err
 			}()
 
 			var lists [][]*KnowledgeSearchResult
+			succeeded, failed := 0, 0
 			for qr := range resultCh {
 				if qr.err != nil {
 					// 单路失败不阻断整体：另一路结果仍可用
+					failed++
 					logger.Warn("混合检索其中一路失败", logger.ErrorField(qr.err))
 					continue
 				}
+				succeeded++
 				lists = append(lists, qr.results)
+			}
+
+			// 全部路都失败 = 知识库故障，不能等价于「没有内容」。
+			if err := retrievalFailure(failed, succeeded); err != nil {
+				return "", err
 			}
 
 			// RRF 融合多路结果
@@ -159,46 +167,46 @@ func NewGrepChunksTool(svc KnowledgeSearchService) (tool.InvokableTool, error) {
 				logger.AnyField("collection_ids", input.CollectionIDs),
 				logger.IntField("top_k", topK))
 
-			type patternResult struct {
-				results []*KnowledgeSearchResult
-				err     error
-			}
-			resultCh := make(chan patternResult, len(patterns))
+			// 每路结果按 pattern 下标单独存放：按下标写不同切片，天然无数据竞争，
+			// 也避免「谁先返回谁先插队」导致同一查询两次结果顺序不同。
+			lists := make([][]*KnowledgeSearchResult, len(patterns))
+			errs := make([]error, len(patterns))
 			var wg sync.WaitGroup
 
-			for _, pattern := range patterns {
+			for i, pattern := range patterns {
 				if pattern == "" {
 					continue
 				}
 				wg.Add(1)
-				go func(p string) {
+				go func(idx int, p string) {
 					defer wg.Done()
 					results, err := svc.SearchKeyword(ctx, p, topK)
-					resultCh <- patternResult{results: results, err: err}
-				}(pattern)
+					if err != nil {
+						logger.Warn("关键词搜索失败", logger.ErrorField(err))
+						errs[idx] = err
+						return
+					}
+					lists[idx] = results
+				}(i, pattern)
 			}
+			wg.Wait()
 
-			go func() {
-				wg.Wait()
-				close(resultCh)
-			}()
-
-			var allResults []*KnowledgeSearchResult
-			seen := make(map[string]bool)
-
-			for pr := range resultCh {
-				if pr.err != nil {
-					logger.Warn("关键词搜索失败", logger.ErrorField(pr.err))
+			succeeded, failed := 0, 0
+			for i, pattern := range patterns {
+				if pattern == "" {
 					continue
 				}
-				for _, r := range pr.results {
-					if !seen[r.ID] {
-						seen[r.ID] = true
-						r.Source = "keyword"
-						allResults = append(allResults, r)
-					}
+				if errs[i] != nil {
+					failed++
+				} else {
+					succeeded++
 				}
 			}
+			if err := retrievalFailure(failed, succeeded); err != nil {
+				return "", err
+			}
+
+			allResults := mergeKeywordResults(lists, topK)
 
 			if len(allResults) == 0 {
 				return "未找到包含指定关键词的文档片段。请尝试使用不同的关键词，或使用 knowledge_search 工具进行语义搜索。", nil
@@ -230,6 +238,62 @@ func BuildKnowledgeTools(svc KnowledgeSearchService) []tool.BaseTool {
 	}
 
 	return tools
+}
+
+// retrievalFailure 统一「检索故障 vs 没有内容」的判定。
+//
+// 只要有一路成功，空结果就是「库里确实没有」，属于正常业务返回；
+// 所有路都失败才是服务故障——此时必须返回 error，否则模型会把「后端挂了」
+// 理解成「内容不存在」，然后不停换关键词重试，每次都烧一次 LLM 调用。
+func retrievalFailure(failed, succeeded int) error {
+	if succeeded > 0 || failed == 0 {
+		return nil
+	}
+	return fmt.Errorf("知识库检索全部失败（%d 路），请稍后重试", failed)
+}
+
+// mergeKeywordResults 确定性合并多路关键词检索结果。
+//
+// 三个约束：
+//  1. 交错而非串联——按路序号 round-robin，保证每个 pattern 的首条都能进上下文；
+//     否则「先返回的那一路」会占满名额，第二个 pattern 等于白查。
+//  2. 按 ID 去重，保留首次出现的那份（同一片段被多个关键词命中是常态）。
+//  3. 总量截断到 limit：单路 topK 是「每路上限」，乘上 pattern 数后会把 3×30
+//     条、每条约 400 字的结果塞进 prompt，既烧 token 也稀释真正相关的内容。
+func mergeKeywordResults(lists [][]*KnowledgeSearchResult, limit int) []*KnowledgeSearchResult {
+	if limit <= 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, limit)
+	out := make([]*KnowledgeSearchResult, 0, limit)
+
+	for round := 0; ; round++ {
+		progressed := false
+		for _, list := range lists {
+			if round >= len(list) {
+				continue
+			}
+			progressed = true
+
+			r := list[round]
+			if r == nil || r.ID == "" {
+				continue
+			}
+			if _, dup := seen[r.ID]; dup {
+				continue
+			}
+			seen[r.ID] = struct{}{}
+			r.Source = "keyword"
+			out = append(out, r)
+			if len(out) >= limit {
+				return out
+			}
+		}
+		if !progressed {
+			return out
+		}
+	}
 }
 
 // ragContentBoundary 检索结果的内容边界声明：

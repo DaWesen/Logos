@@ -29,27 +29,58 @@ func (e *MCPToolInput) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	e.ToolName = raw.ToolName
-	e.Params = make(map[string]string)
-
-	if len(raw.Params) == 0 {
-		return nil
-	}
-
-	if err := json.Unmarshal(raw.Params, &e.Params); err == nil {
-		return nil
-	}
-
-	var paramStr string
-	if err := json.Unmarshal(raw.Params, &paramStr); err != nil {
-		return nil
-	}
-
-	json.Unmarshal([]byte(paramStr), &e.Params)
+	e.Params = decodeStringParams(raw.Params)
 	return nil
 }
 
+// decodeStringParams 把模型给的 params 归一化成 map[string]string。
+//
+// 模型不会严格遵守 schema：`{"limit": 10}`、`{"enabled": true}`、
+// 甚至把对象再序列化成字符串（双重编码）都很常见。旧实现按 map[string]string
+// 解析，失败后**不报错、返回空 map**——工具在「完全没有参数」的状态下执行，
+// 模型却以为自己的参数生效了，错误只在结果里绕一圈才被发现。
+func decodeStringParams(raw json.RawMessage) map[string]string {
+	params := make(map[string]string)
+	if len(raw) == 0 {
+		return params
+	}
+
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		// 双重编码：params 本身是一个 JSON 字符串
+		var s string
+		if json.Unmarshal(raw, &s) != nil {
+			return params
+		}
+		if json.Unmarshal([]byte(s), &obj) != nil {
+			return params
+		}
+	}
+
+	for k, v := range obj {
+		switch t := v.(type) {
+		case string:
+			params[k] = t
+		case nil:
+			// null 不传，避免把 "null" 当字符串塞进工具
+		default:
+			// 数字/布尔统一转成 JSON 字面量（10 → "10"，true → "true"），
+			// 对象/数组同理保留结构，工具侧可自行再解析。
+			if b, err := json.Marshal(t); err == nil {
+				params[k] = string(b)
+			}
+		}
+	}
+	return params
+}
+
 func NewMCPTool(mcpTool mcp_server.Tool) (tool.InvokableTool, error) {
-	name := "mcp_" + mcpTool.Name()
+	return newMCPToolNamed(mcpTool, "mcp_"+mcpTool.Name())
+}
+
+// newMCPToolNamed 用调用方指定的函数名构造工具：名字由装配层统一分配，
+// 才能在不改变工具实现的前提下做长度收敛与重名消解。
+func newMCPToolNamed(mcpTool mcp_server.Tool, name string) (tool.InvokableTool, error) {
 	description := fmt.Sprintf("MCP工具: %s. %s", mcpTool.Name(), mcpTool.Description())
 
 	t, err := utils.InferTool(name, description, func(ctx context.Context, input *MCPToolInput) (string, error) {
@@ -85,8 +116,9 @@ func NewMCPTool(mcpTool mcp_server.Tool) (tool.InvokableTool, error) {
 
 func BuildMCPTools(registry *mcp_server.ToolRegistry) []tool.BaseTool {
 	var tools []tool.BaseTool
+	names := toolNameSet{}
 	for _, mcpTool := range registry.List() {
-		t, err := NewMCPTool(mcpTool)
+		t, err := newMCPToolNamed(mcpTool, names.unique("mcp_"+mcpTool.Name()))
 		if err != nil {
 			logger.Warn("创建 MCPTool 失败",
 				logger.StringField("tool", mcpTool.Name()),
@@ -133,6 +165,7 @@ func (e *ExternalMCPToolInput) UnmarshalJSON(data []byte) error {
 
 func BuildExternalMCPTools(clientMgr *mcp.MCPClientManager, services []*ExternalMCPServiceInfo) []tool.BaseTool {
 	var tools []tool.BaseTool
+	names := toolNameSet{}
 	for _, svc := range services {
 		if !svc.Enabled {
 			continue
@@ -148,7 +181,10 @@ func BuildExternalMCPTools(clientMgr *mcp.MCPClientManager, services []*External
 			continue
 		}
 		for _, toolInfo := range toolInfos {
-			t, err := newExternalMCPTool(clientMgr, svc.ID, svc.Name, toolInfo)
+			// 服务名/tool 名经过 sanitize 后可能塌缩成同一个（"搜索 AI" 与 "搜索AI"），
+			// 直接拼接会产出重名函数：模型看到两个同名工具，注册表也可能被后一个覆盖。
+			name := names.unique(externalToolBaseName(svc.Name, toolInfo.Name))
+			t, err := newExternalMCPTool(clientMgr, svc.ID, svc.Name, toolInfo, name)
 			if err != nil {
 				logger.Warn("创建外部MCPTool 失败",
 					logger.StringField("tool", toolInfo.Name),
@@ -168,16 +204,20 @@ type ExternalMCPServiceInfo struct {
 	Enabled bool
 }
 
-func newExternalMCPTool(clientMgr *mcp.MCPClientManager, serviceID, serviceName string, toolInfo mcp.MCPToolInfo) (tool.InvokableTool, error) {
+// externalToolBaseName 依据服务名与工具名生成函数名基底（未做长度与去重处理）。
+func externalToolBaseName(serviceName, toolName string) string {
 	cleanSvcName := sanitizeName(serviceName)
 	if cleanSvcName == "" {
 		cleanSvcName = "svc"
 	}
-	cleanToolName := sanitizeName(toolInfo.Name)
+	cleanToolName := sanitizeName(toolName)
 	if cleanToolName == "" {
 		cleanToolName = "tool"
 	}
-	name := fmt.Sprintf("ext_mcp_%s_%s", cleanSvcName, cleanToolName)
+	return fmt.Sprintf("ext_mcp_%s_%s", cleanSvcName, cleanToolName)
+}
+
+func newExternalMCPTool(clientMgr *mcp.MCPClientManager, serviceID, serviceName string, toolInfo mcp.MCPToolInfo, name string) (tool.InvokableTool, error) {
 	description := fmt.Sprintf("外部MCP工具[%s/%s]: %s", serviceName, toolInfo.Name, toolInfo.Description)
 
 	t, err := utils.InferTool(name, description, func(ctx context.Context, input *ExternalMCPToolInput) (string, error) {
@@ -218,4 +258,39 @@ func newExternalMCPTool(clientMgr *mcp.MCPClientManager, serviceID, serviceName 
 	}
 
 	return t, nil
+}
+
+// maxToolNameRunes 供应商侧函数名长度上限（OpenAI 为 64 字符）。
+// 超长名字会被截断甚至直接 400；而截断本身又会让两个不同工具塌缩成同名，
+// 所以「截断」与「去重」必须一起做，只做其中一个都解决不了问题。
+const maxToolNameRunes = 64
+
+// toolNameSet 为一次工具装配分配互不冲突的函数名。
+type toolNameSet map[string]struct{}
+
+func (s toolNameSet) unique(base string) string {
+	candidate := truncateToolName(base, maxToolNameRunes)
+	if _, exists := s[candidate]; !exists {
+		s[candidate] = struct{}{}
+		return candidate
+	}
+	for i := 2; ; i++ {
+		suffix := fmt.Sprintf("_%d", i)
+		candidate = truncateToolName(base, maxToolNameRunes-len([]rune(suffix))) + suffix
+		if _, exists := s[candidate]; !exists {
+			s[candidate] = struct{}{}
+			return candidate
+		}
+	}
+}
+
+func truncateToolName(name string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	r := []rune(name)
+	if len(r) <= maxRunes {
+		return name
+	}
+	return string(r[:maxRunes])
 }

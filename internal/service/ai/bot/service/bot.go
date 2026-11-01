@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"Logos/config"
@@ -1578,10 +1579,9 @@ func (s *botServiceImpl) buildKnowledgeConfig(ctx context.Context, bot *botmodel
 	}
 
 	knowledgeSvc := &knowledgeSearchAdapter{
-		vectorService:   s.vectorService,
-		searchService:   s.searchService,
-		collectionIDs:   collectionIDs,
-		searchAvailable: s.searchService != nil,
+		vectorService: s.vectorService,
+		searchService: s.searchService,
+		collectionIDs: collectionIDs,
 	}
 	kbTools := botTools.BuildKnowledgeTools(knowledgeSvc)
 
@@ -1883,10 +1883,24 @@ func (s *botServiceImpl) streamBiller(
 }
 
 type knowledgeSearchAdapter struct {
-	vectorService   VectorService
-	searchService   SearchService
-	collectionIDs   []string
-	searchAvailable bool
+	vectorService VectorService
+	searchService SearchService
+	collectionIDs []string
+	// searchDownUntil 关键词检索的熔断到期时间（Unix 秒，0 表示未熔断）。
+	//
+	// 旧实现用 bool 永久置 false：一次 2s 超时就让关键词这一路在整个适配器生命周期内
+	// 全部跳过，混合检索静默退化成单路语义检索——不报错、不掉指标，只是召回悄悄变差；
+	// 而且并发调用里对 bool 的读写没有同步，本身就是数据竞争。
+	// 改为「短时熔断 + 到期自动半开」，并用原子变量承载跨 goroutine 状态。
+	searchDownUntil atomic.Int64
+}
+
+// keywordSearchCooldown 关键词检索熔断时长：够躲过一次抖动，又不会长期放弃这一路。
+const keywordSearchCooldown = 30 * time.Second
+
+// keywordSearchCoolingDown 判断熔断窗口是否仍有效；now 用 Unix 秒传入，便于单测控制时间。
+func keywordSearchCoolingDown(downUntil, now int64) bool {
+	return downUntil > 0 && now < downUntil
 }
 
 func (a *knowledgeSearchAdapter) SearchVector(ctx context.Context, collectionIDs []string, query string, topK int) ([]*botTools.KnowledgeSearchResult, error) {
@@ -1978,7 +1992,8 @@ func (a *knowledgeSearchAdapter) SearchKeyword(ctx context.Context, query string
 		return nil, nil
 	}
 
-	if !a.searchAvailable {
+	now := time.Now().Unix()
+	if keywordSearchCoolingDown(a.searchDownUntil.Load(), now) {
 		return nil, nil
 	}
 
@@ -1988,10 +2003,13 @@ func (a *knowledgeSearchAdapter) SearchKeyword(ctx context.Context, query string
 	results, err := a.searchService.Search(searchCtx, query, topK)
 	cancel()
 	if err != nil {
-		logger.Warn("关键词搜索失败，后续请求将跳过关键词搜索", logger.ErrorField(err))
-		a.searchAvailable = false
-		return nil, nil
+		// 失败不能伪装成「没有结果」：调用方需要知道这一路挂了，才能把
+		// 「检索故障」与「知识库里确实没有」区分开（否则模型会一直换词重试）。
+		a.searchDownUntil.Store(now + int64(keywordSearchCooldown/time.Second))
+		logger.Warn("关键词搜索失败，进入短时熔断", logger.ErrorField(err))
+		return nil, fmt.Errorf("关键词检索失败: %w", err)
 	}
+	a.searchDownUntil.Store(0)
 
 	logger.Info("关键词搜索结果", logger.IntField("count", len(results)))
 

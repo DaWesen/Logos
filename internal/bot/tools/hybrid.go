@@ -35,7 +35,16 @@ func FuseSearchResults(lists [][]*KnowledgeSearchResult, topK int) []*KnowledgeS
 	for id, s := range scores {
 		arr = append(arr, scored{byID[id], s})
 	}
-	sort.Slice(arr, func(i, j int) bool { return arr[i].score > arr[j].score })
+	// 同分必须显式 tie-break：arr 由 map 遍历生成，迭代顺序随机，
+	// sort.Slice 又是不稳定排序——只按 score 比较时，两条「各占一路第 1」的
+	// 结果（得分完全相同，这是常态）每次运行顺序都可能不同，
+	// 同一问题两次得到不同的上下文顺序，缓存命中和答案一致性都被破坏。
+	sort.Slice(arr, func(i, j int) bool {
+		if arr[i].score == arr[j].score {
+			return arr[i].r.ID < arr[j].r.ID
+		}
+		return arr[i].score > arr[j].score
+	})
 
 	if topK > 0 && len(arr) > topK {
 		arr = arr[:topK]
