@@ -227,10 +227,10 @@ func TestNormalizeConfidence(t *testing.T) {
 		want float64
 	}{
 		{0.8, 0.8},
-		{0, 0.5},      // 未打分 → 不知道
-		{-0.1, 0.5},   // 越界
-		{1.5, 0.5},    // 越界
-		{1.0, 1.0},    // 边界合法
+		{0, 0.5},    // 未打分 → 不知道
+		{-0.1, 0.5}, // 越界
+		{1.5, 0.5},  // 越界
+		{1.0, 1.0},  // 边界合法
 	}
 	for _, tt := range tests {
 		if got := normalizeConfidence(tt.in); got != tt.want {
@@ -246,14 +246,19 @@ func TestResolveEvidenceIDs(t *testing.T) {
 		{ID: "m3", Role: "user"},
 	}
 
-	if got := resolveEvidenceIDs([]int{1, 3}, msgs); len(got) != 2 || got[0] != "m1" || got[1] != "m3" {
-		t.Errorf("valid evidence = %v, want [m1 m3]", got)
+	got, ok := resolveEvidenceIDs([]int{1, 3}, msgs)
+	if !ok || len(got) != 2 || got[0] != "m1" || got[1] != "m3" {
+		t.Errorf("valid evidence = %v ok=%v, want [m1 m3] true", got, ok)
 	}
-	// 编造序号 → 整条作废
-	if got := resolveEvidenceIDs([]int{1, 99}, msgs); got != nil {
-		t.Errorf("fabricated evidence must void the memory, got %v", got)
+	// 编造序号 → 整条作废（ok=false 由调用方丢弃该记忆）
+	got, ok = resolveEvidenceIDs([]int{1, 99}, msgs)
+	if ok || got != nil {
+		t.Errorf("fabricated evidence must void the memory, got %v ok=%v", got, ok)
 	}
-	if got := resolveEvidenceIDs(nil, msgs); got != nil {
-		t.Errorf("no evidence should return nil, got %v", got)
+	if got, ok = resolveEvidenceIDs(nil, msgs); !ok || got != nil {
+		t.Errorf("no evidence is allowed (nil,true), got %v ok=%v", got, ok)
+	}
+	if got, ok = resolveEvidenceIDs([]int{0}, msgs); ok || got != nil {
+		t.Errorf("zero is out of range, got %v ok=%v", got, ok)
 	}
 }

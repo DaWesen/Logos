@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"Logos/internal/bot/agent"
 	"Logos/internal/service/ai/bot/dao"
@@ -110,20 +111,7 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		return
 	}
 
-	var conversationText []string
-	for _, msg := range messages {
-		role := "用户"
-		if msg.Role == "assistant" {
-			role = "助手"
-		}
-		// 带 [N] 序号前缀，供 evidence 引用
-		conversationText = append(conversationText, fmt.Sprintf("[%d] %s: %s", len(conversationText)+1, role, msg.Content))
-	}
-
-	dialogText := strings.Join(conversationText, "\n")
-	if len(dialogText) > 4000 {
-		dialogText = dialogText[len(dialogText)-4000:]
-	}
+	dialogText := buildDialogText(messages, memoryDialogBudgetRunes)
 
 	prompt := fmt.Sprintf(memoryExtractionPrompt, dialogText)
 
@@ -171,7 +159,14 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		mem.Confidence = normalizeConfidence(mem.Confidence)
 
 		// 证据解析：序号 → 真实消息 ID；编造的序号整条丢弃（可审计底线）
-		evidence := resolveEvidenceIDs(mem.Evidence, messages)
+		evidence, ok := resolveEvidenceIDs(mem.Evidence, messages)
+		if !ok {
+			obs.RecordLLMParse(ctx, "memory", "fabricated_evidence")
+			logger.Warn("记忆证据序号不存在，丢弃该条记忆",
+				logger.StringField("key", mem.Key),
+				logger.IntField("evidence_size", len(mem.Evidence)))
+			continue
+		}
 
 		existing, err := m.repo.GetUserMemoryByKey(ctx, userID, botID, mem.Key)
 		if err == nil && existing != nil {
@@ -202,6 +197,81 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		logger.IntField("count", len(result.Memories)))
 }
 
+// memoryDialogBudgetRunes 送进提取 prompt 的对话预算（字符数）。
+const memoryDialogBudgetRunes = 4000
+
+// buildDialogText 生成带 [N] 序号的对话文本（N 从 1 开始）。
+//
+// 两条硬约束：
+//  1. N 必须是「消息在原始切片里的下标」，绝不因为截断而平移——prompt 里让模型
+//     引用序号，`resolveEvidenceIDs` 又按原切片下标解析，一旦平移，模型老实引用
+//     [3] 反而会被挂到最后一条完全无关的消息上（更糟的是静默通过审计）。
+//  2. 预算按 rune 计、从尾部保留。按字节切会切出半个汉字，还可能把行首的 `[12]`
+//     前缀切掉，让这一行变成没有序号的裸文本。
+//
+// 超预算时从最早的消息开始丢；若最新一条自身就超预算，只保留它的尾部。
+func buildDialogText(messages []*botmodel.Message, budgetRunes int) string {
+	if len(messages) == 0 || budgetRunes <= 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, len(messages))
+	used := 0
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg == nil {
+			continue
+		}
+
+		role := "用户"
+		if msg.Role == "assistant" {
+			role = "助手"
+		}
+		line := fmt.Sprintf("[%d] %s: %s", i+1, role, msg.Content)
+
+		cost := utf8.RuneCountInString(line)
+		if len(lines) > 0 {
+			cost++ // 行间换行符
+		}
+
+		if used+cost <= budgetRunes {
+			lines = append(lines, line)
+			used += cost
+			continue
+		}
+
+		if len(lines) == 0 {
+			prefix := fmt.Sprintf("[%d] %s: ", i+1, role)
+			room := budgetRunes - utf8.RuneCountInString(prefix) - 1 // 1 留给省略号
+			if room > 0 {
+				lines = append(lines, prefix+"…"+tailRunes(msg.Content, room))
+			} else {
+				lines = append(lines, prefix)
+			}
+		}
+		break
+	}
+
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// tailRunes 取字符串尾部 max 个字符（rune），不足则原样返回。
+func tailRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[len(r)-max:])
+}
+
 // normalizeConfidence 置信度归一：非数字/越界一律按 0.5（"不知道"），不抛
 func normalizeConfidence(raw float64) float64 {
 	if raw <= 0 || raw > 1 {
@@ -211,21 +281,24 @@ func normalizeConfidence(raw float64) float64 {
 }
 
 // resolveEvidenceIDs 把 LLM 引用的消息序号（1 开始）解析为真实消息 ID。
-// 返回 (ids, ok)：任一序号不存在即编造来源，整条记忆作废。
-func resolveEvidenceIDs(seq []int, messages []*botmodel.Message) []string {
+//
+// 返回 (ids, ok)：ok=false 表示模型编造了来源，调用方必须丢弃整条记忆——
+// 「证据全部不存在却照样入库」的记忆是无法审计的幻觉，查也查不到出处。
+// 未引用任何序号属于正常情况（ok=true, ids=nil）。
+func resolveEvidenceIDs(seq []int, messages []*botmodel.Message) ([]string, bool) {
 	if len(seq) == 0 {
-		return nil
+		return nil, true
 	}
 	ids := make([]string, 0, len(seq))
 	for _, n := range seq {
 		if n < 1 || n > len(messages) {
-			return nil // 编造序号：记忆没有缝可钻
+			return nil, false // 编造序号：记忆没有缝可钻
 		}
 		if messages[n-1].ID != "" {
 			ids = append(ids, messages[n-1].ID)
 		}
 	}
-	return ids
+	return ids, true
 }
 
 // BuildMemoryPrompt 构建 prompt 注入的记忆段（双档消费）：

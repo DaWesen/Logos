@@ -2,10 +2,13 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"Logos/internal/service/ai/bot/dao"
 	botmodel "Logos/internal/service/ai/bot/model"
@@ -149,5 +152,82 @@ func TestCleanupOldMemories_EmptyRepo(t *testing.T) {
 	m := newTestManager(&mockMemoryRepo{})
 	if err := m.CleanupOldMemories(context.Background(), "u1", "b1", time.Hour); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestBuildDialogText_PreservesOriginalSeq 截断后序号必须仍是原始下标：
+// 模型引用 [k] 时，resolveEvidenceIDs 会拿它当原切片下标，平移即错挂证据。
+func TestBuildDialogText_PreservesOriginalSeq(t *testing.T) {
+	var messages []*botmodel.Message
+	for i := 0; i < 10; i++ {
+		messages = append(messages, &botmodel.Message{
+			ID:      "m" + strconv.Itoa(i+1),
+			Role:    "user",
+			Content: strings.Repeat("内容", 60), // 每条约 130 rune，必然触发预算
+		})
+	}
+
+	got := buildDialogText(messages, 400)
+	lines := strings.Split(got, "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatalf("未生成任何对话文本: %q", got)
+	}
+
+	first := strings.Index(lines[0], "[")
+	if first != 0 {
+		t.Fatalf("行首序号被截断: %q", lines[0])
+	}
+	var seq int
+	if _, err := fmt.Sscanf(lines[0], "[%d]", &seq); err != nil {
+		t.Fatalf("解析序号失败: %v, line=%q", err, lines[0])
+	}
+	if seq != 10-len(lines)+1 {
+		t.Fatalf("序号平移了：首行 [%d]，共 %d 行（应为 [%d]）", seq, len(lines), 10-len(lines)+1)
+	}
+}
+
+// TestBuildDialogText_ValidUTF8AndBudget 按 rune 计预算：中文不能被切成半个字，总量不超预算。
+func TestBuildDialogText_ValidUTF8AndBudget(t *testing.T) {
+	messages := []*botmodel.Message{
+		{ID: "1", Role: "user", Content: "我平时喜欢用Go写后端"},
+		{ID: "2", Role: "assistant", Content: strings.Repeat("答复", 2000)}, // 单条就超预算
+	}
+
+	got := buildDialogText(messages, 200)
+	if !utf8.ValidString(got) {
+		t.Fatal("截断后产生非法 UTF-8")
+	}
+	if n := utf8.RuneCountInString(got); n > 200 {
+		t.Fatalf("超出预算: %d runes", n)
+	}
+	if !strings.Contains(got, "[2]") {
+		t.Fatalf("超长消息的序号丢失: %q", got)
+	}
+	if !strings.Contains(got, "答复") {
+		t.Fatalf("应保留最新消息的尾部内容: %q", got)
+	}
+}
+
+// TestBuildDialogText_WithinBudget 预算内不做任何裁剪，序号从 1 连续。
+func TestBuildDialogText_WithinBudget(t *testing.T) {
+	messages := []*botmodel.Message{
+		{ID: "1", Role: "user", Content: "你好"},
+		{ID: "2", Role: "assistant", Content: "你好，有什么可以帮你"},
+	}
+	got := buildDialogText(messages, 4000)
+	if !strings.HasPrefix(got, "[1] 用户: 你好") {
+		t.Fatalf("got %q", got)
+	}
+	if !strings.Contains(got, "[2] 助手: 你好，有什么可以帮你") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestBuildDialogText_Empty(t *testing.T) {
+	if got := buildDialogText(nil, 4000); got != "" {
+		t.Fatalf("got %q", got)
+	}
+	if got := buildDialogText([]*botmodel.Message{{Content: "x"}}, 0); got != "" {
+		t.Fatalf("预算为 0 应返回空，got %q", got)
 	}
 }
