@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +16,22 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
+
+// ErrEmptyResponse Agent 走完整个 ReAct 循环却没产出任何正文。
+//
+// 这是一个必须显式上抛的失败态：调用方（Bot 服务）会把返回内容原样存库并计费，
+// 空字符串 + nil error 会被当成「回答成功」，用户看到一条空白消息，监控上却是 100% 成功。
+var ErrEmptyResponse = errors.New("agent 未产出任何内容")
+
+// agentEventIter 事件源的最小抽象（adk.AsyncIterator 天然满足）。
+// 单独抽出来只为一件事：让「事件 → 增量输出」这段纯逻辑能脱离真实 LLM 单测，
+// 不用起网络请求、也不用 sleep 等流式返回。
+type agentEventIter interface {
+	Next() (*adk.AgentEvent, bool)
+}
+
+// runSource 一次运行的事件源工厂。非流式与流式各持一个，测试可整体替换。
+type runSource func(ctx context.Context, messages []*schema.Message) agentEventIter
 
 type BotAgent interface {
 	Chat(ctx context.Context, message string) (string, error)
@@ -31,8 +48,10 @@ type BaseBotAgent struct {
 	name         string
 	description  string
 	systemPrompt string
-	runner       *adk.Runner
-	streamRunner *adk.Runner
+	// run / stream 是事件源工厂而非 *adk.Runner：运行结果由调用方逐事件消费，
+	// 保留 Runner 只会把「怎么拿事件」和「怎么消费事件」焊死，无法单测消费逻辑。
+	run    runSource
+	stream runSource
 }
 
 type AgentConfig struct {
@@ -130,8 +149,12 @@ func NewBaseBotAgent(cfg *AgentConfig, einoManager *eino.EinoManager) (BotAgent,
 		name:         cfg.Name,
 		description:  cfg.Description,
 		systemPrompt: systemPrompt,
-		runner:       runner,
-		streamRunner: streamRunner,
+		run: func(ctx context.Context, messages []*schema.Message) agentEventIter {
+			return runner.Run(ctx, messages)
+		},
+		stream: func(ctx context.Context, messages []*schema.Message) agentEventIter {
+			return streamRunner.Run(ctx, messages)
+		},
 	}, nil
 }
 
@@ -156,7 +179,7 @@ func (a *BaseBotAgent) GetDescription() string  { return a.description }
 func (a *BaseBotAgent) GetSystemPrompt() string { return a.systemPrompt }
 
 func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.Message) (string, error) {
-	if a.runner == nil {
+	if a.run == nil {
 		return "", fmt.Errorf("agent runner not initialized")
 	}
 
@@ -164,10 +187,13 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 		logger.StringField("bot", a.name),
 		logger.IntField("messages_count", len(messages)))
 
-	iter := a.runner.Run(ctx, messages)
+	iter := a.run(ctx, messages)
 
-	var lastValidContent string
-	eventCount := 0
+	var (
+		lastValidContent string
+		firstErr         error
+		eventCount       int
+	)
 
 	for {
 		event, ok := iter.Next()
@@ -181,6 +207,11 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 		}
 
 		if event.Err != nil {
+			// 模型报错不能只打日志：整轮都失败时若不返回 error，
+			// 调用方会拿到 ("", nil) 并把这当成一条成功的空回答。
+			if firstErr == nil {
+				firstErr = event.Err
+			}
 			logger.Error("Agent事件错误",
 				logger.IntField("event_index", eventCount),
 				logger.ErrorField(event.Err))
@@ -196,11 +227,20 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 		}
 
 		if event.Output.MessageOutput.Role != schema.Assistant {
+			closeMessageStream(event.Output.MessageOutput)
 			continue
 		}
 
 		msg, _, err := adk.GetMessage(event)
+		// GetMessage 对流式事件会 Copy(2) 后留一份未消费的副本给自己，这里用完即关，
+		// 否则每轮 dialog 都会挂着一个没人读、也没人关的管道。
+		if event.Output.MessageOutput.IsStreaming {
+			closeMessageStream(event.Output.MessageOutput)
+		}
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			logger.Warn("获取事件消息失败",
 				logger.IntField("event_index", eventCount),
 				logger.ErrorField(err))
@@ -232,11 +272,27 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 		logger.IntField("response_len", len(lastValidContent)),
 		logger.IntField("events", eventCount))
 
+	if lastValidContent == "" {
+		return "", a.emptyResultError(ctx, firstErr)
+	}
+
 	return lastValidContent, nil
 }
 
+// emptyResultError 把「没有任何正文」的收尾统一成可区分的错误：
+// 先看是否有事件级错误（那才是根因），再看是否调用方已取消，最后才是模型确实什么都没说。
+func (a *BaseBotAgent) emptyResultError(ctx context.Context, firstErr error) error {
+	if firstErr != nil {
+		return fmt.Errorf("agent 运行失败: %w", firstErr)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("agent 运行被中止: %w", err)
+	}
+	return ErrEmptyResponse
+}
+
 func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*schema.Message, onChunk func(string) error) error {
-	if a.streamRunner == nil {
+	if a.stream == nil {
 		return fmt.Errorf("agent stream runner not initialized")
 	}
 
@@ -244,21 +300,29 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 		logger.StringField("bot", a.name),
 		logger.IntField("messages_count", len(messages)))
 
-	iter := a.streamRunner.Run(ctx, messages)
+	iter := a.stream(ctx, messages)
 
-	var buffer strings.Builder
-	seenToolEvent := false
+	var (
+		emitted    strings.Builder
+		firstErr   error
+		eventCount int
+	)
 
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
+		eventCount++
+
 		if event == nil {
 			continue
 		}
 
 		if event.Err != nil {
+			if firstErr == nil {
+				firstErr = event.Err
+			}
 			logger.Error("Agent流式事件错误", logger.ErrorField(event.Err))
 			continue
 		}
@@ -273,22 +337,30 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 
 		mv := event.Output.MessageOutput
 
-		if mv.Role == schema.Tool {
-			seenToolEvent = true
-			buffer.Reset()
-			continue
-		}
-
 		if mv.Role != schema.Assistant {
+			// 工具结果等非助手消息不推给用户，但它的流必须关掉：
+			// 不消费也不关闭时，上游广播管道会一直挂着这个读者，事件源越跑越慢甚至阻塞。
+			closeMessageStream(mv)
 			continue
 		}
 
-		msg, _, err := adk.GetMessage(event)
-		if err != nil {
-			logger.Error("获取流式事件消息失败", logger.ErrorField(err))
+		if mv.IsStreaming && mv.MessageStream != nil {
+			chunks, recvErr, chunkErr := forwardMessageStream(ctx, mv.MessageStream, onChunk, &emitted)
+			if chunkErr != nil {
+				// onChunk 报错基本只有一种原因：客户端已断开，继续跑没有意义
+				return chunkErr
+			}
+			if recvErr != nil {
+				if firstErr == nil {
+					firstErr = recvErr
+				}
+				logger.Error("读取流式chunk失败", logger.ErrorField(recvErr))
+			}
+			notifyToolCallsFromChunks(ctx, chunks)
 			continue
 		}
 
+		msg := mv.Message
 		if msg == nil {
 			continue
 		}
@@ -298,47 +370,91 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 		if len(msg.ToolCalls) > 0 {
 			// 透传 Agent 的中间决策（调用了什么工具）给上层观察者
 			notifyToolCalls(ctx, msg.ToolCalls)
-			buffer.Reset()
 			continue
 		}
 
-		if seenToolEvent {
-			if mv.IsStreaming && mv.MessageStream != nil {
-				for {
-					chunk, recvErr := mv.MessageStream.Recv()
-					if recvErr == io.EOF {
-						break
-					}
-					if recvErr != nil {
-						logger.Error("读取流式chunk失败", logger.ErrorField(recvErr))
-						break
-					}
-					eino.RecordUsageFrom(ctx, chunk)
-					if chunk.Content != "" {
-						if sendErr := onChunk(chunk.Content); sendErr != nil {
-							return sendErr
-						}
-					}
-				}
-			} else if msg.Content != "" {
-				if sendErr := onChunk(msg.Content); sendErr != nil {
-					return sendErr
-				}
-			}
-		} else {
-			if msg.Content != "" {
-				buffer.WriteString(msg.Content)
-			}
+		if msg.Content == "" {
+			continue
 		}
-	}
-
-	if buffer.Len() > 0 {
-		if err := onChunk(buffer.String()); err != nil {
+		emitted.WriteString(msg.Content)
+		if err := onChunk(msg.Content); err != nil {
 			return err
 		}
 	}
 
+	logger.Info("Bot stream chat response",
+		logger.StringField("bot", a.name),
+		logger.IntField("response_len", emitted.Len()),
+		logger.IntField("events", eventCount))
+
+	if emitted.Len() == 0 {
+		return a.emptyResultError(ctx, firstErr)
+	}
+
 	return nil
+}
+
+// forwardMessageStream 边收边推：这是「真流式」与「假流式」的分界线。
+//
+// 旧实现先调 adk.GetMessage（内部 ConcatMessageStream 会把整条流读完），
+// 再回放拷贝出来的 chunk——首字延迟等于整段生成时间，用户盯着空白等十几秒，
+// 最后一次性刷出全部文字。这里直接消费原始流，收到一段推一段。
+//
+// 代价：如果本轮最后被判定为工具调用，工具前的「我先查一下」这类过渡文本
+// 已经推给用户、无法撤回。之所以接受：工具调用本身已经有 observer 通道
+// 单独提示，过渡文本对用户是有效的过程信息，比「全程空白」体验更好。
+func forwardMessageStream(
+	ctx context.Context,
+	stream adk.MessageStream,
+	onChunk func(string) error,
+	emitted *strings.Builder,
+) (chunks []*schema.Message, recvErr error, chunkErr error) {
+	defer stream.Close()
+
+	for {
+		chunk, err := stream.Recv()
+		if err == io.EOF {
+			return chunks, nil, nil
+		}
+		if err != nil {
+			return chunks, err, nil
+		}
+		if chunk == nil {
+			continue
+		}
+
+		chunks = append(chunks, chunk)
+		eino.RecordUsageFrom(ctx, chunk)
+
+		if chunk.Content == "" {
+			continue
+		}
+		emitted.WriteString(chunk.Content)
+		if err := onChunk(chunk.Content); err != nil {
+			return chunks, nil, err
+		}
+	}
+}
+
+// notifyToolCallsFromChunks 流式消息的 tool_calls 是分片下发的（带 index 的增量），
+// 只有拼接后才知道完整的调用列表；不拼接就会把半截参数当工具调用推给上层。
+func notifyToolCallsFromChunks(ctx context.Context, chunks []*schema.Message) {
+	if len(chunks) == 0 {
+		return
+	}
+	msg, err := schema.ConcatMessages(chunks)
+	if err != nil || msg == nil || len(msg.ToolCalls) == 0 {
+		return
+	}
+	notifyToolCalls(ctx, msg.ToolCalls)
+}
+
+// closeMessageStream 关闭一个不再消费的消息流（幂等，nil 安全）。
+func closeMessageStream(mv *adk.MessageVariant) {
+	if mv == nil || mv.MessageStream == nil {
+		return
+	}
+	mv.MessageStream.Close()
 }
 
 func (a *BaseBotAgent) buildMessages(currentMessage string, history []*schema.Message) []*schema.Message {

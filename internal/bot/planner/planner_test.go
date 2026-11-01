@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParsePlan_ValidJSON(t *testing.T) {
@@ -235,6 +236,34 @@ func TestFormatResults(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("FormatResults missing %q: %s", want, got)
 		}
+	}
+}
+
+// TestTruncateRunes_ChineseNotCut 上限按字符计：中文不能被切出半个字。
+func TestTruncateRunes_ChineseNotCut(t *testing.T) {
+	if got := truncateRunes("你好世界", 3); got != "你好世...(截断)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := truncateRunes("短文本", 5); got != "短文本" {
+		t.Fatalf("未超限不应改动，got %q", got)
+	}
+	if got := truncateRunes("", 0); got != "" {
+		t.Fatalf("maxRunes<=0 应返回空串，got %q", got)
+	}
+}
+
+// TestFormatResults_TruncatesByRune 单步结果截断后必须是合法 UTF-8（会作为 prompt 发给模型）。
+func TestFormatResults_TruncatesByRune(t *testing.T) {
+	long := strings.Repeat("中文结果", maxStepOutputKB*1024/4+1)
+	got := FormatResults([]StepResult{
+		{Step: PlanStep{ID: 1, Description: "第一步"}, Output: long, Success: true},
+	})
+
+	if !utf8.ValidString(got) {
+		t.Fatal("截断后产生了非法 UTF-8")
+	}
+	if !strings.Contains(got, "...(截断)") {
+		t.Fatalf("超限结果缺少截断标记，长度=%d", len(got))
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"Logos/pkg/strutil"
 )
@@ -49,7 +50,7 @@ type Plan struct {
 }
 
 const (
-	MaxPlanSteps    = 8  // 计划步骤上限：过长说明任务该拆或工具不足
+	MaxPlanSteps    = 8 // 计划步骤上限：过长说明任务该拆或工具不足
 	MinPlanSteps    = 1
 	MaxReplanCount  = 1  // 重规划次数上限：避免失败循环
 	maxStepOutputKB = 16 // 单步结果进入后续上下文的截断上限
@@ -120,6 +121,21 @@ type StepResult struct {
 	Success bool
 }
 
+// truncateRunes 按字符（rune）截断并标注。
+//
+// 上限单位是「字节」还是「字符」必须一开始就定清楚：单步结果常是中文，
+// 按字节切片切在多字节序列中间会产生非法 UTF-8，这段文本会作为 prompt
+// 发给模型（部分供应商直接 400），也会经 onChunk 推给前端（乱码）。
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	return string([]rune(s)[:maxRunes]) + "...(截断)"
+}
+
 // FormatResults 渲染已执行步骤及其结果（构建后续 prompt 用）
 func FormatResults(results []StepResult) string {
 	var sb strings.Builder
@@ -128,10 +144,7 @@ func FormatResults(results []StepResult) string {
 		if !r.Success {
 			status = "失败"
 		}
-		out := r.Output
-		if len(out) > maxStepOutputKB*1024 {
-			out = out[:maxStepOutputKB*1024] + "...(截断)"
-		}
+		out := truncateRunes(r.Output, maxStepOutputKB*1024)
 		sb.WriteString(fmt.Sprintf("步骤 %d：%s【%s】\n结果：%s\n\n",
 			r.Step.ID, r.Step.Description, status, out))
 	}

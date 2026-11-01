@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 
@@ -38,9 +39,19 @@ type KnowledgeSearchService interface {
 	tools.KnowledgeSearchService
 }
 
+// eventIterator 事件源抽象（adk.AsyncIterator 天然满足），只为让消费逻辑可单测。
+type eventIterator interface {
+	Next() (*adk.AgentEvent, bool)
+}
+
+type coordRunSource func(ctx context.Context, messages []*schema.Message) eventIterator
+
 type Coordinator struct {
-	agent          adk.Agent
-	runner         *adk.Runner
+	agent adk.Agent
+	// run / stream 分开：流式接口必须用 EnableStreaming 的 Runner，
+	// 复用非流式 Runner 的话事件里根本没有 MessageStream，只能整段一次性推送。
+	run            coordRunSource
+	stream         coordRunSource
 	einoMgr        *eino.EinoManager
 	agentMgr       *agent.AgentManager
 	mcpRegistry    *mcp_server.ToolRegistry
@@ -100,6 +111,9 @@ func (c *Coordinator) Chat(ctx context.Context, message string) (string, error) 
 	if err := c.ensureInitialized(ctx); err != nil {
 		return "", err
 	}
+	if c.run == nil {
+		return "", fmt.Errorf("coordinator runner not initialized")
+	}
 
 	logger.Info("Coordinator 收到请求", logger.StringField("message_len", fmt.Sprintf("%d", len(message))))
 
@@ -107,21 +121,70 @@ func (c *Coordinator) Chat(ctx context.Context, message string) (string, error) 
 		schema.UserMessage(message),
 	}
 
-	iter := c.runner.Run(ctx, messages)
+	iter := c.run(ctx, messages)
 
-	var fullResponse string
+	var (
+		fullResponse string
+		firstErr     error
+	)
+
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
-		if event != nil {
-			msg, _, err := adk.GetMessage(event)
-			if err == nil && msg != nil && msg.Content != "" {
-				eino.RecordUsageFrom(ctx, msg)
-				fullResponse += msg.Content
-			}
+		if event == nil {
+			continue
 		}
+		if event.Err != nil {
+			// 协调链路是「模型自己决定调哪些 Bot」，模型报错时上层拿到的必须是错误，
+			// 否则用户会收到一条空白回答，而监控上显示这次协调成功。
+			if firstErr == nil {
+				firstErr = event.Err
+			}
+			logger.Error("Coordinator 事件错误", logger.ErrorField(event.Err))
+			continue
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+
+		mv := event.Output.MessageOutput
+		if mv.Role != schema.Assistant {
+			closeMessageStream(mv)
+			continue
+		}
+
+		msg, _, err := adk.GetMessage(event)
+		if mv.IsStreaming {
+			closeMessageStream(mv)
+		}
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if msg == nil {
+			continue
+		}
+
+		eino.RecordUsageFrom(ctx, msg)
+		// 带 tool_calls 的中间消息不是答案，拼接它会把「我准备调用 xx」混进最终回答
+		if len(msg.ToolCalls) > 0 {
+			continue
+		}
+		fullResponse += msg.Content
+	}
+
+	if fullResponse == "" {
+		if firstErr != nil {
+			return "", fmt.Errorf("coordinator 运行失败: %w", firstErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("coordinator 未产出任何内容")
 	}
 
 	return fullResponse, nil
@@ -131,6 +194,9 @@ func (c *Coordinator) ChatStream(ctx context.Context, message string, onChunk fu
 	if err := c.ensureInitialized(ctx); err != nil {
 		return err
 	}
+	if c.stream == nil {
+		return fmt.Errorf("coordinator stream runner not initialized")
+	}
 
 	logger.Info("Coordinator 收到流式请求", logger.StringField("message_len", fmt.Sprintf("%d", len(message))))
 
@@ -138,30 +204,108 @@ func (c *Coordinator) ChatStream(ctx context.Context, message string, onChunk fu
 		schema.UserMessage(message),
 	}
 
-	iter := c.runner.Run(ctx, messages)
+	iter := c.stream(ctx, messages)
+
+	var (
+		emitted  int
+		firstErr error
+	)
 
 	for {
 		event, ok := iter.Next()
 		if !ok {
 			break
 		}
-		if event != nil {
-			msg, _, err := adk.GetMessage(event)
-			if err == nil && msg != nil && msg.Content != "" {
-				eino.RecordUsageFrom(ctx, msg)
-				if err := onChunk(msg.Content); err != nil {
+		if event == nil {
+			continue
+		}
+		if event.Err != nil {
+			if firstErr == nil {
+				firstErr = event.Err
+			}
+			logger.Error("Coordinator 流式事件错误", logger.ErrorField(event.Err))
+			continue
+		}
+		if event.Output == nil || event.Output.MessageOutput == nil {
+			continue
+		}
+
+		mv := event.Output.MessageOutput
+		if mv.Role != schema.Assistant {
+			// 工具结果（Role=Tool）的正文是给模型看的原始数据，绝不能推给用户
+			closeMessageStream(mv)
+			continue
+		}
+
+		if mv.IsStreaming && mv.MessageStream != nil {
+			// 真流式：边收边推，而不是先整段拼完再一次性刷出去
+			stream := mv.MessageStream
+			for {
+				chunk, recvErr := stream.Recv()
+				if recvErr == io.EOF {
+					break
+				}
+				if recvErr != nil {
+					if firstErr == nil {
+						firstErr = recvErr
+					}
+					logger.Error("Coordinator 读取流式chunk失败", logger.ErrorField(recvErr))
+					break
+				}
+				if chunk == nil {
+					continue
+				}
+				eino.RecordUsageFrom(ctx, chunk)
+				if chunk.Content == "" {
+					continue
+				}
+				emitted += len(chunk.Content)
+				if err := onChunk(chunk.Content); err != nil {
+					stream.Close()
 					return err
 				}
 			}
+			stream.Close()
+			continue
 		}
+
+		if mv.Message == nil {
+			continue
+		}
+		eino.RecordUsageFrom(ctx, mv.Message)
+		if len(mv.Message.ToolCalls) > 0 || mv.Message.Content == "" {
+			continue
+		}
+		emitted += len(mv.Message.Content)
+		if err := onChunk(mv.Message.Content); err != nil {
+			return err
+		}
+	}
+
+	if emitted == 0 {
+		if firstErr != nil {
+			return fmt.Errorf("coordinator 流式运行失败: %w", firstErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("coordinator 未产出任何内容")
 	}
 
 	return nil
 }
 
+// closeMessageStream 关闭不再消费的消息流（幂等，nil 安全）。
+func closeMessageStream(mv *adk.MessageVariant) {
+	if mv == nil || mv.MessageStream == nil {
+		return
+	}
+	mv.MessageStream.Close()
+}
+
 func (c *Coordinator) ensureInitialized(ctx context.Context) error {
 	c.mu.RLock()
-	if c.runner != nil {
+	if c.run != nil {
 		c.mu.RUnlock()
 		return nil
 	}
@@ -170,7 +314,7 @@ func (c *Coordinator) ensureInitialized(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.runner != nil {
+	if c.run != nil {
 		return nil
 	}
 
@@ -244,8 +388,16 @@ func (c *Coordinator) initialize(ctx context.Context) error {
 		return fmt.Errorf("创建 Coordinator Agent 失败: %w", err)
 	}
 
+	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: coordinatorAgent})
+	streamRunner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: coordinatorAgent, EnableStreaming: true})
+
 	c.agent = coordinatorAgent
-	c.runner = adk.NewRunner(ctx, adk.RunnerConfig{Agent: coordinatorAgent})
+	c.run = func(ctx context.Context, messages []*schema.Message) eventIterator {
+		return runner.Run(ctx, messages)
+	}
+	c.stream = func(ctx context.Context, messages []*schema.Message) eventIterator {
+		return streamRunner.Run(ctx, messages)
+	}
 
 	logger.Info("Coordinator Agent 初始化完成",
 		logger.IntField("tools_count", len(allTools)))
@@ -269,7 +421,8 @@ func (c *Coordinator) Refresh(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.runner = nil
+	c.run = nil
+	c.stream = nil
 	c.agent = nil
 
 	logger.Info("Coordinator Agent 已刷新，将在下次请求时重新初始化")

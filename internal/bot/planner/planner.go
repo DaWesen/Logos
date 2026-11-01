@@ -178,8 +178,5 @@ func lastFailed(results []StepResult) *StepResult {
 }
 
 func truncateForContext(s string) string {
-	if len(s) > maxStepOutputKB*1024 {
-		return s[:maxStepOutputKB*1024] + "...(截断)"
-	}
-	return s
+	return truncateRunes(s, maxStepOutputKB*1024)
 }
