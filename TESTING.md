@@ -111,6 +111,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **探针适配器**：nil 数据库/nil 缓存必须显式报错而不是静默健康；Redis `Ping` 失败向上传递；`Timeout` 包装器按预算返回 `DeadlineExceeded`
 - **HTTP 探针**：`/livez` 在依赖全部失败时仍返回 200（只反映进程存活）；`/readyz` 健康返回 200、硬依赖失败返回 503 并暴露 `failed` 列表；可选依赖失败仍返回 200 且列出 `degraded`
 - **gRPC 健康联动**：依赖失败时具名服务与空 service 名都切到 `NOT_SERVING`，恢复后切回 `SERVING`；`watchReadiness` 随 ctx 取消退出，不泄漏 goroutine
+- **etcd 注册联动**：初始未注册、首次就绪才注册；单次失败不摘除，连续失败达到阈值才 `Deregister`；恢复后立即重新注册；重复就绪不重复写 etcd；注册失败下次就绪重试；摘除失败保持未注册并继续重试；lease 中途失效后即使本地仍认为已注册也会重新 Put；无依赖探针的服务由校正循环自愈；`Close` 幂等且关闭后不再注册；注册地址按 `Host > SERVICE_HOST > HOSTNAME > 127.0.0.1` 解析
 - **就绪告警规则**：`ServiceNotReady` 只统计 `result="not_ready"` 并按 service 分组，避免正常探测稀释故障率
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。

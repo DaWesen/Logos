@@ -149,6 +149,7 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **依赖分级而不是一刀切**：PostgreSQL 是 Chat/User/Billing 等服务的硬依赖，不可用即摘流量；Redis 只是缓存/限流加速器，降级为 `degraded` 但不摘流量（网关限流有单机兜底、用户查询会回源）。把可选依赖也当硬依赖，一次缓存抖动会摘掉整个网关，故障反而被放大
 - **探针不制造新连接**：复用已初始化的 `*sql.DB` / `redis.Client` / MinIO client 做 `Ping`/`BucketExists`，不在健康检查里另建连接池；Milvus/ES 用轻量 `ListCollections`/`Ping`，且不打印 INFO 日志，避免每 10s 一次的探针把日志刷满
 - **就绪指标与告警**：`logos.health.readiness.count{service,result=ready|not_ready}` 只统计判定结果、不与正常探测混算成功率；`ServiceNotReady` 告警按 service 分组，实例被摘流量时能直接定位是哪个服务、哪类依赖
+- **就绪状态驱动服务发现**：健康检查不能只改 K8s 探针结果，还要改 etcd 里的注册 key。否则实例已被判定未就绪，etcd 里仍留着地址，使用 etcd resolver 的客户端会继续把请求打过来。连续 `ReadyFailureThreshold`（默认 2，约 20s）次未就绪才摘除，避免单次依赖抖动让所有副本同时退出服务发现；任意一次恢复就立即重新注册，缩短摘流量时间。摘除时只删 key、保留 lease 与连接，恢复无需重建 etcd 连接；若 lease 已失效则重新 Grant 后再 Put。注册/摘除操作带 5s 超时，etcd 不可达时不会把探测 goroutine 挂死；无依赖探针的服务另有校正循环，首次注册失败或 lease 中途失效也能自愈，不必重启
 - **部署探针同步**：K8s 中 gRPC 服务由 `tcpSocket` 改为 `grpc_health_probe`（只连端口无法发现「进程活着但依赖挂了」），并补齐 liveness/readiness 配对；process 是 HTTP 服务，单独使用 `/livez` 与 `/readyz`；滚动更新示例把 `maxUnavailable` 压到 0，新副本通过就绪探针后才下线旧副本
 - **对象级授权**：collection 的公开方法统一要求 user_id，单资源读写全部带 owner 条件；跨用户更新、删除、执行任务与读取结果均返回 404，不泄露资源是否存在
 - **连接池安全默认值**：`sql.DB` 的零值语义容易踩坑（`MaxOpen=0` 不限、`MaxIdle=0` 不保留空闲连接），初始化时统一归一化并补 `ConnMaxIdleTime`，启动日志打印实际生效值
@@ -516,7 +517,7 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 
 - **Request-ID 链路贯穿**：Gateway 为每个请求生成/透传 `X-Request-ID`（UUID），响应头回写、日志与 monitoring 上报统一携带，单请求全链路可串联排障；透传值限 64 字符且只允许 ASCII 字母数字与 `-_.`，非法值丢弃并重新生成，避免日志注入与 trace 串链
 - **观测旁路可丢弃**：访问日志上报不再「每请求一个 goroutine」，改为固定 4 个 worker 消费容量 4096 的有界队列；队列满立即丢弃并打 `dropped`，每条 RPC 独立 3s 超时，停机最多等 5s。观测系统变慢时不会反向拖垮网关
-- **优雅停机**：全部 gRPC 微服务在 SIGTERM 时执行三段式下线——etcd 主动注销（新流量立即摘除，无需等 lease 过期）→ 健康检查置 NOT_SERVING → GracefulStop 等待 in-flight 请求排空（默认 25s 宽限期，`GRPC_SHUTDOWN_GRACE` 可调，小于 K8s terminationGracePeriodSeconds 保证不被 SIGKILL 撕断）；Gateway HTTP 侧并行关闭 TCP/WebSocket/EventBus 并超时兜底
+- **优雅停机**：全部 gRPC 微服务在 SIGTERM 时执行四段式下线——先停就绪探测（防止停机过程中 watcher 又把实例注册回去）→ 健康检查置 NOT_SERVING → 删除 etcd key 并撤销 lease（新流量立即摘除，无需等 lease 过期）→ GracefulStop 等待 in-flight 请求排空（默认 25s 宽限期，`GRPC_SHUTDOWN_GRACE` 可调，小于 K8s terminationGracePeriodSeconds 保证不被 SIGKILL 撕断）；Gateway HTTP 侧并行关闭 TCP/WebSocket/EventBus 并超时兜底
 
 ### 可靠性指标与告警
 
