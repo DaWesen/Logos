@@ -74,6 +74,9 @@ func Serve(ctx context.Context, srv *http.Server, ln net.Listener, shutdownTimeo
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
+			// Shutdown 超时不会强制断开连接：如果调用方决定不退出进程，
+			// 在途连接与 goroutine 会一直挂着。超时后显式 Close 兜底。
+			_ = srv.Close()
 			return err
 		}
 		return nil

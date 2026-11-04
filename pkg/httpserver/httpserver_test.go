@@ -96,3 +96,54 @@ func TestServe_WaitsForInflightRequest(t *testing.T) {
 		t.Fatal("在途请求没有完成")
 	}
 }
+
+// Shutdown 超时后必须强制 Close：否则调用方若选择继续存活，
+// 卡住的连接和 handler goroutine 会永久占着资源。
+func TestServe_ClosesConnectionsWhenShutdownTimesOut(t *testing.T) {
+	started := make(chan struct{})
+	connectionClosed := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hang", func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+		close(connectionClosed)
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv := New("", mux, Options{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- Serve(ctx, srv, ln, 50*time.Millisecond) }()
+
+	go func() {
+		_, _ = http.Get("http://" + ln.Addr().String() + "/hang")
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("请求没有进入 handler")
+	}
+
+	cancel()
+
+	select {
+	case err := <-serveErr:
+		if err == nil {
+			t.Fatal("Shutdown 超时应返回错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve 没有在停机窗口内返回")
+	}
+
+	select {
+	case <-connectionClosed:
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown 超时后连接没有被强制关闭")
+	}
+}
