@@ -71,6 +71,14 @@ func main() {
 
 	_ = obs.InitServiceMeters("monitoring")
 
+	// 保留策略与采集必须成对存在：只写不删，监控库最终会被自己的数据撑爆。
+	// 放在观测 Provider 初始化之后启动，确保首轮清理的删除量能上报。
+	retention := collector.NewRetentionCleaner(db, collector.RetentionPolicyFromEnv())
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	defer retentionCancel()
+	go retention.Start(retentionCtx)
+	log.Println("Monitoring retention cleaner started")
+
 	ready := health.ServiceRegistry(db)
 
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{

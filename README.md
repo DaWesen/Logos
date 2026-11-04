@@ -136,6 +136,7 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **双模式连接信息**：同时展示 etcd 服务发现名称和本地直连地址
 - **指标/日志/告警**：支持按服务、类型、级别等多维度查询
 - **自动采集**：Monitoring 服务启动后自动通过 etcd 采集各服务注册状态。采集用一次 `WithPrefix("/grpc/")` 查询拿全部实例（19 个服务逐个往返会与业务查询争抢连接池），结果按服务名归并后用一条 `INSERT ... ON CONFLICT DO UPDATE` 批量落库（逐条 `FirstOrCreate`+`Updates` 是 38 次往返）。etcd 查询失败时不会把全部服务标成 `DOWN`——那会把「监控失明」误报成「全站宕机」，而是保留上次判定、降级为 `DEGRADED` 并写明原因；查询带 10s 超时，etcd 卡住不会让采集循环停摆
+- **监控数据保留策略**：只写不删，监控库最终会被自己的数据撑爆。`RetentionCleaner` 每小时清理一次：metrics/logs 默认保留 7 天、已解决告警保留 30 天（未解决告警不删，避免丢失排查上下文），可用 `MONITORING_*_RETENTION_DAYS` 调整，非法值回退默认。删除按 5000 行一批、单表单轮最多 10 批，用 `id IN (SELECT ... ORDER BY timestamp LIMIT ? FOR UPDATE SKIP LOCKED)` 分批推进：一次性删几十万行会长时间持锁、撑爆 WAL 并阻塞采集写入；`SKIP LOCKED` 让多副本各删各的。`logos.monitoring.retention.deleted{kind,result}` 区分「删了 0 行」和「清理失败」——后者意味着表会重新开始膨胀
 - **请求上下文全链路透传**：Gateway 所有接口统一以 `c.Request.Context()` 调用下游 gRPC，客户端断开即取消下游计算（避免继续烧 LLM token），trace 与调用方身份 metadata 随链路传递
 - **入口防护**：网关对普通请求体设 2MB 上限（`Content-Length` 超限直接 413，chunked 用 `MaxBytesReader` 兜底），只有白名单上传路由才跳过 multipart 限制，普通接口伪造 `Content-Type` 也不能绕过；CORS 默认通配但不开凭据，需要凭据时用 `CORS_ALLOWED_ORIGINS` 白名单并返回 `Vary: Origin`；OPTIONS 预检放在限流之后短路，避免绕过配额；默认不信任任何代理，`TRUSTED_PROXIES` 显式配置后才采信 `X-Forwarded-For`，防止伪造 IP 绕过限流
 - **文件代理防存储型 XSS**：`/api/v1/file/minio/*` 的 `Content-Type` 来自上传时的客户端声明，不能原样回传。代理层只允许图片/音视频/PDF/Office 文档内联展示；`text/*`、`image/svg+xml`、XHTML、JavaScript 等可在同源执行的内容统一降级为 `application/octet-stream` 并加 `Content-Disposition: attachment`，同时始终返回 `X-Content-Type-Options: nosniff`；上游请求带 60s 超时，chunked 响应不再写非法的 `Content-Length: -1`

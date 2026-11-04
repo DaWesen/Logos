@@ -116,6 +116,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **etcd 注册联动**：初始未注册、首次就绪才注册；单次失败不摘除，连续失败达到阈值才 `Deregister`；恢复后立即重新注册；重复就绪不重复写 etcd；注册失败下次就绪重试；摘除失败保持未注册并继续重试；lease 中途失效后即使本地仍认为已注册也会重新 Put；无依赖探针的服务由校正循环自愈；`Close` 幂等且关闭后不再注册；注册地址按 `Host > SERVICE_HOST > HOSTNAME > 127.0.0.1` 解析
 - **就绪告警规则**：`ServiceNotReady` 只统计 `result="not_ready"` 并按 service 分组，避免正常探测稀释故障率
 - **服务状态采集**：一次前缀查询按服务名归并实例数，服务名含 `/` 也能正确解析，非法 key 被忽略；批量 upsert 使用 `ON CONFLICT DO UPDATE`（不是逐条两次往返）；空批次不发 SQL；etcd 查询失败时保留上次状态并降级为 `DEGRADED`，不会把监控自身故障误报成全部服务下线
+- **监控数据保留**：删除 SQL 按 id 子查询 + `LIMIT` 分批并带 `FOR UPDATE SKIP LOCKED`；告警清理限定 `resolved = true`；非法/非正数保留天数回退默认；超长保留期收敛到 10 年，避免 `Duration` 溢出成负数后变成立即删除
 - **Outbox 租约**：领取同时写 `lease_owner`；续租 SQL 带 `lease_owner + status` 条件；`MarkSent` 校验 fencing token；`leaseWindow` 在任意 `sendTimeout` 下都覆盖 `size × sendTimeout`；分块条数落在 `[1, 20]` 且不超预算；空 id 列表不发 `IN ()`；`Stop` 在有界时间内返回；每个 relay 实例的 token 唯一
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。

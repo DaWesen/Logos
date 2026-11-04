@@ -1342,3 +1342,34 @@ func RecordReadiness(ctx context.Context, service, result string) {
 		))
 	}
 }
+
+// 监控数据保留策略指标。
+//
+// 只记录「删了多少」不够：清理失败时行数为 0，与「本来就没数据」无法区分，
+// 所以 result=ok/failed 必须分开。连续 failed 意味着表会重新开始膨胀。
+var (
+	monitoringRetentionOnce    sync.Once
+	monitoringRetentionDeleted metric.Int64Counter
+)
+
+func initMonitoringRetentionMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	monitoringRetentionDeleted, _ = meter.Int64Counter(
+		"logos.monitoring.retention.deleted",
+		metric.WithDescription("监控数据保留策略删除的行数（kind=metrics/logs/alerts，result=ok/failed）"),
+	)
+}
+
+// RecordMonitoringRetention 记录一次保留策略清理的结果与删除行数。
+func RecordMonitoringRetention(ctx context.Context, kind, result string, rows int64) {
+	monitoringRetentionOnce.Do(initMonitoringRetentionMetrics)
+	if monitoringRetentionDeleted != nil {
+		monitoringRetentionDeleted.Add(ctx, rows, metric.WithAttributes(
+			attribute.String("kind", kind),
+			attribute.String("result", result),
+		))
+	}
+}
