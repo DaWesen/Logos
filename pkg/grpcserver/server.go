@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"Logos/pkg/governance"
+	"Logos/pkg/health"
+	"Logos/pkg/obs"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/naming/resolver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/health"
+	grpcHealth "google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/keepalive"
 )
@@ -30,6 +32,14 @@ type ServerConfig struct {
 	Host        string // 注册到 etcd 的 host，默认 127.0.0.1
 	Etcd        EtcdConfig
 	Governance  *governance.Config
+	// ReadyCheck 是可选的依赖就绪检查。为空时只按进程生命周期上报健康状态
+	// （启动 SERVING、停机 NOT_SERVING），适合没有外部强依赖的服务。
+	//
+	// 非空时会启动后台探测：依赖不可用就上报 NOT_SERVING，让负载均衡/编排系统
+	// 摘除本实例，而不是让请求继续打到一条注定超时的连接上。
+	ReadyCheck *health.Registry
+	// ReadyInterval 是就绪探测周期，默认 10s（与 K8s probe 的常见周期一致）。
+	ReadyInterval time.Duration
 }
 
 type EtcdConfig struct {
@@ -41,6 +51,10 @@ type EtcdConfig struct {
 // terminationGracePeriodSeconds(30s)，保证容器被强杀前完成排空。
 // 可用环境变量 GRPC_SHUTDOWN_GRACE (秒) 覆盖。
 const defaultShutdownGrace = 25 * time.Second
+
+// defaultReadyInterval 与 K8s readinessProbe 的常见 periodSeconds 对齐：
+// 探得太快没有意义（结果缓存本身也是秒级），探得太慢则故障后迟迟不摘流量。
+const defaultReadyInterval = 10 * time.Second
 
 func shutdownGracePeriod() time.Duration {
 	if v := os.Getenv("GRPC_SHUTDOWN_GRACE"); v != "" {
@@ -92,9 +106,21 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 	server := grpc.NewServer(opts...)
 	register(server)
 
-	healthServer := health.NewServer()
+	healthServer := grpcHealth.NewServer()
 	grpc_health_v1.RegisterHealthServer(server, healthServer)
-	healthServer.SetServingStatus(cfg.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+
+	// 就绪探测随进程生命周期结束：StartServer 返回（正常停机或 Serve 失败）时
+	// 必须停掉后台 ticker，否则进程内的探针 goroutine 会一直泄漏。
+	readyCtx, stopReady := context.WithCancel(context.Background())
+	defer stopReady()
+	if cfg.ReadyCheck != nil {
+		// 有依赖探针时不能先报 SERVING：依赖还没探过就接流量，
+		// 滚动发布期间会把请求打到尚未就绪的新副本上。初始状态保持 NOT_SERVING，
+		// 由第一次探测决定是否放行。
+		go watchReadiness(readyCtx, cfg, healthServer)
+	} else {
+		setServing(healthServer, cfg.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
+	}
 
 	var deregister func()
 	if len(cfg.Etcd.Endpoints) > 0 {
@@ -133,7 +159,7 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 		}
 
 		// 2) 健康检查置 NOT_SERVING
-		healthServer.SetServingStatus(cfg.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+		setServing(healthServer, cfg.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
 		// 3) 等待 in-flight 请求排空；宽限期耗尽则强制停止
 		done := make(chan struct{})
@@ -149,6 +175,63 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 			log.Printf("Service %s grace period exhausted, forced stop", cfg.ServiceName)
 		}
 		return nil
+	}
+}
+
+// setServing 同时设置具名服务与「整个进程」（空 service 名）的状态。
+//
+// gRPC 健康协议允许客户端用空 service 名查询进程级健康；只设置具名服务时，
+// 这类探针会拿到默认的 NOT_SERVING，被误判为不健康。
+func setServing(h *grpcHealth.Server, service string, status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+	h.SetServingStatus(service, status)
+	h.SetServingStatus("", status)
+}
+
+// watchReadiness 周期性探测依赖，并把聚合结果映射到 gRPC 健康状态。
+//
+// 只在状态发生变化时写日志与指标：探测每 10s 一次，若每次都打日志，
+// 正常运行时日志会被健康检查刷满，真正的问题反而被淹没。
+func watchReadiness(ctx context.Context, cfg ServerConfig, healthServer *grpcHealth.Server) {
+	interval := cfg.ReadyInterval
+	if interval <= 0 {
+		interval = defaultReadyInterval
+	}
+
+	var lastReady *bool
+	apply := func(res health.Result) {
+		status := grpc_health_v1.HealthCheckResponse_NOT_SERVING
+		result := "not_ready"
+		if res.Ready {
+			status = grpc_health_v1.HealthCheckResponse_SERVING
+			result = "ready"
+		}
+		setServing(healthServer, cfg.ServiceName, status)
+		obs.RecordReadiness(ctx, cfg.ServiceName, result)
+
+		changed := lastReady == nil || *lastReady != res.Ready
+		lastReady = &res.Ready
+		if !changed {
+			return
+		}
+		if res.Ready {
+			log.Printf("Service %s is ready (checks=%v)", cfg.ServiceName, res.Checks)
+			return
+		}
+		log.Printf("Service %s is NOT ready: failed=%v checks=%v", cfg.ServiceName, res.Failed(), res.Checks)
+	}
+
+	// 启动即探一次：等第一个 tick 才摘流量，意味着依赖已经挂了还要继续接 10s 请求。
+	apply(cfg.ReadyCheck.Ready(ctx))
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			apply(cfg.ReadyCheck.Ready(ctx))
+		}
 	}
 }
 

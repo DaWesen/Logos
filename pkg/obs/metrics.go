@@ -1310,3 +1310,35 @@ func RecordDocumentReapFailure(ctx context.Context) {
 		documentReapFail.Add(ctx, 1)
 	}
 }
+
+// 就绪探测指标。
+//
+// 与请求失败率分开：依赖挂了但还没有请求打进来时，失败率是完全静默的，
+// 而 readiness 指标能提前暴露「这个实例已经被摘流量」。result 只有
+// ready / not_ready 两个值，不做成功率的分子分母，避免正常探测稀释故障。
+var (
+	readinessOnce  sync.Once
+	readinessCount metric.Int64Counter
+)
+
+func initReadinessMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	readinessCount, _ = meter.Int64Counter(
+		"logos.health.readiness.count",
+		metric.WithDescription("就绪探测结果计数（result=ready/not_ready）"),
+	)
+}
+
+// RecordReadiness 记录一次就绪状态判定。
+func RecordReadiness(ctx context.Context, service, result string) {
+	readinessOnce.Do(initReadinessMetrics)
+	if readinessCount != nil {
+		readinessCount.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("service", service),
+			attribute.String("result", result),
+		))
+	}
+}

@@ -146,6 +146,38 @@ func TestPrometheusRules_QQCapacityAlertsUseDedicatedLabels(t *testing.T) {
 	}
 }
 
+// TestPrometheusRules_ReadinessAlertUsesNotReadyLabel 就绪告警只能引用
+// not_ready 计数。若引用全部探测（含 ready），正常探测会把故障率稀释掉，
+// 实例已经被摘流量、告警却迟迟不触发。
+func TestPrometheusRules_ReadinessAlertUsesNotReadyLabel(t *testing.T) {
+	path := filepath.Join("..", "..", "deployment", "examples", "prometheus-rules.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取规则文件失败: %v", err)
+	}
+
+	groups, err := parsePrometheusRuleGroups(data)
+	if err != nil {
+		t.Fatalf("规则文件不是合法 YAML: %v", err)
+	}
+
+	for _, g := range groups {
+		for _, r := range g.Rules {
+			if r.Alert != "ServiceNotReady" {
+				continue
+			}
+			if !strings.Contains(r.Expr, `result="not_ready"`) {
+				t.Fatalf("就绪告警必须只统计 not_ready，实际: %s", r.Expr)
+			}
+			if !strings.Contains(r.Expr, "sum by (service)") {
+				t.Fatalf("就绪告警必须按 service 分组，实际: %s", r.Expr)
+			}
+			return
+		}
+	}
+	t.Fatal("未找到 ServiceNotReady 告警")
+}
+
 type prometheusRuleGroup struct {
 	Name  string `yaml:"name"`
 	Rules []struct {
