@@ -514,6 +514,7 @@ Logos/
 - **批量确认不能吞错**：`BatchAcknowledgeMessages` 原先逐条 UPDATE，失败只打日志后 `continue`，最后仍返回成功——客户端以为整批确认完成，实际部分消息会重投。现在过滤空/重复 id 后一条 `WHERE id IN (...)` 更新，失败整批返回错误交由上游重试；消费后状态更新失败同样上抛，避免 offset 已提交但消息状态永远停在旧值
 - **消费确认改成租约制**：旧实现 `ConsumeMessages` 先查 `PENDING`、返回前就改成 `PROCESSED`，客户端拿到消息后崩溃或超时，这条消息再也不会出现在待处理集合里（at-most-once），并发消费者还可能领到同一批。现在用一条 `WITH ... FOR UPDATE SKIP LOCKED ... UPDATE ... RETURNING` 原子领取，同时写入 `claimed_by / lease_until / attempts`；租约 60s 内必须 ACK，过期后消息重新可领取（at-least-once）；ACK 只接受 `PROCESSED/ACKED` 且属于本消费组的行，迟到确认返回 404 而不是覆盖新消费者
 - **统计接口不能 N+1，也不能被空表打挂**：`GetMessageStats` 原先 1 次全局统计 + 7 次按 topic 全表扫描；而且 `SUM(CASE ...)` 在空集返回 `NULL`，扫描进 `int64` 会报错，队列为空时统计页直接 500。现在一条 `GROUP BY topic` 返回全部聚合，`COALESCE(SUM(...), 0)` 把空集归零，服务层再为没有数据的 topic 补零行，客户端表格不会缺列。删除 topic 时订阅清理失败也不再只打日志——事务内任何一步失败都整批回滚
+- **状态字符串必须有唯一来源**：Kafka 消费成功后写入的是 `PROCESSED_FROM_KAFKA`，统计 SQL 只累加 `PROCESSED/ACKED`——消息确实处理了，监控却永远显示 0。现在 `PENDING/PROCESSED/ACKED/FAILED/CLEARED` 集中定义在 model 常量里，写入、统计、清理全部复用同一组常量，统计 SQL 用参数绑定而不是再抄一遍字面量
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
