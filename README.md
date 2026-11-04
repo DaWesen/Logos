@@ -513,6 +513,7 @@ Logos/
 - **问答执行不能裸起 goroutine**：handler 里 `go AskQuestion(Background)` 后立即返回 nil，offset 会被提交；LLM 失败或进程崩溃时请求永久丢失，突发流量还会堆出无界 goroutine。现在消费端同步执行并返回错误，复用既有的就地重试/死信路径；单条问答应带 120s 上限，且使用 `Message.Context`，停机时可取消
 - **批量确认不能吞错**：`BatchAcknowledgeMessages` 原先逐条 UPDATE，失败只打日志后 `continue`，最后仍返回成功——客户端以为整批确认完成，实际部分消息会重投。现在过滤空/重复 id 后一条 `WHERE id IN (...)` 更新，失败整批返回错误交由上游重试；消费后状态更新失败同样上抛，避免 offset 已提交但消息状态永远停在旧值
 - **消费确认改成租约制**：旧实现 `ConsumeMessages` 先查 `PENDING`、返回前就改成 `PROCESSED`，客户端拿到消息后崩溃或超时，这条消息再也不会出现在待处理集合里（at-most-once），并发消费者还可能领到同一批。现在用一条 `WITH ... FOR UPDATE SKIP LOCKED ... UPDATE ... RETURNING` 原子领取，同时写入 `claimed_by / lease_until / attempts`；租约 60s 内必须 ACK，过期后消息重新可领取（at-least-once）；ACK 只接受 `PROCESSED/ACKED` 且属于本消费组的行，迟到确认返回 404 而不是覆盖新消费者
+- **统计接口不能 N+1，也不能被空表打挂**：`GetMessageStats` 原先 1 次全局统计 + 7 次按 topic 全表扫描；而且 `SUM(CASE ...)` 在空集返回 `NULL`，扫描进 `int64` 会报错，队列为空时统计页直接 500。现在一条 `GROUP BY topic` 返回全部聚合，`COALESCE(SUM(...), 0)` 把空集归零，服务层再为没有数据的 topic 补零行，客户端表格不会缺列。删除 topic 时订阅清理失败也不再只打日志——事务内任何一步失败都整批回滚
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
