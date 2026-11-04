@@ -121,6 +121,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **看板 HTTP 生命周期**：复用 `pkg/httpserver` 的 `ReadHeaderTimeout`/`IdleTimeout`/`MaxHeaderBytes`，慢请求头不会长期占住连接；SIGTERM 时先停止接收新连接、再以 15s 排空在途请求（主流程等待预算不小于 `Shutdown` 预算，避免排空被提前打断）。看板端口被占用时只记录错误并禁用看板，gRPC 服务继续注册与提供服务——旁路能力故障不应升级为整进程退出
 - **网关启动/退出路径**：HTTP 与 TCP 端口先 `net.Listen` 再 `Serve`，端口占用作为启动错误返回；`run()` 错误返回保证 OTel flush 与客户端关闭在失败路径也执行；HTTP `Serve` 运行期失败与 SIGTERM 共用同一停机流程，WS/TCP/广播器仍会排空后退出
 - **对象存储初始化**：首次失败后连续调用都必须返回错误而不是 `(nil, nil)`（回归 `sync.Once` 缓存失败的缺陷）；5s 负缓存窗口内不重复探测、窗口过后重新尝试并成功复用；16 个并发首次调用只探测一次且错误一致（`-race`）；已取消 ctx 在上传/下载/删除/预签名/存在性检查中先于后端返回 `context.Canceled`
+- **懒初始化原语**：`pkg/lazyinit` 验证失败永不返回零值+nil；冷却窗口内不重复探测、窗口过后重试并自愈；成功结果永久复用；16 并发首次调用只执行一次 load（`-race`）；零冷却窗口表示立即重试；nil loader 显式 panic 而不是静默空转
 - **Outbox 租约**：领取同时写 `lease_owner`；续租 SQL 带 `lease_owner + status` 条件；`MarkSent` 校验 fencing token；`leaseWindow` 在任意 `sendTimeout` 下都覆盖 `size × sendTimeout`；分块条数落在 `[1, 20]` 且不超预算；空 id 列表不发 `IN ()`；`Stop` 在有界时间内返回；每个 relay 实例的 token 唯一
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
