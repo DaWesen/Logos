@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -224,6 +225,14 @@ type TokenBucketRateLimiter struct {
 }
 
 func NewTokenBucketLimiter(cache cache.Cache, rate, capacity int) *TokenBucketRateLimiter {
+	// 0 速率会让桶永远补不满，0 容量则永远拒绝；都归一到「至少允许 1 个」，
+	// 避免一个配置笔误把整条链路限死。
+	if rate < 1 {
+		rate = 1
+	}
+	if capacity < 1 {
+		capacity = 1
+	}
 	return &TokenBucketRateLimiter{
 		cache:    cache,
 		rate:     rate,
@@ -236,39 +245,78 @@ func (l *TokenBucketRateLimiter) Allow(ctx context.Context, key string) (bool, e
 	return l.AllowN(ctx, key, 1)
 }
 
+// tokenBucketScript 用浮点令牌做补充，避免丢弃分数时间。
+//
+// 旧实现是 `refill = math.floor(elapsed * rate)`，然后把 last_refill 重置为 now。
+// 高频请求下每次 elapsed 都不足一个令牌周期，floor 恒为 0，而时间基准却一直在前移，
+// 分数部分被永久丢弃：桶一旦打空就再也补不回来，限流从「按速率放行」退化成「永久拒绝」。
+// 现在令牌与时间都不取整，每次只把「已经补进来的量」记账，剩余分数留到下次。
+const tokenBucketScript = `
+local key = KEYS[1]
+local rate = tonumber(ARGV[1])
+local capacity = tonumber(ARGV[2])
+local want = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local ttl = tonumber(ARGV[5])
+
+local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
+local tokens = tonumber(bucket[1])
+local last_refill = tonumber(bucket[2])
+if tokens == nil then tokens = capacity end
+if last_refill == nil then last_refill = now end
+
+local elapsed = (now - last_refill) / 1000000
+if elapsed < 0 then elapsed = 0 end
+tokens = math.min(capacity, tokens + elapsed * rate)
+
+local allowed = 0
+if tokens >= want then
+  tokens = tokens - want
+  allowed = 1
+end
+
+redis.call('HMSET', key, 'tokens', tostring(tokens), 'last_refill', tostring(now))
+redis.call('PEXPIRE', key, ttl)
+return {allowed, tostring(tokens)}
+`
+
+// tokenBucketTTL 桶键的过期时间：至少 1 小时，且不短于「从空桶补满」所需时间。
+// 过期时间太短会让空闲用户的桶提前重置为满，等于凭空多给一次突发额度。
+func tokenBucketTTL(rate, capacity int) time.Duration {
+	if rate < 1 {
+		rate = 1
+	}
+	if capacity < 1 {
+		capacity = 1
+	}
+	refill := time.Duration(capacity) * time.Second / time.Duration(rate)
+	ttl := time.Hour
+	if refill*2 > ttl {
+		ttl = refill * 2
+	}
+	return ttl
+}
+
+// refillTokens 与 Lua 脚本保持同一套补充语义，供 GetRemaining 与单测使用。
+// tokens 允许小数：分数令牌是「高频请求下仍能按速率恢复」的关键。
+func refillTokens(tokens float64, lastRefillMicros, nowMicros int64, rate, capacity int) float64 {
+	elapsed := float64(nowMicros-lastRefillMicros) / 1e6
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	tokens += elapsed * float64(rate)
+	if tokens > float64(capacity) {
+		tokens = float64(capacity)
+	}
+	return tokens
+}
+
 func (l *TokenBucketRateLimiter) AllowN(ctx context.Context, key string, n int) (bool, error) {
 	cacheKey := fmt.Sprintf("%s:%s", l.prefix, key)
 	now := time.Now().UnixMicro()
 
-	script := `
-	local key = KEYS[1]
-	local rate = tonumber(ARGV[1])
-	local capacity = tonumber(ARGV[2])
-	local tokens = tonumber(ARGV[3])
-	local now = tonumber(ARGV[4])
-
-	local bucket = redis.call('HMGET', key, 'tokens', 'last_refill')
-	local current_tokens = tonumber(bucket[1]) or capacity
-	local last_refill = tonumber(bucket[2]) or now
-
-	local elapsed = math.max(0, (now - last_refill) / 1000000)
-	local refill = math.floor(elapsed * rate)
-	current_tokens = math.min(capacity, current_tokens + refill)
-
-	if current_tokens >= tokens then
-		current_tokens = current_tokens - tokens
-		redis.call('HMSET', key, 'tokens', tostring(current_tokens), 'last_refill', tostring(now))
-		redis.call('PEXPIRE', key, 3600000)
-		return {1, tostring(current_tokens)}
-	else
-		redis.call('HMSET', key, 'tokens', tostring(current_tokens), 'last_refill', tostring(now))
-		redis.call('PEXPIRE', key, 3600000)
-		return {0, tostring(current_tokens)}
-	end
-	`
-
-	result, err := l.cache.EvalSha(ctx, script, []string{cacheKey},
-		l.rate, l.capacity, n, now)
+	result, err := l.cache.EvalSha(ctx, tokenBucketScript, []string{cacheKey},
+		l.rate, l.capacity, n, now, tokenBucketTTL(l.rate, l.capacity).Milliseconds())
 	if err != nil {
 		return false, fmt.Errorf("evalsha failed: %w", err)
 	}
@@ -293,14 +341,41 @@ func (l *TokenBucketRateLimiter) Reset(ctx context.Context, key string) error {
 func (l *TokenBucketRateLimiter) GetRemaining(ctx context.Context, key string) (int64, error) {
 	cacheKey := fmt.Sprintf("%s:%s", l.prefix, key)
 
-	val, err := l.cache.HGet(ctx, cacheKey, "tokens")
-	if err != nil || val == "" {
+	fields, err := l.cache.HGetAll(ctx, cacheKey)
+	if err != nil {
+		return int64(l.capacity), err
+	}
+	tokens, lastRefillMicros, hasTime, ok := parseTokenBucketState(fields)
+	if !ok {
 		return int64(l.capacity), nil
 	}
+	if !hasTime {
+		return int64(math.Floor(tokens)), nil
+	}
 
-	var tokens int64
-	fmt.Sscanf(val, "%d", &tokens)
-	return tokens, nil
+	tokens = refillTokens(tokens, lastRefillMicros, time.Now().UnixMicro(), l.rate, l.capacity)
+	return int64(math.Floor(tokens)), nil
+}
+
+// parseTokenBucketState 解析桶状态。
+//
+// Redis Lua 的 tostring 用 "%.14g"，微秒时间戳可能被写成科学计数法
+// （如 1.7623456789012e+15）。用 ParseInt 会直接失败并静默退化成「不补充」，
+// 所以 tokens 与时间统一按浮点解析再截断。
+func parseTokenBucketState(fields map[string]string) (tokens float64, lastRefillMicros int64, hasTime, ok bool) {
+	if len(fields) == 0 {
+		return 0, 0, false, false
+	}
+	tokens, err := strconv.ParseFloat(fields["tokens"], 64)
+	if err != nil {
+		return 0, 0, false, false
+	}
+	lastRefill, err := strconv.ParseFloat(fields["last_refill"], 64)
+	if err != nil {
+		// 时间缺失时仍可返回当前令牌数，但不能凭空按 now-0 补满整个桶。
+		return tokens, 0, false, true
+	}
+	return tokens, int64(lastRefill), true, true
 }
 
 // globalLimiters 缓存按 (name, rate, window) 复用的限流器实例。
