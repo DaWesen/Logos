@@ -123,6 +123,8 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **对象存储初始化**：首次失败后连续调用都必须返回错误而不是 `(nil, nil)`（回归 `sync.Once` 缓存失败的缺陷）；5s 负缓存窗口内不重复探测、窗口过后重新尝试并成功复用；16 个并发首次调用只探测一次且错误一致（`-race`）；已取消 ctx 在上传/下载/删除/预签名/存在性检查中先于后端返回 `context.Canceled`
 - **懒初始化原语**：`pkg/lazyinit` 验证失败永不返回零值+nil；冷却窗口内不重复探测、窗口过后重试并自愈；成功结果永久复用；16 并发首次调用只执行一次 load（`-race`）；零冷却窗口表示立即重试；nil loader 显式 panic 而不是静默空转
 - **消费生命周期 ctx**：订阅时传入的 ctx 会出现在 handler 收到的 `Message.Context` 上；ES 实体 create/update/delete 与索引统计使用该 ctx，停机时在途写请求可被取消，不再退回 `context.Background()`
+- **Milvus 启动预算**：持续连接失败时在总预算内返回而不是固定重试 60 次；单次尝试超时被剩余预算截断（预算 200ms、单次超时 10s 时仍在 1s 内返回）；首次成功立即返回且不继续重试；日志包含「预算耗尽」结论
+- **日志无配置降级**：`GetLogger` 在没有配置文件时退回 info + stdout，不 panic。单元测试、CLI 工具等未加载配置的场景仍可正常打日志
 - **Outbox 租约**：领取同时写 `lease_owner`；续租 SQL 带 `lease_owner + status` 条件；`MarkSent` 校验 fencing token；`leaseWindow` 在任意 `sendTimeout` 下都覆盖 `size × sendTimeout`；分块条数落在 `[1, 20]` 且不超预算；空 id 列表不发 `IN ()`；`Stop` 在有界时间内返回；每个 relay 实例的 token 唯一
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
