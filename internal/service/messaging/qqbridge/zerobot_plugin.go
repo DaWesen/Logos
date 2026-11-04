@@ -3,7 +3,9 @@ package qqbridge
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"Logos/config"
 	"Logos/internal/service/messaging/types"
@@ -258,13 +260,26 @@ func (p *ZeroBotPlugin) LogosEventToQQMessage(event *types.MessageEvent) message
 
 	// 媒体内容
 	if event.MediaURL != "" {
+		mediaURL, ok := p.absoluteMediaURL(event.MediaURL)
+		if !ok {
+			// 没有公网基址时不要发相对路径：LLOneBot 在另一个容器/机器上，
+			// /api/v1/... 会解析到它自己的地址，最终表现为「图片发送失败」。
+			logger.Warn("QQ出站媒体缺少公网基址，已跳过媒体段",
+				logger.StringField("media_url", event.MediaURL))
+		}
 		switch event.MessageType {
 		case types.MessageTypeImage:
-			msg = append(msg, message.Image(event.MediaURL))
+			if ok {
+				msg = append(msg, message.Image(mediaURL))
+			}
 		case types.MessageTypeVoice:
-			msg = append(msg, message.Record(event.MediaURL))
+			if ok {
+				msg = append(msg, message.Record(mediaURL))
+			}
 		case types.MessageTypeVideo:
-			msg = append(msg, message.Video(event.MediaURL))
+			if ok {
+				msg = append(msg, message.Video(mediaURL))
+			}
 		}
 	}
 
@@ -274,6 +289,37 @@ func (p *ZeroBotPlugin) LogosEventToQQMessage(event *types.MessageEvent) message
 	}
 
 	return msg
+}
+
+// absoluteMediaURL 把媒体地址转成外部系统可访问的绝对 URL。
+//
+// 已经带 scheme 的地址（例如 MinIO 预签名 URL）原样返回；相对路径
+// 必须拼上 gateway.public_base_url，否则 LLOneBot 会把它当成自己的地址。
+func (p *ZeroBotPlugin) absoluteMediaURL(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	if parsed.IsAbs() {
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", false
+		}
+		return raw, true
+	}
+
+	base := strings.TrimSpace(p.cfg.Gateway.PublicBaseURL)
+	if base == "" {
+		return "", false
+	}
+	baseURL, err := url.Parse(base)
+	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
+		return "", false
+	}
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(raw, "/"), true
 }
 
 // ExtractQQNumberFromLogosID 从 Logos 用户ID 中提取 QQ 号

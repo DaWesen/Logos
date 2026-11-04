@@ -56,7 +56,14 @@ func (s *ContactServiceImpl) SendFriendRequest(ctx context.Context, fromUserID, 
 		logger.Warn("\x1b[31m🔴 [Contact] 拒绝添加自己\x1b[0m", logger.StringField("user", fromUserID))
 		return nil, fmt.Errorf("不能添加自己为好友")
 	}
-	if existingFriend, _ := s.repo.GetFriendship(ctx, fromUserID, toUserID); existingFriend != nil {
+	existingFriend, err := s.repo.GetFriendship(ctx, fromUserID, toUserID)
+	if err != nil {
+		// 查不到关系就无法判断是否已经是好友，继续创建申请会产生重复数据，
+		// 因此这里失败关闭，把错误交给上层重试。
+		logger.Error("检查好友关系失败", logger.ErrorField(err))
+		return nil, fmt.Errorf("检查好友关系失败: %w", err)
+	}
+	if existingFriend != nil {
 		logger.Warn("\x1b[33m🟡 [Contact] 已经是好友\x1b[0m", logger.StringField("from_user", fromUserID), logger.StringField("to_user", toUserID))
 		return nil, fmt.Errorf("已经是好友")
 	}

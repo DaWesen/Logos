@@ -46,12 +46,35 @@ type OneBotSegment struct {
 
 // MessageConverter 消息格式转换器
 type MessageConverter struct {
-	cfg *config.Config
+	cfg      *config.Config
+	lookup   BindingLookup
+	cacheGet func(ctx context.Context, key string) (string, error)
+	cacheSet func(ctx context.Context, key, value string) error
+}
+
+// BindingLookup 在缓存未命中时回源数据库。
+// 用接口而不是直接依赖 gorm，避免 converter 的单元测试被迫连数据库。
+type BindingLookup interface {
+	LookupBotByQQ(ctx context.Context, qqNumber string) (string, error)
 }
 
 // NewMessageConverter 创建转换器
 func NewMessageConverter(cfg *config.Config) *MessageConverter {
 	return &MessageConverter{cfg: cfg}
+}
+
+// setCache 注入缓存读写，测试可以完全绕开 Redis。
+func (c *MessageConverter) setCache(
+	get func(context.Context, string) (string, error),
+	set func(context.Context, string, string) error,
+) {
+	c.cacheGet = get
+	c.cacheSet = set
+}
+
+// SetBindingLookup 注入缓存未命中时的回源实现。
+func (c *MessageConverter) SetBindingLookup(lookup BindingLookup) {
+	c.lookup = lookup
 }
 
 // ToMessageEvent 将 OneBot 入站消息转换为 Logos MessageEvent
@@ -115,17 +138,17 @@ func (c *MessageConverter) ToMessageEvent(ctx context.Context, msg *InboundMessa
 	content, messageType := c.extractContent(msg)
 
 	metadata := map[string]string{
-		"source":          "qq",
-		"qq_message_id":   strconv.FormatInt(msg.MessageID, 10),
-		"qq_user_id":      strconv.FormatInt(msg.UserID, 10),
-		"qq_self_id":      strconv.FormatInt(msg.SelfID, 10),
-		"qq_message_type": msg.MessageType,
+		"source":           "qq",
+		"qq_message_id":    strconv.FormatInt(msg.MessageID, 10),
+		types.MetaQQUserID: strconv.FormatInt(msg.UserID, 10),
+		types.MetaQQSelfID: strconv.FormatInt(msg.SelfID, 10),
+		"qq_message_type":  msg.MessageType,
 	}
 	if msg.IsSent {
 		metadata["qq_is_sent"] = "true"
 	}
 	if msg.GroupID != 0 {
-		metadata["qq_group_id"] = strconv.FormatInt(msg.GroupID, 10)
+		metadata[types.MetaQQGroupID] = strconv.FormatInt(msg.GroupID, 10)
 	}
 	if !msg.IsSent {
 		logosUserID := c.findLogosUserByQQ(msg.UserID)
@@ -209,18 +232,64 @@ func (c *MessageConverter) findBotByQQNumber(qqNumber int64) string {
 	qqStr := strconv.FormatInt(qqNumber, 10)
 	key := fmt.Sprintf("qq:bot_bind:%s", qqStr)
 
-	redis := cache.NewRedisCache()
-	botID, err := redis.Get(context.Background(), key)
+	botID, err := c.cacheGetValue(context.Background(), key)
 	if err != nil {
 		logger.Debug("查询QQ-Bot绑定缓存失败",
 			logger.StringField("qq_number", qqStr),
 			logger.ErrorField(err))
-		return ""
+		return c.lookupBotFromDB(qqStr)
 	}
 	if botID == "" {
-		return ""
+		// 缓存未命中不等于没有绑定：Redis 重启/逐出后 key 会丢，
+		// 此时回源一次并写回缓存，避免消息被路由到 qq_<号码> 普通用户。
+		return c.lookupBotFromDB(qqStr)
 	}
 	return botID
+}
+
+func (c *MessageConverter) lookupBotFromDB(qqStr string) string {
+	if c.lookup == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	botID, err := c.lookup.LookupBotByQQ(ctx, qqStr)
+	if err != nil || botID == "" {
+		return ""
+	}
+
+	// 回填缓存失败不影响本次路由，下次再回源。
+	if err := c.cacheSetValue(ctx, "qq:bot_bind:"+qqStr, botID); err != nil {
+		logger.Debug("回填QQ-Bot绑定缓存失败",
+			logger.StringField("qq_number", qqStr),
+			logger.ErrorField(err))
+	}
+	return botID
+}
+
+func (c *MessageConverter) cacheGetValue(ctx context.Context, key string) (string, error) {
+	if c.cacheGet != nil {
+		return c.cacheGet(ctx, key)
+	}
+	redis := cache.NewRedisCache()
+	if redis == nil {
+		// Redis 初始化失败时 NewRedisCache 返回 nil（且只尝试一次），
+		// 这里必须降级回源，否则每次 QQ 消息都会 nil panic。
+		return "", fmt.Errorf("redis unavailable")
+	}
+	return redis.Get(ctx, key)
+}
+
+func (c *MessageConverter) cacheSetValue(ctx context.Context, key, value string) error {
+	if c.cacheSet != nil {
+		return c.cacheSet(ctx, key, value)
+	}
+	redis := cache.NewRedisCache()
+	if redis == nil {
+		return fmt.Errorf("redis unavailable")
+	}
+	return redis.Set(ctx, key, value, 0)
 }
 
 // findLogosUserByQQ 根据 QQ 号查找绑定的 Logos UserID
@@ -229,8 +298,7 @@ func (c *MessageConverter) findLogosUserByQQ(qqUserID int64) string {
 	qqStr := strconv.FormatInt(qqUserID, 10)
 	key := fmt.Sprintf("qq:user_bind:%s", qqStr)
 
-	redis := cache.NewRedisCache()
-	logosUserID, err := redis.Get(context.Background(), key)
+	logosUserID, err := c.cacheGetValue(context.Background(), key)
 	if err != nil {
 		logger.Debug("查询QQ-User绑定缓存失败",
 			logger.StringField("qq_user_id", qqStr),

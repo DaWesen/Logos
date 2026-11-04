@@ -9,6 +9,7 @@ import (
 
 	"Logos/internal/service/messaging/contact/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -74,7 +75,7 @@ func (r *contactRepositoryImpl) GetPendingFriendRequests(ctx context.Context, to
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Order("created_at DESC").
 		Offset(offset).
 		Limit(pageSize).
@@ -119,7 +120,7 @@ func (r *contactRepositoryImpl) GetFriends(ctx context.Context, userID string, g
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Order("updated_at DESC").
 		Offset(offset).
 		Limit(pageSize).
@@ -169,7 +170,7 @@ func (r *contactRepositoryImpl) UnblockUser(ctx context.Context, userID, unblock
 func (r *contactRepositoryImpl) GetBlacklist(ctx context.Context, userID string, page, pageSize int) ([]*model.Friendship, int64, error) {
 	var list []*model.Friendship
 	var total int64
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	db := r.db.WithContext(ctx).Model(&model.Friendship{}).Where("user_id = ? AND status = ?", toInt64(userID), model.FriendshipStatusBlocked)
 	if err := db.Count(&total).Error; err != nil {

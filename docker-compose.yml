@@ -538,11 +538,26 @@ services:
       REDIS_PASSWORD: redis123456
       QQBRIDGE_ENABLED: "true"
       QQBRIDGE_WS_PORT: "6701"
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      # 必须与 gateway 读取的桶一致，否则媒体代理会 404
+      MINIO_BUCKET: logos-documents
+      # 并发与超时都可调：不同机器规格/模型配额下不能写死。
+      # 留空使用默认值（fast=4, media=8, 100MB, 90s）。
+      QQBRIDGE_FAST_CONCURRENCY: ${QQBRIDGE_FAST_CONCURRENCY:-4}
+      QQBRIDGE_MEDIA_CONCURRENCY: ${QQBRIDGE_MEDIA_CONCURRENCY:-8}
+      QQBRIDGE_MEDIA_MAX_MB: ${QQBRIDGE_MEDIA_MAX_MB:-100}
+      QQBRIDGE_MEDIA_TIMEOUT_SECONDS: ${QQBRIDGE_MEDIA_TIMEOUT_SECONDS:-90}
+      # LLOneBot 通常跑在宿主机/容器外，出站媒体必须是它可访问的绝对地址；
+      # 默认指向宿主机上的 nginx 入口，部署到公网时改成 https://chat.example.com
+      LOGOS_PUBLIC_BASE_URL: ${LOGOS_PUBLIC_BASE_URL:-http://host.docker.internal:80}
     ports:
       - "6701:6701"
     depends_on:
       - kafka
       - redis
+      - minio
     networks:
       - logos-network
 
@@ -780,8 +795,10 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       MINIO_BUCKET: logos-documents
-    ports:
-      - "9016:9016"
+    # process 是网关背后的内网服务：只暴露给 compose 网络，不发布到宿主机。
+    # 它接受用户上传与文档查询，直接暴露会绕过网关的限流、撤销校验与审计。
+    expose:
+      - "9016"
     depends_on:
       - etcd
       - postgres

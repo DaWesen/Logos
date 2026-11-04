@@ -8,6 +8,7 @@ import (
 	"Logos/internal/service/messaging/contact/service"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	pb "Logos/proto_gen/contact"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -67,14 +68,7 @@ func (s *ContactServiceImpl) HandleFriendRequest(ctx context.Context, req *pb.Ha
 
 func (s *ContactServiceImpl) GetFriendRequests(ctx context.Context, req *pb.GetFriendRequestsRequest) (*pb.GetFriendRequestsResponse, error) {
 	userID := auth.MustGetUserID(ctx)
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
 
 	requests, total, err := s.service.GetPendingFriendRequests(ctx, userID, page, pageSize)
 	if err != nil {
@@ -138,14 +132,7 @@ func (s *ContactServiceImpl) UpdateFriendRemark(ctx context.Context, req *pb.Upd
 
 func (s *ContactServiceImpl) GetFriendList(ctx context.Context, req *pb.GetFriendListRequest) (*pb.GetFriendListResponse, error) {
 	userID := auth.MustGetUserID(ctx)
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 50
-	}
+	page, pageSize := pagination.NormalizeWithDefault(int(req.Page), int(req.PageSize), 50)
 
 	friends, total, err := s.service.GetFriends(ctx, userID, req.GroupId, page, pageSize)
 	if err != nil {

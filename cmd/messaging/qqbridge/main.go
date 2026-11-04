@@ -7,15 +7,18 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"Logos/config"
 	"Logos/internal/service/messaging/qqbridge"
 	"Logos/pkg/cache"
 	"Logos/pkg/client"
+	"Logos/pkg/database/pgsql"
 	"Logos/pkg/logger"
 
 	zero "github.com/wdvxdr1123/ZeroBot"
 	"github.com/wdvxdr1123/ZeroBot/driver"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -31,10 +34,13 @@ func main() {
 		logger.StringField("ws_forward_url", cfg.QQBridge.WSForwardURL),
 		logger.IntField("ws_port", cfg.QQBridge.WSPort))
 
-	// 预热 QQ-Bot 绑定缓存
-	warmupBotBindings()
+	// 预热 QQ-Bot 绑定缓存；数据库不可用时返回 nil，Bridge 仍可启动。
+	db := warmupBotBindings()
 
 	bridge := qqbridge.NewBridge(cfg)
+	if db != nil {
+		bridge.SetBindingLookup(qqbridge.BotBindingLookup{DB: db})
+	}
 
 	// 初始化 Bot gRPC 客户端（用于快速路径直接调用 Bot）
 	botClient, botErr := client.NewBotClientFromConfig(cfg)
@@ -110,14 +116,31 @@ func main() {
 
 // warmupBotBindings 从数据库加载 Bot 的 QQ 绑定关系到 Redis 缓存
 // 这样 findBotByQQNumber 就能通过缓存快速查找
-func warmupBotBindings() {
-	redis := cache.NewRedisCache()
-	ctx := context.Background()
+func warmupBotBindings() *gorm.DB {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	// TODO: 当 Bot Service 提供了 gRPC 接口后，这里应该调用 ListBots
-	// 遍历所有绑定了 QQ 号的 Bot，写入 Redis 缓存
-	// 当前先跳过，依赖 Bot 创建/更新时写入缓存
+	// 预热是「尽力而为」：数据库不可用不应该阻塞 Bridge 启动。
+	// 这里用短超时直接连一次，失败就跳过；运行时消息仍可走缓存或退化为普通用户。
+	db, err := pgsql.InitPostgresWithRetry(ctx, 1)
+	if err != nil {
+		logger.Warn("QQ-Bot绑定预热跳过：PostgreSQL不可用", logger.ErrorField(err))
+		return nil
+	}
 
-	_ = redis
-	_ = ctx
+	bindings, err := qqbridge.LoadBotBindings(ctx, db)
+	if err != nil {
+		logger.Warn("QQ-Bot绑定预热跳过：读取失败", logger.ErrorField(err))
+		return db
+	}
+
+	written, err := qqbridge.WarmupBotBindings(ctx, bindings, cache.NewRedisCache())
+	if err != nil {
+		logger.Warn("QQ-Bot绑定预热部分失败",
+			logger.IntField("written", written),
+			logger.ErrorField(err))
+		return db
+	}
+	logger.Info("QQ-Bot绑定预热完成", logger.IntField("count", written))
+	return db
 }
