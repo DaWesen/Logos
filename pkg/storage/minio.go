@@ -5,27 +5,23 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"sync"
 	"time"
 
 	"Logos/config"
+	"Logos/pkg/lazyinit"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 var (
-	minioClient *minio.Client
-	minioMu     sync.Mutex
-
 	// 初始化失败不能永久缓存成 sync.Once 的「已完成」：那样第二次调用会返回
 	// (nil, nil)，调用方以为成功，随后在 nil client 上 panic。
-	// 这里只缓存失败结果一小段时间，避免每个请求都去探测一个还没起来的 MinIO，
-	// 同时保留自愈能力——依赖恢复后下一次调用可以真正初始化成功。
-	minioLastErr  error
-	minioRetryAt  time.Time
-	minioInitFunc = initMinioClient
-	minioNow      = time.Now
+	// lazyinit 只缓存失败结果一小段时间，避免每个请求都去探测一个还没起来的
+	// MinIO，同时保留自愈能力——依赖恢复后下一次调用可以真正初始化成功。
+	minioResource = lazyinit.New(lazyinit.Options{
+		RetryInterval: minioInitRetryInterval,
+	}, initMinioClient)
 )
 
 const (
@@ -46,26 +42,7 @@ type MinioManager struct {
 // 之后重新尝试。这样 compose 里 MinIO 晚于网关启动时，存储能力可以自愈，
 // 而不是「第一次失败就永久不可用」。
 func InitMinio() (*minio.Client, error) {
-	minioMu.Lock()
-	defer minioMu.Unlock()
-
-	if minioClient != nil {
-		return minioClient, nil
-	}
-	if minioLastErr != nil && minioNow().Before(minioRetryAt) {
-		return nil, minioLastErr
-	}
-
-	client, err := minioInitFunc()
-	if err != nil {
-		minioLastErr = err
-		minioRetryAt = minioNow().Add(minioInitRetryInterval)
-		return nil, err
-	}
-
-	minioClient = client
-	minioLastErr = nil
-	return minioClient, nil
+	return minioResource.Get()
 }
 
 func initMinioClient() (*minio.Client, error) {
