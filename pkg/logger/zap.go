@@ -55,7 +55,13 @@ func SetLogger(l *zap.Logger) {
 
 // 初始化Zap日志记录器
 func initZapLogger() *zap.Logger {
-	logConfig := config.GetConfig().Log
+	// 库代码不能因为调用方还没加载配置就 panic：单元测试、CLI 工具、
+	// 只引用 logger 的独立包都会走到这里。TryGetConfig 不会触发配置加载，
+	// 没有配置时退回 info + stdout 的安全默认值。
+	var logConfig config.Log
+	if cfg := config.TryGetConfig(); cfg != nil {
+		logConfig = cfg.Log
+	}
 
 	//配置编码器
 	encoderConfig := zap.NewProductionEncoderConfig()
