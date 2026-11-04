@@ -220,16 +220,45 @@ func safeFloat64Convert(v interface{}) float64 {
 	}
 }
 
+// 缓存实例的懒加载状态。
+//
+// 不能用 sync.Once：Once 会把「失败」也永久缓存下来。Redis 在服务启动时
+// 还没就绪、或换实例后短暂不可用，之后恢复了，进程在重启前也永远拿不到
+// 缓存——所有请求退化成直接打数据库，而日志里只有启动时的一条错误。
+// 这里改成「失败后进入冷却期」：冷却期内直接返回 nil（避免每次请求都
+// 去连一次 Redis），冷却结束再重试。成功则永久缓存。
 var (
-	cacheInstance Cache
-	cacheOnce     sync.Once
+	cacheMu         sync.Mutex
+	cacheInstance   Cache
+	cacheRetryAfter time.Time
+	// 测试注入点：默认走真实的 InitRedis。
+	initRedisFunc = InitRedis
+	clockNow      = time.Now
 )
 
+const cacheRetryCooldown = 30 * time.Second
+
 func NewRedisCache() Cache {
-	cacheOnce.Do(func() {
-		cfg := config.GetConfig()
-		cacheInstance, _ = InitRedis(cfg.Redis)
-	})
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+
+	if cacheInstance != nil {
+		return cacheInstance
+	}
+	if clockNow().Before(cacheRetryAfter) {
+		// 冷却期内不重复连接：调用方按「缓存不可用」降级，
+		// 避免每个请求都付一次连接超时的代价。
+		return nil
+	}
+
+	cfg := config.GetConfig()
+	instance, err := initRedisFunc(cfg.Redis)
+	if err != nil {
+		// 失败后进入冷却期，下次请求再试，而不是永久放弃。
+		cacheRetryAfter = clockNow().Add(cacheRetryCooldown)
+		return nil
+	}
+	cacheInstance = instance
 	return cacheInstance
 }
 
@@ -268,27 +297,37 @@ func InitRedis(redisConfig config.Redis) (Cache, error) {
 
 // 设置键值对
 func (c *RedisCache) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
-	return c.client.Set(ctx, key, value, expiration).Err()
+	return runErr(ctx, "set", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.Set(ctx, key, value, expiration).Err()
+	})
 }
 
 // 获取值
 func (c *RedisCache) Get(ctx context.Context, key string) (string, error) {
-	return c.client.Get(ctx, key).Result()
+	return runOp(ctx, "get", cacheReadTimeout, func(ctx context.Context) (string, error) {
+		return c.client.Get(ctx, key).Result()
+	})
 }
 
 // 删除键
 func (c *RedisCache) Delete(ctx context.Context, key string) error {
-	return c.client.Del(ctx, key).Err()
+	return runErr(ctx, "delete", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.Del(ctx, key).Err()
+	})
 }
 
 // 设置过期时间
 func (c *RedisCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
-	return c.client.Expire(ctx, key, expiration).Err()
+	return runErr(ctx, "expire", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.Expire(ctx, key, expiration).Err()
+	})
 }
 
 // 检查键是否存在
 func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
-	result, err := c.client.Exists(ctx, key).Result()
+	result, err := runOp(ctx, "exists", cacheReadTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.Exists(ctx, key).Result()
+	})
 	if err != nil {
 		return false, err
 	}
@@ -342,7 +381,9 @@ func (c *RedisCache) HSet(ctx context.Context, key, field string, value interfac
 
 // 获取哈希字段
 func (c *RedisCache) HGet(ctx context.Context, key, field string) (string, error) {
-	return c.client.HGet(ctx, key, field).Result()
+	return runOp(ctx, "hget", cacheReadTimeout, func(ctx context.Context) (string, error) {
+		return c.client.HGet(ctx, key, field).Result()
+	})
 }
 
 // 批量设置哈希字段
@@ -417,7 +458,9 @@ func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64) 
 
 // 有序集合计数
 func (c *RedisCache) ZCount(ctx context.Context, key string, min, max float64) (int64, error) {
-	return c.client.ZCount(ctx, key, fmt.Sprintf("%f", min), fmt.Sprintf("%f", max)).Result()
+	return runOp(ctx, "zcount", cacheReadTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.ZCount(ctx, key, fmt.Sprintf("%f", min), fmt.Sprintf("%f", max)).Result()
+	})
 }
 
 // 获取有序集合成员分数
@@ -432,7 +475,9 @@ func (c *RedisCache) Incr(ctx context.Context, key string) (int64, error) {
 
 // 递增指定值
 func (c *RedisCache) IncrBy(ctx context.Context, key string, value int64) (int64, error) {
-	return c.client.IncrBy(ctx, key, value).Result()
+	return runOp(ctx, "incrby", cacheWriteTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.IncrBy(ctx, key, value).Result()
+	})
 }
 
 // 递减计数器
@@ -447,7 +492,9 @@ func (c *RedisCache) DecrBy(ctx context.Context, key string, value int64) (int64
 
 // 执行 Lua 脚本
 func (c *RedisCache) EvalSha(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
-	return c.client.Eval(ctx, script, keys, args...).Result()
+	return runOp(ctx, "eval", cacheWriteTimeout, func(ctx context.Context) (interface{}, error) {
+		return c.client.Eval(ctx, script, keys, args...).Result()
+	})
 }
 
 // 管道执行多个命令
