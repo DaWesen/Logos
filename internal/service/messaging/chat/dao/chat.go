@@ -2,6 +2,7 @@ package dao
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,10 +11,16 @@ import (
 
 	"Logos/internal/service/messaging/chat/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// ErrInvalidConversationCursor 会话列表游标无法解析。
+// 必须显式报错而不是静默回退第一页：静默回退会让客户端在坏游标上
+// 无限重复拉取同一页，表现为「加载更多」永远不前进。
+var ErrInvalidConversationCursor = errors.New("invalid conversation cursor")
 
 func sortUserIDs(id1, id2 string) (smaller, larger string) {
 	n1, err1 := strconv.ParseInt(id1, 10, 64)
@@ -95,6 +102,9 @@ type ChatRepository interface {
 	// PurgeMessageChangesBefore 按保留期回收原位变更日志，返回删除行数。
 	// 变更日志是会话级共享的（不能按某个用户的 cleared_seq 删除，别人还要补拉），只能按时间回收。
 	PurgeMessageChangesBefore(ctx context.Context, before time.Time) (int64, error)
+	// PurgeMessageIdempotencyBefore 按保留期分批回收发送幂等键，返回本批删除行数。
+	// 幂等键只需覆盖客户端重试窗口，不需要永久保留；分批删除避免一次锁住整张表。
+	PurgeMessageIdempotencyBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 	// GetMessagesByIDs 批量取消息，用于把客户端持有的 message_id 映射到会话内 seq。
 	GetMessagesByIDs(ctx context.Context, msgIDs []string) ([]*model.Message, error)
 	// GetReadPositions 返回会话内各成员的已读位点，已读回执由位点比对聚合得出。
@@ -142,6 +152,9 @@ type ChatRepository interface {
 	DeleteAllGroupMembers(ctx context.Context, groupID string) error
 
 	GetConversationList(ctx context.Context, userID string, page, pageSize int) ([]*model.ConversationItem, int64, error)
+	// GetConversationListByCursor 基于 (updated_at, id) 的 keyset 分页。
+	// 与 OFFSET 不同，单页代价与翻页深度无关；cursor 为空表示第一页。
+	GetConversationListByCursor(ctx context.Context, userID, cursor string, pageSize int) ([]*model.ConversationItem, string, bool, error)
 	GetUnreadCounts(ctx context.Context, userID string, chatIDs []string) (map[string]int64, error)
 	GetTotalUnreadCount(ctx context.Context, userID string) (int64, error)
 	// AdvanceReadPosition 推进会话已读位点（单调不回退），并同步 last_read_at
@@ -419,6 +432,19 @@ func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, userID, chatID 
 	var messages []*model.Message
 	var total int64
 
+	if err := r.messageSearchBaseQuery(ctx, userID, chatID, chatType, keyword, startTime, endTime, minSeq).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := r.messageSearchQuery(ctx, userID, chatID, chatType, keyword, startTime, endTime, minSeq, page, pageSize).
+		Find(&messages).Error
+	return messages, total, err
+}
+
+// messageSearchBaseQuery 是搜索的过滤条件，COUNT 与分页查询共用，
+// 避免两边条件写得不一致导致「总数和列表对不上」。
+func (r *chatRepositoryImpl) messageSearchBaseQuery(ctx context.Context, userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, minSeq int64) *gorm.DB {
 	query := r.db.WithContext(ctx).Model(&model.Message{}).
 		Where(notDeletedByUserSQL, userID)
 	if chatID != "" {
@@ -439,14 +465,16 @@ func (r *chatRepositoryImpl) SearchMessages(ctx context.Context, userID, chatID 
 	if !endTime.IsZero() {
 		query = query.Where("created_at <= ?", endTime)
 	}
+	return query
+}
 
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	offset := (page - 1) * pageSize
-	err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&messages).Error
-	return messages, total, err
+// messageSearchQuery 单独抽出分页查询，便于单测直接断言生成的 SQL 形态。
+func (r *chatRepositoryImpl) messageSearchQuery(ctx context.Context, userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, minSeq int64, page, pageSize int) *gorm.DB {
+	offset, size := pagination.Offset(page, pageSize)
+	return r.messageSearchBaseQuery(ctx, userID, chatID, chatType, keyword, startTime, endTime, minSeq).
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(size)
 }
 
 func (r *chatRepositoryImpl) MarkMessagesRead(ctx context.Context, msgIDs []string) error {
@@ -570,6 +598,34 @@ func (r *chatRepositoryImpl) PurgeMessageChangesBefore(ctx context.Context, befo
 	res := r.db.WithContext(ctx).
 		Where("created_at < ?", before).
 		Delete(&model.MessageChange{})
+	return res.RowsAffected, res.Error
+}
+
+// purgeMessageIdempotencyBeforeQuery 构造分批删除幂等键的 SQL。
+// 先按 created_at 索引取出有限的主键，再按复合主键删除；不直接 DELETE ... LIMIT，
+// 因为 PostgreSQL 不支持该语法，而一次删全量又会长时间持有行锁。
+func (r *chatRepositoryImpl) purgeMessageIdempotencyBeforeQuery(
+	ctx context.Context, before time.Time, limit int,
+) *gorm.DB {
+	return r.db.WithContext(ctx).Exec(`
+		DELETE FROM message_idempotency
+		WHERE (sender_id, request_id) IN (
+			SELECT sender_id, request_id
+			FROM message_idempotency
+			WHERE created_at < ?
+			ORDER BY created_at
+			LIMIT ?
+		)`, before, limit)
+}
+
+// PurgeMessageIdempotencyBefore 按保留期分批回收发送幂等键。
+func (r *chatRepositoryImpl) PurgeMessageIdempotencyBefore(
+	ctx context.Context, before time.Time, limit int,
+) (int64, error) {
+	if before.IsZero() || limit <= 0 {
+		return 0, nil
+	}
+	res := r.purgeMessageIdempotencyBeforeQuery(ctx, before, limit)
 	return res.RowsAffected, res.Error
 }
 
@@ -781,6 +837,7 @@ func (r *chatRepositoryImpl) RemoveGroupMember(ctx context.Context, groupID, use
 func (r *chatRepositoryImpl) GetGroupMembers(ctx context.Context, groupID string, page, pageSize int) ([]*model.GroupMember, int64, error) {
 	var members []*model.GroupMember
 	var total int64
+	page, pageSize = pagination.Normalize(page, pageSize)
 
 	gid := groupID
 	if err := r.db.WithContext(ctx).Model(&model.GroupMember{}).
@@ -910,45 +967,106 @@ func (r *chatRepositoryImpl) DeleteAllGroupMembers(ctx context.Context, groupID 
 }
 
 func (r *chatRepositoryImpl) GetConversationList(ctx context.Context, userID string, page, pageSize int) ([]*model.ConversationItem, int64, error) {
-	var convIDs []string
-	logger.Info("[DEBUG] GetConversationList called", logger.StringField("user_id", userID))
-	if err := r.db.WithContext(ctx).Model(&model.ConversationParticipant{}).
-		Where("user_id = ?", userID).
-		Pluck("conversation_id", &convIDs).Error; err != nil {
-		logger.Error("[DEBUG] Failed to get conv IDs", logger.ErrorField(err))
+	// 分页必须在数据库侧完成：早期实现先按用户把全部会话拉进内存再切片，
+	// 会话数上千时每次翻页都要传输/反序列化整张列表，且分页结果随内存切片
+	// 与 DB 排序的偏差漂移。改为 JOIN 参与者表后由 DB 排序 + LIMIT/OFFSET，
+	// 单次查询只取当前页，代价与总会话数无关。
+	page, pageSize = pagination.Normalize(page, pageSize)
+
+	var total int64
+	if err := r.conversationBaseQuery(ctx, userID).Count(&total).Error; err != nil {
+		logger.Error("统计会话总数失败", logger.ErrorField(err))
 		return nil, 0, err
 	}
-	logger.Info("[DEBUG] Found conv IDs", logger.StringField("user_id", userID), logger.AnyField("conv_ids", convIDs))
-
-	if len(convIDs) == 0 {
-		logger.Info("[DEBUG] No conv IDs found")
+	if total == 0 {
 		return []*model.ConversationItem{}, 0, nil
 	}
 
 	var conversations []model.Conversation
-	if err := r.db.WithContext(ctx).
-		Where("id IN ?", convIDs).
-		Order("updated_at DESC").
-		Find(&conversations).Error; err != nil {
-		logger.Error("[DEBUG] Failed to get conversations", logger.ErrorField(err))
+	if err := r.conversationListQuery(ctx, userID, page, pageSize).Find(&conversations).Error; err != nil {
+		logger.Error("查询会话列表失败", logger.ErrorField(err))
 		return nil, 0, err
 	}
-	logger.Info("[DEBUG] Found conversations", logger.IntField("count", len(conversations)), logger.AnyField("conversations", conversations))
 
-	total := int64(len(conversations))
-	offset := (page - 1) * pageSize
-	end := offset + pageSize
-	if offset > int(total) {
-		return []*model.ConversationItem{}, total, nil
+	items, err := r.buildConversationItems(ctx, userID, conversations)
+	if err != nil {
+		return nil, 0, err
 	}
-	if end > int(total) {
-		end = int(total)
+	return items, total, nil
+}
+
+// GetConversationListByCursor 基于 (updated_at, id) 的 keyset 分页。
+//
+// 为什么需要第二套分页：OFFSET 深页时数据库仍要扫描并丢弃前 N 行，
+// 翻到第 1000 页时代价和第一页完全不同。keyset 用上一页最后一条做锚点，
+// 每页代价恒定。这里显式保留 offset 版本，是为了兼容仍传 page 的客户端，
+// 属于渐进迁移而不是一次性破坏性变更。
+func (r *chatRepositoryImpl) GetConversationListByCursor(
+	ctx context.Context, userID, cursor string, pageSize int,
+) ([]*model.ConversationItem, string, bool, error) {
+	_, pageSize = pagination.Normalize(1, pageSize)
+
+	query := r.conversationBaseQuery(ctx, userID)
+	if cursor != "" {
+		anchor, err := decodeConversationCursor(cursor)
+		if err != nil {
+			return nil, "", false, err
+		}
+		// 行值比较等价于 updated_at < ? OR (updated_at = ? AND id < ?)，
+		// 但只用一次索引定位；id 是第二排序键，保证同一毫秒内也不重不漏。
+		query = query.Where("(conversations.updated_at, conversations.id) < (?, ?)",
+			anchor.UpdatedAt, anchor.ID)
 	}
-	conversations = conversations[offset:end]
 
-	unreadMap, _ := r.GetUnreadCounts(ctx, userID, convIDs)
+	// 多取一条判断是否还有下一页，避免再发一次 COUNT。
+	var conversations []model.Conversation
+	if err := query.
+		Order("conversations.updated_at DESC").
+		Order("conversations.id DESC").
+		Limit(pageSize + 1).
+		Find(&conversations).Error; err != nil {
+		logger.Error("游标查询会话列表失败",
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return nil, "", false, err
+	}
 
-	var items []*model.ConversationItem
+	hasMore := len(conversations) > pageSize
+	if hasMore {
+		conversations = conversations[:pageSize]
+	}
+
+	items, err := r.buildConversationItems(ctx, userID, conversations)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	var nextCursor string
+	if hasMore && len(conversations) > 0 {
+		last := conversations[len(conversations)-1]
+		nextCursor = encodeConversationCursor(last.UpdatedAt, last.ID)
+	}
+	return items, nextCursor, hasMore, nil
+}
+
+// buildConversationItems 把会话行补成列表项，并只对当前页统计未读数。
+func (r *chatRepositoryImpl) buildConversationItems(
+	ctx context.Context, userID string, conversations []model.Conversation,
+) ([]*model.ConversationItem, error) {
+	// 只对当前页的会话统计未读数，不再把整库会话 ID 带进聚合查询。
+	convIDs := make([]string, 0, len(conversations))
+	for _, conv := range conversations {
+		convIDs = append(convIDs, conv.ID)
+	}
+	unreadMap, err := r.GetUnreadCounts(ctx, userID, convIDs)
+	if err != nil {
+		// 未读数是列表的展示字段，统计失败不应让整个列表不可用；
+		// 降级为 0 并保留错误日志，前端仍能看到会话本身。
+		logger.Warn("统计未读数失败，降级为 0", logger.ErrorField(err))
+		unreadMap = map[string]int64{}
+	}
+
+	items := make([]*model.ConversationItem, 0, len(conversations))
 	for _, conv := range conversations {
 		item := &model.ConversationItem{
 			ChatID:      conv.ID,
@@ -961,7 +1079,58 @@ func (r *chatRepositoryImpl) GetConversationList(ctx context.Context, userID str
 		items = append(items, item)
 	}
 
-	return items, total, nil
+	return items, nil
+}
+
+// conversationListQuery 构造「某用户的一页会话」查询。
+// 抽成独立方法是为了让分页形态可被单元测试直接断言（LIMIT/OFFSET/JOIN），
+// 而不必依赖真实 PostgreSQL 返回非空结果。
+func (r *chatRepositoryImpl) conversationListQuery(ctx context.Context, userID string, page, pageSize int) *gorm.DB {
+	return r.conversationBaseQuery(ctx, userID).
+		Order("conversations.updated_at DESC").
+		// 同一时间戳用 id 兜底排序，保证 offset 分页也不会因排序不稳定而重复/漏行。
+		Order("conversations.id DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize)
+}
+
+// conversationBaseQuery 是 offset / keyset 两条分页路径共用的过滤条件，
+// 避免两边 JOIN 或权限条件写得不一致、导致同一用户看到不同的会话集合。
+func (r *chatRepositoryImpl) conversationBaseQuery(ctx context.Context, userID string) *gorm.DB {
+	return r.db.WithContext(ctx).Model(&model.Conversation{}).
+		Joins("JOIN conversation_participants p ON p.conversation_id = conversations.id").
+		Where("p.user_id = ?", userID)
+}
+
+// conversationCursor 是 keyset 分页的锚点。
+// 只编码业务排序键，不编码 offset，客户端无法通过改 cursor 跳到任意深页。
+type conversationCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
+// encodeConversationCursor 生成对客户端不透明的游标。
+// 用 base64url 而不是明文，避免调用方把内部排序字段当成 API 契约。
+func encodeConversationCursor(updatedAt time.Time, id string) string {
+	raw := updatedAt.UTC().Format(time.RFC3339Nano) + "|" + id
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeConversationCursor 解析游标，任何非法输入都返回 ErrInvalidConversationCursor。
+func decodeConversationCursor(cursor string) (conversationCursor, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return conversationCursor{}, ErrInvalidConversationCursor
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return conversationCursor{}, ErrInvalidConversationCursor
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil || updatedAt.IsZero() {
+		return conversationCursor{}, ErrInvalidConversationCursor
+	}
+	return conversationCursor{UpdatedAt: updatedAt, ID: parts[1]}, nil
 }
 
 // GetUnreadCounts 返回各会话的未读数。

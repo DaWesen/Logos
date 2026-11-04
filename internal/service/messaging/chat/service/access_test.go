@@ -50,6 +50,13 @@ type stubChatRepo struct {
 	// changes 按写入顺序保存原位变更日志，ID 单调递增，模拟自增主键
 	changes []*model.MessageChange
 	purged  []purgeCall
+	// idempotencyPurgeRows 按调用顺序返回每批删除行数；用于验证分批与单轮上限。
+	idempotencyPurgeRows  []int64
+	idempotencyPurgeCalls int
+	idempotencyPurgeErr   error
+	// groupMembersErr / privateConvErr 用于注入依赖失败，验证错误是否被正确上抛。
+	groupMembersErr error
+	privateConvErr  error
 }
 
 type purgeCall struct {
@@ -78,6 +85,9 @@ func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64
 
 // GetAllGroupMemberIDs 按「groupID|userID」键前缀汇总群成员，供编辑事件接收者计算使用。
 func (r *stubChatRepo) GetAllGroupMemberIDs(_ context.Context, groupID string) ([]string, error) {
+	if r.groupMembersErr != nil {
+		return nil, r.groupMembersErr
+	}
 	prefix := groupID + "|"
 	var ids []string
 	for key := range r.members {
@@ -86,6 +96,13 @@ func (r *stubChatRepo) GetAllGroupMemberIDs(_ context.Context, groupID string) (
 		}
 	}
 	return ids, nil
+}
+
+func (r *stubChatRepo) GetOrCreatePrivateConversation(_ context.Context, _, _ string) (*model.Conversation, error) {
+	if r.privateConvErr != nil {
+		return nil, r.privateConvErr
+	}
+	return &model.Conversation{ID: "private-conv"}, nil
 }
 
 func (r *stubChatRepo) ClearConversationForUser(_ context.Context, conversationID, userID string, seq int64) error {
@@ -222,6 +239,19 @@ func (r *stubChatRepo) PurgeMessageChangesBefore(_ context.Context, before time.
 	}
 	r.changes = kept
 	return removed, nil
+}
+
+func (r *stubChatRepo) PurgeMessageIdempotencyBefore(_ context.Context, _ time.Time, _ int) (int64, error) {
+	r.idempotencyPurgeCalls++
+	if r.idempotencyPurgeErr != nil {
+		return 0, r.idempotencyPurgeErr
+	}
+	if len(r.idempotencyPurgeRows) == 0 {
+		return 0, nil
+	}
+	n := r.idempotencyPurgeRows[0]
+	r.idempotencyPurgeRows = r.idempotencyPurgeRows[1:]
+	return n, nil
 }
 
 func (r *stubChatRepo) GetClearedSeq(_ context.Context, conversationID, _ string) (int64, error) {

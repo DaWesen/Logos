@@ -8,8 +8,11 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/obs"
+	"Logos/pkg/pagination"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -62,6 +65,9 @@ type ChatService interface {
 	StartEventConsumer() error
 
 	GetConversationList(userID string, page, pageSize int) ([]*model.ConversationItem, int64, error)
+	// GetConversationListByCursor 基于 (updated_at, id) 的 keyset 分页，
+	// 翻页深度不影响单页代价；cursor 为空表示第一页。
+	GetConversationListByCursor(userID, cursor string, pageSize int) ([]*model.ConversationItem, string, bool, error)
 	GetUnreadCounts(userID string, chatIDs []string) (map[string]int64, error)
 	GetTotalUnreadCount(userID string) (int64, error)
 	GetMessageReadReceipts(userID, chatID string, messageIDs []string, includeReaders bool) ([]*model.MessageReadReceipt, error)
@@ -100,6 +106,11 @@ type ChatServiceImpl struct {
 	defaultTargetLang string
 	userNameCache     sync.Map
 }
+
+// conversationEnrichConcurrency 会话列表补全（对方用户信息 / 好友关系）的并发上限。
+// 一页最多 100 个会话，若每个会话各起一个 goroutine，单请求可放大到 200 个；
+// 限制为固定窗口后，下游 User/Contact 服务的瞬时压力可预期。
+const conversationEnrichConcurrency = 8
 
 func NewChatService(repo dao.ChatRepository, eventBus *types.EventBus, ctx context.Context) ChatService {
 	c, cancel := context.WithCancel(ctx)
@@ -157,7 +168,7 @@ func (s *ChatServiceImpl) StartEventConsumer() error {
 		}
 	}()
 
-	s.startChangeLogCleanup()
+	s.startRetentionCleanup()
 
 	return nil
 }
@@ -189,6 +200,17 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		// 显式忽略以避免落进 default 刷"未知事件类型"告警。
 		return nil
 
+	case types.EventTypeBotRecovery:
+		// QQ 快速路径失败后的补偿事件：原消息已经落库并推送过，
+		// 这里只补跑 Bot 调用，绝不能再次 persist 或发布 outgoing，
+		// 否则用户会看到两条一模一样的消息。
+		event, err := types.MessageEventFromJSON(msg.Value)
+		if err != nil {
+			logger.Error("解析 Bot 补偿事件失败", logger.ErrorField(err))
+			return err
+		}
+		return s.handleBotRecoveryEvent(event)
+
 	case types.EventTypeMessage, "":
 		event, err := types.MessageEventFromJSON(msg.Value)
 		if err != nil {
@@ -198,6 +220,15 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 
 		if len(event.RecipientIDs) > 0 {
 			logger.Debug("事件已处理，跳过", logger.StringField("msg_id", event.ID))
+			return nil
+		}
+
+		// Bot 回复使用确定性主键：同一条回复被重投/补偿第二次送来时，
+		// 数据库能靠主键挡住重复写入，但前端仍会收到重复推送。
+		// 这里在发布 outgoing 之前就拦掉，保证「一条回复只推一次」。
+		if s.botReplyAlreadyProcessed(event) {
+			logger.Info("Bot 回复已处理，跳过重复推送",
+				logger.StringField("msg_id", event.ID))
 			return nil
 		}
 
@@ -227,7 +258,18 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 		case types.ChatTypePrivate:
 			recipientIDs = s.getPrivateChatRecipient(event.ChatID, event.SenderID)
 		case types.ChatTypeGroup:
-			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, event.ChatID)
+			var err error
+			recipientIDs, err = s.repo.GetAllGroupMemberIDs(s.ctx, event.ChatID)
+			if err != nil {
+				// 群成员查询失败时若继续走下去，消息会落库但推送接收者为空：
+				// 在线成员收不到实时消息，只能等下次同步。返回 error 让 Kafka 重投，
+				// 由消息主键幂等兜底，避免「存了但没人收到」的静默丢失。
+				logger.Error("获取群成员失败，不提交 offset 等待 Kafka 重投",
+					logger.StringField("msg_id", event.ID),
+					logger.StringField("chat_id", event.ChatID),
+					logger.ErrorField(err))
+				return fmt.Errorf("获取群成员失败: %w", err)
+			}
 		}
 		if len(recipientIDs) == 0 && event.ChatType == types.ChatTypePrivate {
 			// bot-{botUUID} 格式：Bot 回复时，从 MentionUserIDs 获取接收者
@@ -286,6 +328,79 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 	}
 
 	return nil
+}
+
+// botReplyAlreadyProcessed 判断这条 Bot 回复是否已经落库。
+//
+// Bot 回复使用 (botID, 原消息ID) 派生的确定性主键。重投/补偿产生的第二次
+// 回复会撞上同一个主键；如果这里不拦，数据库靠主键保住了唯一性，但前端
+// 仍会收到两条一模一样的推送。查询失败时按「未处理」继续，让主键兜底：
+// 宁可多一次写冲突，也不要因为一次读失败把正常回复吞掉。
+func (s *ChatServiceImpl) botReplyAlreadyProcessed(event *types.MessageEvent) bool {
+	if event == nil || !strings.HasPrefix(event.SenderID, "bot_") || event.ID == "" {
+		return false
+	}
+	existing, err := s.repo.GetMessageByID(s.ctx, event.ID)
+	if err != nil {
+		logger.Warn("检查 Bot 回复是否已处理失败，按未处理继续",
+			logger.StringField("msg_id", event.ID),
+			logger.ErrorField(err))
+		return false
+	}
+	return existing != nil
+}
+
+// handleBotRecoveryEvent 处理快速路径失败后的补偿。
+//
+// 语义边界：只补跑 Bot，不落库、不推送、不审核、不翻译。
+// 返回 nil 让 Kafka 提交 offset；Bot 调用本身仍是异步尽力而为，
+// 与正常慢路径保持一致（失败时发布 Bot 错误消息，而不是阻塞分区）。
+func (s *ChatServiceImpl) handleBotRecoveryEvent(event *types.MessageEvent) error {
+	if event == nil {
+		return nil
+	}
+	if event.Metadata == nil || event.Metadata[types.MetaQQFastRecovery] != "true" {
+		// 没有补偿标记的事件不是我们发的，忽略而不是猜测。
+		logger.Warn("收到缺少补偿标记的 bot_recovery 事件，已忽略",
+			logger.StringField("msg_id", event.ID))
+		return nil
+	}
+	if s.botClient == nil {
+		logger.Warn("Bot 客户端未初始化，无法执行快速路径补偿",
+			logger.StringField("msg_id", event.ID))
+		return nil
+	}
+	// 补偿事件可能被 Kafka 重投：先看这条回复是否已经落库，
+	// 已处理过就直接提交 offset，不再调用 Bot（模型调用是有成本的）。
+	if botID := firstBotID(event.MentionUserIDs); botID != "" {
+		if replyID := types.BotReplyMessageID(botID, event.ID); replyID != "" {
+			existing, err := s.repo.GetMessageByID(s.ctx, replyID)
+			if err == nil && existing != nil {
+				logger.Info("Bot 回复已存在，跳过重复补偿",
+					logger.StringField("msg_id", event.ID),
+					logger.StringField("reply_id", replyID))
+				return nil
+			}
+		}
+	}
+
+	logger.Warn("执行 QQ 快速路径补偿",
+		logger.StringField("msg_id", event.ID),
+		logger.StringField("chat_id", event.ChatID),
+		logger.StringField("reason", event.Metadata[types.MetaQQFastReason]))
+
+	s.handleBotMentions(event)
+	return nil
+}
+
+// firstBotID 返回事件中第一个 Bot 的 ID（去掉 bot_ 前缀）。
+func firstBotID(mentionIDs []string) string {
+	for _, uid := range mentionIDs {
+		if strings.HasPrefix(uid, "bot_") {
+			return strings.TrimPrefix(uid, "bot_")
+		}
+	}
+	return ""
 }
 
 // authorizeIncomingMessage 校验事件发送者是否有权向该会话发送消息（失败关闭）。
@@ -352,16 +467,22 @@ func (s *ChatServiceImpl) persistIncomingMessage(event *types.MessageEvent) erro
 				}
 			}
 			if userID != "" {
-				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, botSenderID, userID)
+				if _, err := s.repo.GetOrCreatePrivateConversation(s.ctx, botSenderID, userID); err != nil {
+					return fmt.Errorf("创建 bot 私聊会话失败: %w", err)
+				}
 			}
 		} else {
 			parts := strings.Split(event.ChatID, "_")
 			if len(parts) == 3 && parts[0] == "private" {
 				// private_{a}_{b}
-				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2])
+				if _, err := s.repo.GetOrCreatePrivateConversation(s.ctx, parts[1], parts[2]); err != nil {
+					return fmt.Errorf("创建私聊会话失败: %w", err)
+				}
 			} else if len(parts) == 2 {
 				// {a}_{b}
-				_, _ = s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1])
+				if _, err := s.repo.GetOrCreatePrivateConversation(s.ctx, parts[0], parts[1]); err != nil {
+					return fmt.Errorf("创建私聊会话失败: %w", err)
+				}
 			}
 		}
 	}
@@ -432,7 +553,7 @@ var botMentionRegex = regexp.MustCompile(`@(\S+)`)
 func (s *ChatServiceImpl) handleBotMentions(event *types.MessageEvent) {
 	// QQ Bridge 快速路径已直接调用 Bot，跳过避免重复调用
 	if event.Metadata != nil {
-		if direct, ok := event.Metadata["qq_direct_bot"]; ok && direct == "true" {
+		if direct, ok := event.Metadata[types.MetaQQDirectBot]; ok && direct == "true" {
 			logger.Debug("QQ快速路径消息，跳过Bot调用",
 				logger.StringField("msg_id", event.ID))
 			return
@@ -538,8 +659,16 @@ func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs 
 				return
 			}
 
+			// 确定性 ID：补偿/重投导致的重复回复落到同一主键上，
+			// 配合幂等键不会产生两条内容相同的消息。
+			replyID := types.BotReplyMessageID(botID, event.ID)
+			if replyID == "" {
+				replyID = "bot_" + uuid.New().String()
+			}
+
 			botResponseEvent := &types.MessageEvent{
-				ID:             "bot_" + uuid.New().String(),
+				ID:             replyID,
+				RequestID:      replyID,
 				ChatID:         event.ChatID,
 				ChatType:       event.ChatType,
 				SenderID:       "bot_" + botID,
@@ -974,6 +1103,11 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		}
 		msg = stored
 		replayed = !created
+		if replayed {
+			obs.RecordMessageIdempotency(s.ctx, "replayed")
+		} else {
+			obs.RecordMessageIdempotency(s.ctx, "created")
+		}
 	} else if err := s.repo.CreateMessage(s.ctx, msg); err != nil {
 		logger.Error("创建消息失败", logger.ErrorField(err))
 		return nil, nil, false, err
@@ -1085,15 +1219,7 @@ func (s *ChatServiceImpl) SearchMessages(userID, chatID string, chatType model.C
 			logger.ErrorField(err))
 		return nil, 0, err
 	}
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	if pageSize > 100 {
-		pageSize = 100
-	}
+	page, pageSize = pagination.Normalize(page, pageSize)
 	return s.repo.SearchMessages(s.ctx, userID, chatID, chatType, keyword, startTime, endTime, page, pageSize, s.clearedSeqFor(chatID, userID))
 }
 
@@ -2259,7 +2385,29 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 	if err != nil {
 		return nil, 0, err
 	}
+	s.enrichConversationItems(userID, items)
+	return items, total, nil
+}
 
+// GetConversationListByCursor 走 keyset 分页，返回下一页游标与 has_more。
+// 非法游标统一翻译成参数错误，避免调用方把它当成系统故障重试。
+func (s *ChatServiceImpl) GetConversationListByCursor(
+	userID, cursor string, pageSize int,
+) ([]*model.ConversationItem, string, bool, error) {
+	items, nextCursor, hasMore, err := s.repo.GetConversationListByCursor(s.ctx, userID, cursor, pageSize)
+	if err != nil {
+		if errors.Is(err, dao.ErrInvalidConversationCursor) {
+			return nil, "", false, types.ErrChatBadRequest
+		}
+		return nil, "", false, err
+	}
+	s.enrichConversationItems(userID, items)
+	return items, nextCursor, hasMore, nil
+}
+
+// enrichConversationItems 补全列表展示字段：私聊对方信息、好友关系。
+// offset / keyset 两条路径共用，避免两套补全逻辑逐渐漂移。
+func (s *ChatServiceImpl) enrichConversationItems(userID string, items []*model.ConversationItem) {
 	logger.Info("\x1b[36m🔵 [后端] GetConversationList 开始\x1b[0m",
 		logger.StringField("user_id", userID),
 		logger.IntField("item_count", len(items)),
@@ -2282,6 +2430,7 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 			avatar string
 		}
 		resultsChan := make(chan userResult, len(items))
+		sem := make(chan struct{}, conversationEnrichConcurrency)
 
 		var wg sync.WaitGroup
 		for idx, item := range items {
@@ -2317,7 +2466,11 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 			wg.Add(1)
 			go func(i int, oid int64) {
 				defer wg.Done()
-				infoCtx, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				// 限流：一页最多 100 个会话，不能为每个会话无界开 goroutine。
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				infoCtx, infoCancel := context.WithTimeout(s.ctx, 10*time.Second)
 				userInfo, err := s.userClient.GetUserInfo(infoCtx, oid)
 				infoCancel()
 
@@ -2325,6 +2478,10 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 				if err == nil && userInfo != nil {
 					name = userInfo.Username
 					avatar = userInfo.Avatar
+				} else if err != nil {
+					logger.Debug("获取会话对方用户信息失败",
+						logger.Int64Field("user_id", oid),
+						logger.ErrorField(err))
 				}
 				resultsChan <- userResult{
 					idx:    i,
@@ -2364,6 +2521,7 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 			otherUserID string
 		}
 		resultsChan := make(chan result, len(items))
+		sem := make(chan struct{}, conversationEnrichConcurrency)
 
 		// 并行检查所有好友关系
 		var wg sync.WaitGroup
@@ -2395,7 +2553,10 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 			wg.Add(1)
 			go func(i int, chatID, oid string) {
 				defer wg.Done()
-				relCtx, relCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				relCtx, relCancel := context.WithTimeout(s.ctx, 10*time.Second)
 				res, err := s.contactChecker.CheckFriendship(relCtx, userID, oid)
 				relCancel()
 
@@ -2440,7 +2601,6 @@ func (s *ChatServiceImpl) GetConversationList(userID string, page, pageSize int)
 		}
 	}
 
-	return items, total, nil
 }
 
 func (s *ChatServiceImpl) GetUnreadCounts(userID string, chatIDs []string) (map[string]int64, error) {
@@ -2561,17 +2721,27 @@ const (
 	// changeLogRetention 原位变更日志保留期。超过保留期后，长期离线设备重新进入会话时
 	// 会走完整历史拉取（拿到的是变更后的内容），不再需要增量补拉，日志可以回收。
 	changeLogRetention = 7 * 24 * time.Hour
-	// changeLogCleanupInterval 清理周期；清理是幂等的低优先级任务，不需要太频繁。
-	changeLogCleanupInterval = 6 * time.Hour
+	// idempotencyRetention 发送幂等键保留期。
+	// 它只需覆盖客户端重试窗口，不需要和消息历史一样永久保留；
+	// 保留 7 天给跨天重试留余量，同时避免表随发送量无限增长。
+	idempotencyRetention = 7 * 24 * time.Hour
+	// idempotencyPurgeBatch / idempotencyPurgeMaxBatches 控制单轮清理量：
+	// 每批只锁住有限行，单轮最多处理 10 批，避免清理任务反过来拖慢消息写入。
+	idempotencyPurgeBatch      = 1000
+	idempotencyPurgeMaxBatches = 10
+	// retentionCleanupInterval 清理周期；清理是幂等的低优先级任务，不需要太频繁。
+	retentionCleanupInterval = time.Hour
 )
 
-// startChangeLogCleanup 启动原位变更日志的后台回收。
+// startRetentionCleanup 启动保留期数据回收。
 // message_changes 是会话级共享日志（同一会话的所有成员共用），
 // 不能像墓碑那样按某个用户的 cleared_seq 删除（别人可能还需要补拉），只能按时间保留期回收。
-func (s *ChatServiceImpl) startChangeLogCleanup() {
+// message_idempotency 则是发送侧的短期去重记录，过期后同样按时间回收。
+func (s *ChatServiceImpl) startRetentionCleanup() {
 	go func() {
 		s.purgeExpiredChanges(time.Now())
-		ticker := time.NewTicker(changeLogCleanupInterval)
+		s.purgeExpiredIdempotency(time.Now())
+		ticker := time.NewTicker(retentionCleanupInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -2579,6 +2749,7 @@ func (s *ChatServiceImpl) startChangeLogCleanup() {
 				return
 			case <-ticker.C:
 				s.purgeExpiredChanges(time.Now())
+				s.purgeExpiredIdempotency(time.Now())
 			}
 		}
 	}()
@@ -2588,13 +2759,43 @@ func (s *ChatServiceImpl) startChangeLogCleanup() {
 func (s *ChatServiceImpl) purgeExpiredChanges(now time.Time) int64 {
 	n, err := s.repo.PurgeMessageChangesBefore(s.ctx, now.Add(-changeLogRetention))
 	if err != nil {
+		obs.RecordRetentionCleanup(s.ctx, "message_changes", "failed", 0)
 		logger.Warn("清理过期原位变更日志失败", logger.ErrorField(err))
 		return 0
 	}
+	obs.RecordRetentionCleanup(s.ctx, "message_changes", "ok", n)
 	if n > 0 {
 		logger.Info("已清理过期原位变更日志", logger.Int64Field("rows", n))
 	}
 	return n
+}
+
+// purgeExpiredIdempotency 分批删除过期幂等键，返回本轮删除行数。
+// 达到单轮上限就停，剩余数据下一轮继续处理；清理允许延后，但不能阻塞消息写入。
+func (s *ChatServiceImpl) purgeExpiredIdempotency(now time.Time) int64 {
+	cutoff := now.Add(-idempotencyRetention)
+	var total int64
+
+	for i := 0; i < idempotencyPurgeMaxBatches; i++ {
+		n, err := s.repo.PurgeMessageIdempotencyBefore(s.ctx, cutoff, idempotencyPurgeBatch)
+		if err != nil {
+			obs.RecordRetentionCleanup(s.ctx, "message_idempotency", "failed", 0)
+			logger.Warn("清理过期消息幂等键失败",
+				logger.Int64Field("deleted", total),
+				logger.ErrorField(err))
+			return total
+		}
+		obs.RecordRetentionCleanup(s.ctx, "message_idempotency", "ok", n)
+		total += n
+		if n < idempotencyPurgeBatch {
+			break
+		}
+	}
+
+	if total > 0 {
+		logger.Info("已清理过期消息幂等键", logger.Int64Field("rows", total))
+	}
+	return total
 }
 
 // SyncOfflineMessages 批量补齐客户端离线期间的增量消息。

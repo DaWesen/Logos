@@ -11,6 +11,7 @@ import (
 	"Logos/internal/service/messaging/types"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	pb "Logos/proto_gen/chat"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -445,13 +446,23 @@ func (s *ChatServiceImpl) GetConversationList(ctx context.Context, req *pb.GetCo
 
 	logger.Info("[DEBUG] Handler GetConversationList called", logger.StringField("user_id", userID))
 
-	page := int(req.Page)
-	pageSize := int(req.PageSize)
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
+	page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
+
+	// cursor 非空时走 keyset 分页：深页不再扫过前 N 行。
+	// 旧客户端继续传 page，行为不变。
+	if req.GetCursor() != "" {
+		items, nextCursor, hasMore, err := s.service.GetConversationListByCursor(userID, req.GetCursor(), pageSize)
+		if err != nil {
+			code, message := chatErrorCode(err)
+			return &pb.GetConversationListResponse{Code: code, Message: message}, nil
+		}
+		return &pb.GetConversationListResponse{
+			Code:          200,
+			Message:       "获取成功",
+			Conversations: conversationItemsToProto(items),
+			NextCursor:    nextCursor,
+			HasMore:       hasMore,
+		}, nil
 	}
 
 	items, total, err := s.service.GetConversationList(userID, page, pageSize)
@@ -461,6 +472,18 @@ func (s *ChatServiceImpl) GetConversationList(ctx context.Context, req *pb.GetCo
 	}
 	logger.Info("[DEBUG] Service returned items", logger.IntField("count", len(items)), logger.AnyField("items", items))
 
+	resp := &pb.GetConversationListResponse{
+		Code:          200,
+		Message:       "获取成功",
+		Conversations: conversationItemsToProto(items),
+		Total:         int32(total),
+	}
+	logger.Info("[DEBUG] Handler returning resp", logger.StringField("user_id", userID), logger.AnyField("resp", resp))
+	return resp, nil
+}
+
+// conversationItemsToProto 统一列表项转换，offset / keyset 两条路径共用。
+func conversationItemsToProto(items []*model.ConversationItem) []*pb.ConversationItem {
 	conversations := make([]*pb.ConversationItem, 0, len(items))
 	for _, item := range items {
 		ci := &pb.ConversationItem{
@@ -493,15 +516,7 @@ func (s *ChatServiceImpl) GetConversationList(ctx context.Context, req *pb.GetCo
 		}
 		conversations = append(conversations, ci)
 	}
-
-	resp := &pb.GetConversationListResponse{
-		Code:          200,
-		Message:       "获取成功",
-		Conversations: conversations,
-		Total:         int32(total),
-	}
-	logger.Info("[DEBUG] Handler returning resp", logger.StringField("user_id", userID), logger.AnyField("resp", resp))
-	return resp, nil
+	return conversations
 }
 
 func (s *ChatServiceImpl) GetUnreadCount(ctx context.Context, req *pb.GetUnreadCountRequest) (*pb.GetUnreadCountResponse, error) {

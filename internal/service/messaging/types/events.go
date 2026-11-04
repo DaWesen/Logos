@@ -21,6 +21,11 @@ const (
 	EventTypeUserOnline   EventType = "user_online"
 	EventTypeUserOffline  EventType = "user_offline"
 	EventTypeNotification EventType = "notification"
+	// EventTypeBotRecovery 是 QQ 快速路径失败后的补偿事件。
+	//
+	// 它复用消息事件结构，但语义不同：消费方只应补跑 Bot 调用，
+	// 不能再次落库或推送原消息，否则用户会看到两条一样的消息。
+	EventTypeBotRecovery EventType = "bot_recovery"
 )
 
 type MessageEvent struct {

@@ -367,6 +367,9 @@ message ConversationItem {
 message GetConversationListRequest {
   int32 page = 1;
   int32 page_size = 2;
+  // cursor 是上一页最后一条的 keyset 游标，非空时优先于 page。
+  // 对客户端不透明：内部编码了 (updated_at, id)，避免调用方依赖排序字段。
+  string cursor = 3;
 }
 
 // 获取会话列表响应
@@ -374,7 +377,11 @@ message GetConversationListResponse {
   int32 code = 1;
   string message = 2;
   repeated ConversationItem conversations = 3;
+  // total 只在 offset 模式（cursor 为空）下统计；keyset 模式返回 0，
+  // 避免每翻一页都对全部会话做一次 COUNT。
   int32 total = 4;
+  string next_cursor = 5;
+  bool has_more = 6;
 }
 
 // 获取未读消息数请求

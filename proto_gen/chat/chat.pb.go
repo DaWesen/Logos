@@ -2923,9 +2923,12 @@ func (x *ConversationItem) GetIsBlocked() bool {
 
 // 获取会话列表请求
 type GetConversationListRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Page          int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
-	PageSize      int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Page     int32                  `protobuf:"varint,1,opt,name=page,proto3" json:"page,omitempty"`
+	PageSize int32                  `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// cursor 是上一页最后一条的 keyset 游标，非空时优先于 page。
+	// 对客户端不透明：内部编码了 (updated_at, id)，避免调用方依赖排序字段。
+	Cursor        string `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2974,13 +2977,24 @@ func (x *GetConversationListRequest) GetPageSize() int32 {
 	return 0
 }
 
+func (x *GetConversationListRequest) GetCursor() string {
+	if x != nil {
+		return x.Cursor
+	}
+	return ""
+}
+
 // 获取会话列表响应
 type GetConversationListResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
 	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
 	Conversations []*ConversationItem    `protobuf:"bytes,3,rep,name=conversations,proto3" json:"conversations,omitempty"`
-	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	// total 只在 offset 模式（cursor 为空）下统计；keyset 模式返回 0，
+	// 避免每翻一页都对全部会话做一次 COUNT。
+	Total         int32  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	NextCursor    string `protobuf:"bytes,5,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	HasMore       bool   `protobuf:"varint,6,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3041,6 +3055,20 @@ func (x *GetConversationListResponse) GetTotal() int32 {
 		return x.Total
 	}
 	return 0
+}
+
+func (x *GetConversationListResponse) GetNextCursor() string {
+	if x != nil {
+		return x.NextCursor
+	}
+	return ""
+}
+
+func (x *GetConversationListResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
 }
 
 // 获取未读消息数请求
@@ -4512,15 +4540,19 @@ const file_idl_messaging_chat_proto_rawDesc = "" +
 	"\tis_friend\x18\n" +
 	" \x01(\bR\bisFriend\x12\x1d\n" +
 	"\n" +
-	"is_blocked\x18\v \x01(\bR\tisBlocked\"M\n" +
+	"is_blocked\x18\v \x01(\bR\tisBlocked\"e\n" +
 	"\x1aGetConversationListRequest\x12\x12\n" +
 	"\x04page\x18\x01 \x01(\x05R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\"\xa9\x01\n" +
+	"\tpage_size\x18\x02 \x01(\x05R\bpageSize\x12\x16\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"\xe5\x01\n" +
 	"\x1bGetConversationListResponse\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\x05R\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12F\n" +
 	"\rconversations\x18\x03 \x03(\v2 .messaging.chat.ConversationItemR\rconversations\x12\x14\n" +
-	"\x05total\x18\x04 \x01(\x05R\x05total\"2\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12\x1f\n" +
+	"\vnext_cursor\x18\x05 \x01(\tR\n" +
+	"nextCursor\x12\x19\n" +
+	"\bhas_more\x18\x06 \x01(\bR\ahasMore\"2\n" +
 	"\x15GetUnreadCountRequest\x12\x19\n" +
 	"\bchat_ids\x18\x01 \x03(\tR\achatIds\"@\n" +
 	"\x0fChatUnreadCount\x12\x17\n" +

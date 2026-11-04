@@ -270,7 +270,7 @@ type MessageIdempotency struct {
 	SenderID  string    `gorm:"type:varchar(64);primaryKey" json:"sender_id"`
 	RequestID string    `gorm:"type:varchar(64);primaryKey" json:"request_id"`
 	MessageID string    `gorm:"type:varchar(64);not null" json:"message_id"`
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"index:idx_message_idempotency_created_at" json:"created_at"`
 }
 
 func (MessageIdempotency) TableName() string {
