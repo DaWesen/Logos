@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"Logos/internal/service/platform/monitoring/model"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -68,7 +69,7 @@ func (r *monitoringRepository) QueryMetrics(ctx context.Context, serviceName str
 
 	query.Count(&total)
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Order("timestamp desc").Offset(offset).Limit(pageSize).Find(&results).Error
 	return results, total, err
 }
@@ -107,7 +108,7 @@ func (r *monitoringRepository) QueryLogs(ctx context.Context, serviceName, level
 
 	q.Count(&total)
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := q.Order("timestamp desc").Offset(offset).Limit(pageSize).Find(&results).Error
 	return results, total, err
 }

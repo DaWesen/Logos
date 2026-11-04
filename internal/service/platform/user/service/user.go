@@ -15,6 +15,7 @@ import (
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/outbox"
+	"Logos/pkg/pagination"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -108,13 +109,16 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 		if err := txRepo.Create(ctx, u); err != nil {
 			return err
 		}
-		eventData, _ := json.Marshal(map[string]interface{}{
+		eventData, err := json.Marshal(map[string]interface{}{
 			"user_id":       u.ID,
 			"username":      u.Username,
 			"registered_at": time.Now(),
 			"email":         u.Email,
 			"phone":         u.Phone,
 		})
+		if err != nil {
+			return fmt.Errorf("序列化用户注册事件失败: %w", err)
+		}
 		key := fmt.Sprintf("%d", u.ID)
 		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), "user_events", key, eventData)
 	}); err != nil {
@@ -146,7 +150,7 @@ func (s *userServiceImpl) Register(ctx context.Context, username, password strin
 			"avatar":     u.Avatar,
 			"created_at": u.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
-		err = s.esManager.AddDocument("users", fmt.Sprintf("%d", u.ID), esUser)
+		err = s.esManager.AddDocumentWithContext(ctx, "users", fmt.Sprintf("%d", u.ID), esUser)
 		if err != nil {
 			logger.Error("同步用户到ES失败",
 				logger.ErrorField(err),
@@ -220,15 +224,26 @@ func (s *userServiceImpl) Login(ctx context.Context, username, password string) 
 	expireAt := time.Now().Add(time.Duration(s.jwtManager.GetTokenExpireHours()) * time.Hour).Unix()
 
 	if s.outboxRepo != nil {
-		eventData, _ := json.Marshal(map[string]interface{}{
+		eventData, err := json.Marshal(map[string]interface{}{
 			"user_id":   u.ID,
 			"username":  u.Username,
 			"logged_at": time.Now(),
 		})
-		key := fmt.Sprintf("%d", u.ID)
-		s.outboxRepo.Save(ctx, s.repo.DB(), "user_events", key, eventData)
-		logger.Info("发送用户登录事件",
-			logger.Int64Field("user_id", u.ID))
+		if err != nil {
+			logger.Warn("序列化用户登录事件失败", logger.ErrorField(err))
+		} else {
+			key := fmt.Sprintf("%d", u.ID)
+			if err := s.outboxRepo.Save(ctx, s.repo.DB(), "user_events", key, eventData); err != nil {
+				// 登录事件是旁路审计，不应阻断登录本身；但必须留下错误日志，
+				// 否则 Outbox 写入失败会变成无声的数据丢失。
+				logger.Error("写入用户登录事件失败",
+					logger.Int64Field("user_id", u.ID),
+					logger.ErrorField(err))
+			} else {
+				logger.Info("发送用户登录事件",
+					logger.Int64Field("user_id", u.ID))
+			}
+		}
 	}
 
 	logger.Info("用户登录成功",
@@ -381,7 +396,7 @@ func (s *userServiceImpl) UpdateUser(ctx context.Context, userID int64, email, p
 				"avatar":     updatedUser.Avatar,
 				"created_at": updatedUser.CreatedAt.Format("2006-01-02 15:04:05"),
 			}
-			err = s.esManager.UpdateDocument("users", fmt.Sprintf("%d", userID), esUser)
+			err = s.esManager.UpdateDocumentWithContext(ctx, "users", fmt.Sprintf("%d", userID), esUser)
 			if err != nil {
 				logger.Error("更新用户到ES失败",
 					logger.ErrorField(err),
@@ -462,12 +477,20 @@ func (s *userServiceImpl) GetUserStats(ctx context.Context, userID int64) (*mode
 }
 
 func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error) {
+	page, pageSize = pagination.Normalize(page, pageSize)
 	logger.Info("搜索用户请求",
 		logger.StringField("keyword", keyword),
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
 
 	if s.esManager != nil {
+		// ES 默认 index.max_result_window=10000，from+size 超过会直接报
+		// "Result window is too large"，因此在进入 ES 前拒绝深页，
+		// 而不是把后端原始错误透传给客户端。
+		from, size, err := pagination.Window(page, pageSize, pagination.MaxResultWindow)
+		if err != nil {
+			return nil, 0, err
+		}
 		query := es.SearchQuery{
 			Query: map[string]interface{}{
 				"multi_match": map[string]interface{}{
@@ -477,8 +500,8 @@ func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page,
 					"operator": "and",
 				},
 			},
-			From: (page - 1) * pageSize,
-			Size: pageSize,
+			From: from,
+			Size: size,
 			Sort: []map[string]interface{}{
 				{
 					"created_at": map[string]interface{}{
@@ -489,7 +512,7 @@ func (s *userServiceImpl) SearchUsers(ctx context.Context, keyword string, page,
 		}
 
 		var searchResult es.SearchResult
-		err := s.esManager.Search("users", query, &searchResult)
+		err = s.esManager.SearchWithContext(ctx, "users", query, &searchResult)
 		if err == nil {
 			var users []*model.User
 			for _, hit := range searchResult.Hits.Hits {

@@ -18,6 +18,7 @@ import (
 	"Logos/internal/service/platform/billing/model"
 	"Logos/pkg/logger"
 	"Logos/pkg/outbox"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -288,15 +289,7 @@ func (s *billingServiceImpl) ListPaymentOrders(ctx context.Context, userID strin
 	if status != nil && (*status < 0 || *status > 3) {
 		return nil, 0, ErrPaymentInvalidRequest
 	}
-	if page <= 0 {
-		page = 1
-	}
-	switch {
-	case pageSize <= 0:
-		pageSize = 20
-	case pageSize > 100:
-		pageSize = 100
-	}
+	page, pageSize = pagination.Normalize(page, pageSize)
 
 	orders, total, err := s.repo.ListPaymentOrders(ctx, userID, status, page, pageSize)
 	if err != nil {

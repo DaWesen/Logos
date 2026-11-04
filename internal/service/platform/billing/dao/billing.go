@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"Logos/internal/service/platform/billing/model"
+	"Logos/pkg/pagination"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -192,7 +193,7 @@ func (r *billingRepositoryImpl) ExpirePendingOrders(ctx context.Context, before 
 func (r *billingRepositoryImpl) ListPaymentOrders(ctx context.Context, userID string, status *int, page, pageSize int) ([]*model.PaymentOrder, int64, error) {
 	var orders []*model.PaymentOrder
 	var total int64
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	db := r.db.WithContext(ctx).
 		Model(&model.PaymentOrder{}).
@@ -215,7 +216,7 @@ func (r *billingRepositoryImpl) ListPaymentOrders(ctx context.Context, userID st
 func (r *billingRepositoryImpl) ListTransactions(ctx context.Context, userID string, txType *int, startTime, endTime *time.Time, page, pageSize int) ([]*model.Transaction, int64, error) {
 	var txs []*model.Transaction
 	var total int64
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	db := r.db.WithContext(ctx).Model(&model.Transaction{})
 	if userID != "" {

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"Logos/internal/service/platform/user/model"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -146,7 +147,7 @@ func (r *userRepositoryImpl) BatchCheckUsername(ctx context.Context, usernames [
 func (r *userRepositoryImpl) Search(ctx context.Context, keyword string, page, pageSize int) ([]*model.User, int64, error) {
 	var users []*model.User
 	var total int64
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	db := r.db.WithContext(ctx)
 	if keyword != "" {
