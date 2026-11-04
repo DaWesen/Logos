@@ -28,6 +28,9 @@ type OutboxRepository interface {
 	// replay_count +1），供人工/定时重放入口调用；返回被重置的行数。
 	// 仅重放 replay_count < MaxReplayCount 的消息，避免毒消息被无限重投。
 	ReplayFailed(ctx context.Context, db *gorm.DB, limit int) (int64, error)
+	// BacklogStats 返回 pending 消息数与最老一条的创建时间。
+	// 成功率之外必须看积压：100% 成功也可能在持续堆积。
+	BacklogStats(ctx context.Context, db *gorm.DB) (int64, *time.Time, error)
 }
 
 type outboxRepositoryImpl struct{}
@@ -189,4 +192,26 @@ func (r *outboxRepositoryImpl) ReplayFailed(ctx context.Context, db *gorm.DB, li
 		return nil
 	})
 	return replayed, err
+}
+
+// BacklogStats 用一条聚合查询拿到 pending 数量与最老创建时间。
+// 只查状态索引覆盖的列，不加载消息体；采样频率是 30s 级别，不需要更细。
+func (r *outboxRepositoryImpl) BacklogStats(ctx context.Context, db *gorm.DB) (int64, *time.Time, error) {
+	var row struct {
+		Count  int64
+		Oldest *time.Time
+	}
+	if err := r.backlogStatsQuery(ctx, db).Scan(&row).Error; err != nil {
+		return 0, nil, err
+	}
+	return row.Count, row.Oldest, nil
+}
+
+// backlogStatsQuery 抽出来是为了让测试能直接断言查询形态，
+// 而不依赖 DryRun 对 Scan 解码的支持。
+func (r *outboxRepositoryImpl) backlogStatsQuery(ctx context.Context, db *gorm.DB) *gorm.DB {
+	return db.WithContext(ctx).
+		Model(&OutboxMessage{}).
+		Select("COUNT(*) AS count, MIN(created_at) AS oldest").
+		Where("status = ?", StatusPending)
 }

@@ -146,6 +146,46 @@ func TestProcessWithRetry_RetriesInPlaceThenCommits(t *testing.T) {
 	}
 }
 
+// TestProcessWithRetry_SkipsUnrecoverableWithoutRetry 验证 ErrSkipMessage 语义：
+// 不可恢复的消息只处理一次，直接提交 offset，不重试、不进死信队列。
+func TestProcessWithRetry_SkipsUnrecoverableWithoutRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	msgA := kafka.Message{Topic: "chat_outgoing", Partition: 0, Offset: 20}
+	msgB := kafka.Message{Topic: "chat_outgoing", Partition: 0, Offset: 21}
+	src := newFakeSource(msgA, msgB)
+
+	var mu sync.Mutex
+	calls := map[int64]int{}
+	handler := func(msg *Message) error {
+		mu.Lock()
+		calls[msg.Offset]++
+		mu.Unlock()
+		if msg.Offset == 20 {
+			return fmt.Errorf("%w: missing target", ErrSkipMessage)
+		}
+		return nil
+	}
+
+	c := &Consumer{reader: src, retryBackoff: time.Millisecond}
+	if err := c.Subscribe(ctx, handler); err != nil {
+		t.Fatalf("Subscribe error: %v", err)
+	}
+
+	waitCommits(t, src, 2)
+
+	mu.Lock()
+	aCalls := calls[20]
+	mu.Unlock()
+	if aCalls != 1 {
+		t.Fatalf("不可恢复消息应只处理 1 次，实际 %d 次", aCalls)
+	}
+	if got := src.committedOffsets(); len(got) != 2 || got[0] != 20 || got[1] != 21 {
+		t.Fatalf("提交顺序/内容不符: %v", got)
+	}
+}
+
 // TestProcessWithRetry_PoisonMessageDeadLettered 验证毒丸处理：
 // 连续失败达上限后转存死信并提交跳过；期间不拉取下一条消息，避免越界丢消息。
 func TestProcessWithRetry_PoisonMessageDeadLettered(t *testing.T) {

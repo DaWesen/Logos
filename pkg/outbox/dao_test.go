@@ -81,3 +81,29 @@ func TestFetchPending_SQL(t *testing.T) {
 		t.Errorf("绑定参数应包含批量上限 100，实际 %v", vars)
 	}
 }
+
+// TestBacklogStats_SQL 积压采样必须只读 pending 的聚合值，
+// 不能把消息体（value）拉回应用层——那会把一次监控采样变成全表传输。
+func TestBacklogStats_SQL(t *testing.T) {
+	db := dryRunDB(t)
+
+	repo := NewOutboxRepository().(*outboxRepositoryImpl)
+	// GORM 的 DryRun 不支持 Scan 的返回值解码，但 SQL 已经生成；
+	// 这里只验证查询形态，允许这个已知的 DryRun 限制。
+	query := repo.backlogStatsQuery(context.Background(), db)
+	_ = query.Scan(&struct{}{})
+	sql := query.Statement.SQL.String()
+	if sql == "" {
+		t.Fatal("未能捕获 BacklogStats 生成的 SQL")
+	}
+
+	upper := strings.ToUpper(sql)
+	for _, want := range []string{"COUNT(*)", "MIN(CREATED_AT)", "STATUS"} {
+		if !strings.Contains(upper, want) {
+			t.Fatalf("BacklogStats SQL 缺少 %s: %s", want, sql)
+		}
+	}
+	if strings.Contains(upper, "\"VALUE\"") || strings.Contains(upper, "SELECT *") {
+		t.Fatalf("积压采样不应读取消息体: %s", sql)
+	}
+}

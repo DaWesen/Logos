@@ -68,7 +68,25 @@ func NewMinioManager(client *minio.Client) *MinioManager {
 }
 
 func (m *MinioManager) UploadFile(bucketName, objectName string, reader io.Reader, size int64, contentType string) error {
-	_, err := m.client.PutObject(context.Background(), bucketName, objectName, reader, size, minio.PutObjectOptions{
+	return m.UploadFileContext(context.Background(), bucketName, objectName, reader, size, contentType)
+}
+
+// UploadFileContext 带取消/超时的上传。
+//
+// UploadFile 为了兼容既有调用方保留无 ctx 的签名，但内部不能再用
+// context.Background() 把调用方预算架空：否则上层设了 90s 超时，
+// MinIO 卡住时仍然会一直占着连接和临时文件，直到进程退出。
+func (m *MinioManager) UploadFileContext(
+	ctx context.Context,
+	bucketName, objectName string,
+	reader io.Reader,
+	size int64,
+	contentType string,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := m.client.PutObject(ctx, bucketName, objectName, reader, size, minio.PutObjectOptions{
 		ContentType: contentType,
 	})
 	if err != nil {

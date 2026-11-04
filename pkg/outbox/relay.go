@@ -134,6 +134,11 @@ func (r *Relay) run() {
 	cleanTicker := time.NewTicker(10 * time.Minute)
 	defer cleanTicker.Stop()
 
+	// 积压采样独立于投递循环：500ms 一轮投递，但 COUNT 不需要这么频繁。
+	statsTicker := time.NewTicker(backlogReportInterval)
+	defer statsTicker.Stop()
+	r.reportBacklog()
+
 	// 定时重放死信：failed 终态消息按 replayInterval 周期性回到 pending 重新投递
 	var replayC <-chan time.Time
 	if r.replayInterval > 0 {
@@ -148,6 +153,8 @@ func (r *Relay) run() {
 			return
 		case <-cleanTicker.C:
 			r.clean()
+		case <-statsTicker.C:
+			r.reportBacklog()
 		case <-replayC:
 			r.autoReplay()
 		default:
@@ -166,6 +173,32 @@ func (r *Relay) run() {
 // 租约短于最坏发送耗时是安全的：最坏情况只是租约到期后被另一副本重复领取，
 // 而 at-least-once 本就允许重复投递（消费端幂等），绝不会丢消息。
 const dispatchLease = 30 * time.Second
+
+// backlogReportInterval 积压采样间隔。
+// 不用每轮投递都 COUNT：500ms 一次会给数据库增加无意义负载，
+// 而积压告警的时间尺度本来就是分钟级。
+const backlogReportInterval = 30 * time.Second
+
+// reportBacklog 采样 pending 数量与最老消息年龄。
+// 两个指标必须成对看：只有数量没有年龄，分不清「刚堆积」还是「卡了很久」。
+func (r *Relay) reportBacklog() {
+	if r.db == nil || r.repo == nil {
+		return
+	}
+	pending, oldest, err := r.repo.BacklogStats(r.ctx, r.db)
+	if err != nil {
+		logger.Warn("Outbox backlog stats failed", logger.ErrorField(err))
+		return
+	}
+	var ageSeconds float64
+	if oldest != nil {
+		ageSeconds = time.Since(*oldest).Seconds()
+		if ageSeconds < 0 {
+			ageSeconds = 0
+		}
+	}
+	obs.RecordOutboxBacklog(r.ctx, pending, ageSeconds)
+}
 
 // dispatch 拆成三段，保证 Kafka 网络往返期间不持有数据库事务与行锁：
 //  1. 短事务领取：FetchPending + 写租约，提交即释放行锁

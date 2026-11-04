@@ -604,6 +604,13 @@ func isExpectedFetchError(err error) bool {
 // 把 panic 归一成「本条消息处理失败」，才能复用既有的「就地重试 → 死信」路径。
 var ErrHandlerPanic = errors.New("message handler panicked")
 
+// ErrSkipMessage 表示消息本身无法处理，重试也不会成功（例如缺必填字段、
+// 不支持的枚举值）。消费者会直接提交 offset 跳过，不进入重试与死信队列。
+//
+// 用它而不是返回普通 error：普通 error 会触发 5 次指数退避，把「数据问题」
+// 当成「下游抖动」，既拖慢分区消费，也会把无效消息塞进死信队列。
+var ErrSkipMessage = errors.New("message skipped by handler")
+
 // invokeHandler 调用处理器并兜住 panic，返回错误而不是让 goroutine 崩溃。
 // 用独立函数而不是在循环里 defer：defer 只能兜住一次调用，
 // 这里显式把「调用 + 恢复」放在一起，语义更清楚，也便于单测直接验证。
@@ -656,10 +663,30 @@ func (c *Consumer) processWithRetry(ctx context.Context, msg *Message, handler M
 		// panic 单独打标签：failed 说明「业务处理出错」，panic 说明「代码有 bug」，
 		// 两者的告警等级与处置方式不同，混在一起会让真正的崩溃被普通失败淹没。
 		consumeResult := "failed"
-		if errors.Is(err, ErrHandlerPanic) {
+		switch {
+		case errors.Is(err, ErrHandlerPanic):
 			consumeResult = "panic"
+		case errors.Is(err, ErrSkipMessage):
+			consumeResult = "skipped"
 		}
 		obs.RecordKafkaConsume(ctx, msg.Topic, consumeResult, elapsed)
+
+		// 不可恢复的消息：记录后直接提交 offset，不重试、不进死信。
+		// 死信队列是给「可能恢复」的消息兜底的；确定无效的消息放进去只会污染队列。
+		if errors.Is(err, ErrSkipMessage) {
+			logger.Warn("消息不可恢复，跳过",
+				logger.ErrorField(err),
+				logger.StringField("topic", msg.Topic),
+				logger.Int64Field("offset", msg.Offset))
+			if cerr := c.Commit(ctx, msg); cerr != nil {
+				logger.Warn("跳过不可恢复消息时提交 offset 失败",
+					logger.ErrorField(cerr),
+					logger.StringField("topic", msg.Topic),
+					logger.Int64Field("offset", msg.Offset))
+			}
+			return true
+		}
+
 		logger.Warn("处理消息失败，就地重试",
 			logger.ErrorField(err),
 			logger.StringField("topic", msg.Topic),
