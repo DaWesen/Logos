@@ -2,6 +2,7 @@ package vector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,6 +24,19 @@ type MilvusManager struct {
 var (
 	// 初始化失败不能被永久缓存：否则第二次调用返回 (nil, nil)。
 	milvusResource = lazyinit.New(lazyinit.Options{}, initMilvusManager)
+	// 抽成变量便于单测注入失败/成功，不需要真的起 Milvus。
+	newMilvusClient = milvusclient.New
+)
+
+const (
+	// milvusConnectBudget 是一次启动最多花在等待 Milvus 上的总预算。
+	//
+	// 原实现固定重试 60 次，每次 10s 连接超时 + 3s 间隔，最坏可挂 13 分钟。
+	// K8s 的 startupProbe/terminationGracePeriod 等不到这么久，Pod 会先被杀掉，
+	// 日志里还看不到「放弃」的结论。重试必须有一个明确的总预算。
+	milvusConnectBudget  = 2 * time.Minute
+	milvusRetryInterval  = 3 * time.Second
+	milvusAttemptTimeout = 10 * time.Second
 )
 
 func isCollectionNotFound(err error) bool {
@@ -45,38 +59,63 @@ func initMilvusManager() (*MilvusManager, error) {
 }
 
 func NewMilvusManager(host string, port int) (*MilvusManager, error) {
+	return newMilvusManagerWithBudget(host, port, milvusConnectBudget, milvusRetryInterval, milvusAttemptTimeout)
+}
+
+func newMilvusManagerWithBudget(host string, port int, budget, retryInterval, attemptTimeout time.Duration) (*MilvusManager, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
+	deadline := time.Now().Add(budget)
 
-	var c *milvusclient.Client
 	var err error
+	for attempt := 1; ; attempt++ {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		timeout := attemptTimeout
+		if timeout <= 0 || timeout > remaining {
+			timeout = remaining
+		}
 
-	for i := 0; i < 60; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-
-		c, err = milvusclient.New(ctx, &milvusclient.ClientConfig{
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		c, dialErr := newMilvusClient(ctx, &milvusclient.ClientConfig{
 			Address: addr,
 		})
 		cancel()
 
-		if err == nil {
+		if dialErr == nil {
 			logger.Info("连接Milvus成功",
-				logger.StringField("address", addr))
+				logger.StringField("address", addr),
+				logger.IntField("attempt", attempt))
 			return &MilvusManager{
 				client: c,
 			}, nil
 		}
+		err = dialErr
 
 		logger.Warn("连接Milvus失败，重试中...",
 			logger.StringField("address", addr),
-			logger.IntField("attempt", i+1),
+			logger.IntField("attempt", attempt),
 			logger.ErrorField(err))
-		time.Sleep(3 * time.Second)
+
+		wait := retryInterval
+		if wait > time.Until(deadline) {
+			wait = time.Until(deadline)
+		}
+		if wait <= 0 {
+			break
+		}
+		time.Sleep(wait)
 	}
 
-	logger.Error("连接Milvus失败，已达最大重试次数",
+	logger.Error("连接Milvus失败，启动预算已耗尽",
 		logger.StringField("address", addr),
+		logger.StringField("budget", budget.String()),
 		logger.ErrorField(err))
-	return nil, fmt.Errorf("failed to connect milvus after 60 attempts: %w", err)
+	if err == nil {
+		err = errors.New("startup budget exhausted before first attempt")
+	}
+	return nil, fmt.Errorf("failed to connect milvus within %s: %w", budget, err)
 }
 
 func (m *MilvusManager) Close() error {
