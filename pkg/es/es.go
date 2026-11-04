@@ -22,6 +22,10 @@ var (
 	esResource = lazyinit.New(lazyinit.Options{
 		RetryInterval: 5 * time.Second,
 	}, initElasticsearchClient)
+
+	// esInitTimeout 限制启动 Ping 的耗时。go-elasticsearch 默认没有请求超时，
+	// ES 地址可路由但不应答时，初始化会一直挂住，lazyinit 的互斥锁也会跟着卡死。
+	esInitTimeout = 10 * time.Second
 )
 
 type SearchQuery struct {
@@ -56,8 +60,13 @@ func InitElasticsearch() (*elasticsearch.Client, error) {
 }
 
 func initElasticsearchClient() (*elasticsearch.Client, error) {
-	cfg := config.GetConfig()
-	esConfig := cfg.Elasticsearch
+	return initElasticsearchClientWith(config.GetConfig().Elasticsearch, esInitTimeout)
+}
+
+func initElasticsearchClientWith(esConfig config.Elasticsearch, timeout time.Duration) (*elasticsearch.Client, error) {
+	if timeout <= 0 {
+		timeout = esInitTimeout
+	}
 
 	esCfg := elasticsearch.Config{
 		Addresses: []string{esConfig.URL},
@@ -73,7 +82,10 @@ func initElasticsearchClient() (*elasticsearch.Client, error) {
 		return nil, fmt.Errorf("failed to create elasticsearch client: %w", err)
 	}
 
-	res, err := client.Ping()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	res, err := client.Ping(client.Ping.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to ping elasticsearch: %w", err)
 	}

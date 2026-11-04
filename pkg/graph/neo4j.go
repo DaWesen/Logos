@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"Logos/config"
 	"Logos/pkg/lazyinit"
@@ -15,6 +16,9 @@ var (
 	// 初始化失败不能被永久缓存：否则第二次调用返回 (nil, nil)。
 	neo4jResource = lazyinit.New(lazyinit.Options{}, initNeo4jDriver)
 )
+
+// neo4jVerifyTimeout 限制启动连通性校验，避免不可达地址让初始化无限等待。
+const neo4jVerifyTimeout = 10 * time.Second
 
 type Neo4jManager struct {
 	driver neo4j.DriverWithContext
@@ -48,9 +52,14 @@ func initNeo4jDriver() (neo4j.DriverWithContext, error) {
 		return nil, err
 	}
 
-	if err := driver.VerifyConnectivity(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), neo4jVerifyTimeout)
+	defer cancel()
+
+	if err := driver.VerifyConnectivity(ctx); err != nil {
 		// 驱动创建成功但连不上时，必须关闭它，否则每次重试都会泄漏连接与 goroutine。
-		_ = driver.Close(context.Background())
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = driver.Close(closeCtx)
+		closeCancel()
 		err = fmt.Errorf("failed to verify neo4j connectivity: %w", err)
 		logger.Error("Neo4j连接验证失败", logger.ErrorField(err))
 		return nil, err
