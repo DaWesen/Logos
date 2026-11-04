@@ -127,6 +127,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **批量确认语义**：多个 id 只发一条批量 UPDATE（不是 N 次往返）；空字符串与重复 id 被过滤；没有有效 id 时不访问数据库；数据库失败时返回错误而不是 `continue` 后报成功；消费后状态更新失败也会上抛触发重试
 - **topic/priority 枚举映射**：`TopicString(0..6)` 必须与 proto 枚举一一对应（`0 = DATA_COLLECTION`、`6 = SYSTEM_EVENT`），越界值显式成为 `UNKNOWN(n)` 并被 `ValidTopic` 拒绝；proto Priority（0 基）转内部 1..4 后，`LOW/NORMAL/HIGH/URGENT` 往返不偏移；存储层 topic 名回映射 proto 时未知值不得伪装成 `DATA_COLLECTION`
 - **批量发送原子性**：一批消息只开一个事务、一次多值 INSERT，并写入等量 outbox 事件；任一条非法时在开启事务前被拒绝且错误定位到「第 N 条」；写库失败整批回滚、不留下任何 outbox 事件；超过 100 条直接拒绝；批量响应逐条回显消息的真实 topic
+- **消费租约与确认语义**：领取 SQL 必须包含 `FOR UPDATE SKIP LOCKED`、过期租约条件与 `UPDATE ... RETURNING`；消费返回前不再额外标记状态；默认 limit 与服务端一致；领取失败必须上抛而不是返回空列表；确认 SQL 同时校验 `status IN (PROCESSED, ACKED)` 与 `claimed_by`；非本消费组/不存在的消息确认返回 `ErrMessageNotClaimed`，handler 映射 404
 - **Milvus 启动预算**：持续连接失败时在总预算内返回而不是固定重试 60 次；单次尝试超时被剩余预算截断（预算 200ms、单次超时 10s 时仍在 1s 内返回）；首次成功立即返回且不继续重试；日志包含「预算耗尽」结论
 - **日志无配置降级**：`GetLogger` 在没有配置文件时退回 info + stdout，不 panic。单元测试、CLI 工具等未加载配置的场景仍可正常打日志
 - **HTTP 排空兜底**：`Shutdown` 在窗口内完成时在途请求正常返回；handler 超过窗口时 `Serve` 返回错误并调用 `Close` 强制断开，卡住请求的 `r.Context()` 会被取消，不会留下悬挂连接与 goroutine

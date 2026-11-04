@@ -512,6 +512,7 @@ Logos/
 - **批量发送要么全入队要么全回滚**：`BatchSendMessage` 原先逐条调用 `SendMessage`，某条失败只打日志后 `continue`，最终仍返回 nil 错误，调用方把部分成功当全部成功；已提交的子集还会在重试时重复入队。现在先整体校验（topic/优先级/批量上限 100），再在**单个事务**里用一条多值 INSERT 写入全部消息与对应 outbox 事件，任一步失败整批回滚，重试不会产生半批数据
 - **问答执行不能裸起 goroutine**：handler 里 `go AskQuestion(Background)` 后立即返回 nil，offset 会被提交；LLM 失败或进程崩溃时请求永久丢失，突发流量还会堆出无界 goroutine。现在消费端同步执行并返回错误，复用既有的就地重试/死信路径；单条问答应带 120s 上限，且使用 `Message.Context`，停机时可取消
 - **批量确认不能吞错**：`BatchAcknowledgeMessages` 原先逐条 UPDATE，失败只打日志后 `continue`，最后仍返回成功——客户端以为整批确认完成，实际部分消息会重投。现在过滤空/重复 id 后一条 `WHERE id IN (...)` 更新，失败整批返回错误交由上游重试；消费后状态更新失败同样上抛，避免 offset 已提交但消息状态永远停在旧值
+- **消费确认改成租约制**：旧实现 `ConsumeMessages` 先查 `PENDING`、返回前就改成 `PROCESSED`，客户端拿到消息后崩溃或超时，这条消息再也不会出现在待处理集合里（at-most-once），并发消费者还可能领到同一批。现在用一条 `WITH ... FOR UPDATE SKIP LOCKED ... UPDATE ... RETURNING` 原子领取，同时写入 `claimed_by / lease_until / attempts`；租约 60s 内必须 ACK，过期后消息重新可领取（at-least-once）；ACK 只接受 `PROCESSED/ACKED` 且属于本消费组的行，迟到确认返回 404 而不是覆盖新消费者
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
