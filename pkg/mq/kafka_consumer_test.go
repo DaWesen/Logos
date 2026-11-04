@@ -104,6 +104,44 @@ func waitCommits(t *testing.T, src *fakeSource, want int) {
 	}
 }
 
+// handler 只拿到 *Message；生命周期 ctx 必须随消息传递，
+// 否则下游写 ES/数据库只能退化成 Background，停机时收不住在途调用。
+func TestProcessWithRetry_HandlerSeesLifecycleContext(t *testing.T) {
+	type ctxKey struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxKey{}, "lifecycle"))
+	defer cancel()
+
+	src := newFakeSource(kafka.Message{Topic: "knowledge_events", Offset: 1})
+	seen := make(chan error, 1)
+	handler := func(msg *Message) error {
+		if msg.Context == nil {
+			seen <- fmt.Errorf("msg.Context 为空")
+			return nil
+		}
+		if got := msg.Context.Value(ctxKey{}); got != "lifecycle" {
+			seen <- fmt.Errorf("ctx 未透传: %v", got)
+			return nil
+		}
+		seen <- nil
+		return nil
+	}
+
+	c := &Consumer{reader: src, retryBackoff: time.Millisecond}
+	if err := c.Subscribe(ctx, handler); err != nil {
+		t.Fatalf("Subscribe error: %v", err)
+	}
+	waitCommits(t, src, 1)
+
+	select {
+	case err := <-seen:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler 未被调用")
+	}
+}
+
 // TestProcessWithRetry_RetriesInPlaceThenCommits 验证核心语义：
 // 处理器瞬时失败时对**同一条**消息就地重试，成功后才提交，且不会提前消费下一条。
 func TestProcessWithRetry_RetriesInPlaceThenCommits(t *testing.T) {

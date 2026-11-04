@@ -53,6 +53,12 @@ type Message struct {
 	Partition int
 	Offset    int64
 	Time      time.Time
+	// Context 是消费者生命周期 ctx，随消息一起传给 handler。
+	//
+	// handler 只拿到 *Message，如果没有这个字段，下游写库/写 ES 就只能用
+	// context.Background()；进程停机时消费循环已经退出，在途写入却还在跑。
+	// 它不是单条消息的 deadline，需要更短预算时由 handler 自己派生。
+	Context context.Context
 }
 
 type MessageHandler func(msg *Message) error
@@ -634,6 +640,10 @@ func invokeHandler(handler MessageHandler, msg *Message) (err error) {
 // 返回 false 表示 ctx 已取消（调用方应立即退出循环），此时该消息未提交，
 // 重启后会从 last committed offset 重新投递。
 func (c *Consumer) processWithRetry(ctx context.Context, msg *Message, handler MessageHandler) bool {
+	// 把消费循环 ctx 交给 handler：下游写库/写 ES 才能随停机一起取消。
+	// 只覆盖消息级字段，不改变 handler 签名，既有消费者无需改动。
+	msg.Context = ctx
+
 	base := c.retryBackoff
 	if base <= 0 {
 		base = initialConsumerRetryBackoff
