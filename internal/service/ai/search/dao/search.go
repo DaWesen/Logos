@@ -437,7 +437,7 @@ func (r *searchRepository) GetIndexStats(ctx context.Context) ([]*model.IndexSta
 			Type: index.Type,
 		}
 
-		esStats, err := r.esManager.GetIndexStats(index.Name)
+		esStats, err := r.esManager.GetIndexStatsWithContext(ctx, index.Name)
 		if err != nil {
 			logger.Warn("获取索引统计失败",
 				logger.StringField("index", index.Name),

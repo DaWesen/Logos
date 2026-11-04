@@ -1,4 +1,3 @@
-
 package consumer
 
 import (
@@ -57,21 +56,22 @@ func (c *ESConsumer) handleMessage(msg *mq.Message) error {
 	}
 
 	action, _ := event["action"].(string)
+	ctx := messageContext(msg)
 
 	switch action {
 	case "create":
-		return c.handleCreate(event)
+		return c.handleCreate(ctx, event)
 	case "update":
-		return c.handleUpdate(event)
+		return c.handleUpdate(ctx, event)
 	case "delete":
-		return c.handleDelete(event)
+		return c.handleDelete(ctx, event)
 	default:
 		logger.Warn("Unknown event type", logger.StringField("action", action))
 		return nil
 	}
 }
 
-func (c *ESConsumer) handleCreate(event map[string]interface{}) error {
+func (c *ESConsumer) handleCreate(ctx context.Context, event map[string]interface{}) error {
 	entityData, ok := event["entity"]
 	if !ok {
 		logger.Warn("Event missing entity field")
@@ -90,7 +90,7 @@ func (c *ESConsumer) handleCreate(event map[string]interface{}) error {
 		return err
 	}
 
-	if err := c.esManager.AddDocument("entities", entity.ID, entity); err != nil {
+	if err := c.esManager.AddDocumentWithContext(ctx, "entities", entity.ID, entity); err != nil {
 		logger.Error("Failed to add entity to ES",
 			logger.StringField("id", entity.ID),
 			logger.ErrorField(err))
@@ -101,7 +101,7 @@ func (c *ESConsumer) handleCreate(event map[string]interface{}) error {
 	return nil
 }
 
-func (c *ESConsumer) handleUpdate(event map[string]interface{}) error {
+func (c *ESConsumer) handleUpdate(ctx context.Context, event map[string]interface{}) error {
 	entityData, ok := event["entity"]
 	if !ok {
 		logger.Warn("Event missing entity field")
@@ -120,7 +120,7 @@ func (c *ESConsumer) handleUpdate(event map[string]interface{}) error {
 		return err
 	}
 
-	if err := c.esManager.UpdateDocument("entities", entity.ID, entity); err != nil {
+	if err := c.esManager.UpdateDocumentWithContext(ctx, "entities", entity.ID, entity); err != nil {
 		logger.Error("Failed to update ES document",
 			logger.StringField("id", entity.ID),
 			logger.ErrorField(err))
@@ -131,14 +131,14 @@ func (c *ESConsumer) handleUpdate(event map[string]interface{}) error {
 	return nil
 }
 
-func (c *ESConsumer) handleDelete(event map[string]interface{}) error {
+func (c *ESConsumer) handleDelete(ctx context.Context, event map[string]interface{}) error {
 	entityId, ok := event["entityId"].(string)
 	if !ok {
 		logger.Warn("Event missing entityId field")
 		return nil
 	}
 
-	if err := c.esManager.DeleteDocument("entities", entityId); err != nil {
+	if err := c.esManager.DeleteDocumentWithContext(ctx, "entities", entityId); err != nil {
 		logger.Error("Failed to delete ES document",
 			logger.StringField("id", entityId),
 			logger.ErrorField(err))
@@ -147,4 +147,12 @@ func (c *ESConsumer) handleDelete(event map[string]interface{}) error {
 
 	logger.Info("Successfully deleted ES document", logger.StringField("id", entityId))
 	return nil
+}
+
+// messageContext 返回消费循环 ctx；独立调用 handler（如单测）时兜底 Background。
+func messageContext(msg *mq.Message) context.Context {
+	if msg == nil || msg.Context == nil {
+		return context.Background()
+	}
+	return msg.Context
 }
