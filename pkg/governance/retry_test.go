@@ -12,9 +12,10 @@ import (
 
 func testRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxAttempts:  3,
-		InitialDelay: time.Millisecond,
-		MaxDelay:     5 * time.Millisecond,
+		MaxAttempts:    3,
+		InitialDelay:   time.Millisecond,
+		MaxDelay:       5 * time.Millisecond,
+		RetryableCodes: []string{"UNAVAILABLE", "RESOURCE_EXHAUSTED", "ABORTED"},
 	}
 }
 

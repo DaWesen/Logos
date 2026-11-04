@@ -64,7 +64,12 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 		return fmt.Errorf("failed to listen on port %d: %w", cfg.Port, err)
 	}
 
+	// 收发上限从配置读取（默认 4MB）：不配置时与 gRPC 默认一致，
+	// 需要传大 payload 的服务可以单独调大，而不是被默认值卡住。
+	recvLimit, sendLimit := MsgSizeLimits()
 	opts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(recvLimit),
+		grpc.MaxSendMsgSize(sendLimit),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionIdle:     15 * time.Minute,
 			MaxConnectionAge:      30 * time.Minute,
@@ -216,7 +221,24 @@ func NewGRPCClientConn(etcdEndpoints []string, serviceName string, opts ...grpc.
 }
 
 func NewDirectClientConn(host string, port int, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return NewDirectClientConnWithGovernance(host, port, nil, opts...)
+}
+
+// NewDirectClientConnWithGovernance 直连模式 + 治理拦截器。
+//
+// 直连模式此前只设置 WaitForReady(true) 和消息大小，没有超时/熔断/重试。
+// WaitForReady 的语义是「一直等到连接可用」，下游没起来时调用会无限挂住，
+// 把网关 goroutine 和连接池一起占满。etcd 模式有拦截器、直连没有，
+// 于是「单机部署」反而比「集群部署」更容易被拖垮。
+// 这里让两条路径使用同一套治理能力。
+func NewDirectClientConnWithGovernance(host string, port int, govCfg *governance.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return NewDirectClientConnWithOptions(host, port, govCfg, governance.RetryPolicy{}, opts...)
+}
+
+// NewDirectClientConnWithOptions 直连 + 治理 + 可追加的重试白名单。
+func NewDirectClientConnWithOptions(host string, port int, govCfg *governance.Config, policy governance.RetryPolicy, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	target := fmt.Sprintf("%s:%d", host, port)
+	recvLimit, sendLimit := ClientMsgSizeLimits()
 
 	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -225,9 +247,17 @@ func NewDirectClientConn(host string, port int, opts ...grpc.DialOption) (*grpc.
 			Timeout:             20 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithDefaultCallOptions(
+			grpc.WaitForReady(true),
+			grpc.MaxCallRecvMsgSize(recvLimit),
+			grpc.MaxCallSendMsgSize(sendLimit),
+		),
 	}
 
+	if govCfg == nil {
+		govCfg = governance.DefaultConfig()
+	}
+	defaultOpts = append(defaultOpts, governance.DefaultClientInterceptorsWithPolicy(govCfg, policy)...)
 	defaultOpts = append(defaultOpts, opts...)
 
 	// 增加超时时间到 10 秒
@@ -243,6 +273,11 @@ func NewDirectClientConn(host string, port int, opts ...grpc.DialOption) (*grpc.
 }
 
 func NewGRPCClientConnWithGovernance(etcdEndpoints []string, serviceName string, govCfg *governance.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	return NewGRPCClientConnWithPolicy(etcdEndpoints, serviceName, govCfg, governance.RetryPolicy{}, opts...)
+}
+
+// NewGRPCClientConnWithPolicy 在 etcd 服务发现基础上追加重试白名单。
+func NewGRPCClientConnWithPolicy(etcdEndpoints []string, serviceName string, govCfg *governance.Config, policy governance.RetryPolicy, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	etcdCli, err := clientv3.NewFromURLs(etcdEndpoints)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
@@ -253,6 +288,7 @@ func NewGRPCClientConnWithGovernance(etcdEndpoints []string, serviceName string,
 		return nil, fmt.Errorf("failed to create etcd resolver: %w", err)
 	}
 
+	recvLimit, sendLimit := ClientMsgSizeLimits()
 	defaultOpts := []grpc.DialOption{
 		grpc.WithResolvers(etcdResolver),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -261,7 +297,11 @@ func NewGRPCClientConnWithGovernance(etcdEndpoints []string, serviceName string,
 			Timeout:             20 * time.Second,
 			PermitWithoutStream: true,
 		}),
-		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithDefaultCallOptions(
+			grpc.WaitForReady(true),
+			grpc.MaxCallRecvMsgSize(recvLimit),
+			grpc.MaxCallSendMsgSize(sendLimit),
+		),
 		// etcd resolver 返回多个 addr 时，gRPC 默认 pick_first 只用第一个
 		// 显式启用 round_robin 让多副本真正负载均衡
 		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
@@ -270,7 +310,7 @@ func NewGRPCClientConnWithGovernance(etcdEndpoints []string, serviceName string,
 	if govCfg == nil {
 		govCfg = governance.DefaultConfig()
 	}
-	defaultOpts = append(defaultOpts, governance.DefaultClientInterceptors(govCfg)...)
+	defaultOpts = append(defaultOpts, governance.DefaultClientInterceptorsWithPolicy(govCfg, policy)...)
 	defaultOpts = append(defaultOpts, opts...)
 
 	target := fmt.Sprintf("etcd:///grpc/%s", serviceName)

@@ -33,6 +33,15 @@ func buildGovCfg(cfg *config.Config) *governance.Config {
 	return govCfg
 }
 
+// buildRetryPolicy 把配置里追加的「可安全重试方法」传给治理层。
+// 默认白名单写在 governance 包内；这里只做加法，避免运维配置把
+// 非幂等写（SendMessage/Deposit）误放进重试列表。
+func buildRetryPolicy(cfg *config.Config) governance.RetryPolicy {
+	return governance.RetryPolicy{
+		ExtraSafeMethods: append([]string(nil), cfg.GRPC.Client.RetrySafeMethods...),
+	}
+}
+
 func newConn(cfg *config.Config, serviceName string) (*grpc.ClientConn, error) {
 	// 多节点水平扩展模式：直接走 etcd resolver + round_robin LB
 	// 适用于后端 service 多副本部署的场景
@@ -100,7 +109,9 @@ func tryDialWithFallback(cfg *config.Config, serviceName string, port int) (*grp
 		logger.StringField("host", host),
 		logger.IntField("port", port))
 
-	conn, err := grpcserver.NewDirectClientConn(host, port)
+	// 直连也必须带治理拦截器：否则 WaitForReady(true) 会在下游不可用时
+	// 无限等待，单机部署比集群部署更容易被拖垮。
+	conn, err := grpcserver.NewDirectClientConnWithOptions(host, port, buildGovCfg(cfg), buildRetryPolicy(cfg))
 	if err == nil {
 		logger.Info("直连服务成功",
 			logger.StringField("service", serviceName),
@@ -113,7 +124,7 @@ func tryDialWithFallback(cfg *config.Config, serviceName string, port int) (*grp
 		logger.StringField("service", serviceName),
 		logger.ErrorField(err))
 
-	conn, err = grpcserver.NewGRPCClientConnWithGovernance(cfg.Etcd.Endpoints, serviceName, buildGovCfg(cfg))
+	conn, err = grpcserver.NewGRPCClientConnWithPolicy(cfg.Etcd.Endpoints, serviceName, buildGovCfg(cfg), buildRetryPolicy(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("直连和etcd服务发现均失败: %w", err)
 	}

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"Logos/pkg/logger"
@@ -15,6 +16,10 @@ const (
 	RoleKey      = "role"
 	AuthTokenKey = "authorization"
 )
+
+// ErrMissingUser 表示调用方没有提供可用的用户身份。
+// 用户态接口必须 fail closed，不能把空 userID 当成「不过滤」。
+var ErrMissingUser = errors.New("missing user identity")
 
 type UserClaims struct {
 	UserID string
@@ -60,6 +65,16 @@ func MustGetUserID(ctx context.Context) string {
 		panic(err)
 	}
 	return userID
+}
+
+// RequireUserID 与 GetUserID 相同，但把「没有 metadata」和「空 user_id」
+// 统一收敛成一个可识别的 sentinel，方便业务层映射为 401。
+func RequireUserID(ctx context.Context) (string, error) {
+	userID, err := GetUserID(ctx)
+	if err != nil || strings.TrimSpace(userID) == "" {
+		return "", ErrMissingUser
+	}
+	return userID, nil
 }
 
 func getFirstValue(md metadata.MD, key string) string {

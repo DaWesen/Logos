@@ -29,7 +29,9 @@ func UnaryClientTimeout(timeout time.Duration) grpc.UnaryClientInterceptor {
 
 func UnaryClientRetry(rm *RetryManager) grpc.UnaryClientInterceptor {
 	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		return rm.Execute(ctx, func() error {
+		// 按方法名判断是否允许重试：SendMessage/Deposit 这类非幂等写
+		// 即使遇到 Unavailable 也只能执行一次，否则可能重复发消息/重复扣费。
+		return rm.ExecuteMethod(ctx, method, func() error {
 			return invoker(ctx, method, req, reply, cc, opts...)
 		})
 	}
@@ -81,7 +83,14 @@ func StreamClientTimeout(timeout time.Duration) grpc.StreamClientInterceptor {
 }
 
 func DefaultClientInterceptors(cfg *Config) []grpc.DialOption {
+	return DefaultClientInterceptorsWithPolicy(cfg, RetryPolicy{})
+}
+
+// DefaultClientInterceptorsWithPolicy 允许调用方追加可重试方法。
+// 默认策略是白名单：只有只读与幂等覆盖写会重试。
+func DefaultClientInterceptorsWithPolicy(cfg *Config, policy RetryPolicy) []grpc.DialOption {
 	retryMgr := NewRetryManager(cfg.Retry)
+	retryMgr.policy = policy
 	cbMgr := NewCircuitBreakerManager(cfg.CircuitBreaker)
 
 	return []grpc.DialOption{
