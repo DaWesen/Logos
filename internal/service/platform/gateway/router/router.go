@@ -9,9 +9,12 @@ import (
 	"Logos/pkg/auth"
 	"Logos/pkg/cache"
 	"Logos/pkg/client"
+	"Logos/pkg/health"
 	pkgJwt "Logos/pkg/jwt"
 	"Logos/pkg/logger"
 	"Logos/pkg/storage"
+	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -76,9 +79,16 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	// 鉴权不受影响（预检本来就不带凭据，且会在路由前返回）。
 	r.Use(middleware.Preflight())
 
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "service": "logos-gateway"})
-	})
+	// 探针注册放在最前面、且不经过业务中间件：
+	// 限流/日志/鉴权都不应该决定「这个进程是否健康」，否则一次限流误配
+	// 就会让编排系统把所有副本摘掉，故障被放大成不可用。
+	registry := health.New(health.WithCacheTTL(2 * time.Second))
+	healthHandler := health.NewHTTPHandler(registry, "logos-gateway")
+	r.GET("/livez", healthHandler.Live)
+	r.GET("/readyz", healthHandler.Ready)
+	// /health 保留兼容：老脚本和 compose healthcheck 仍在用。
+	// 新部署应改用 /livez 与 /readyz，二者语义不同，不能混用。
+	r.GET("/health", healthHandler.Ready)
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
@@ -89,21 +99,41 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 
 	r.GET("/ws", wsHandler.HandleWebSocket)
 
-	// 初始化文件上传处理器
-	minioClient, err := storage.InitMinio()
-	if err != nil {
-		logger.Error("Failed to init MinIO", logger.ErrorField(err))
-	} else {
-		logger.Info("MinIO initialized successfully")
-	}
-	minioManager := storage.NewMinioManager(minioClient)
 	// 桶名必须与 qqbridge 的默认值一致：两边各自写默认值时最容易漂移，
-	// 表现是「上传成功、访问 404」。
+	// 表现是「上传成功、访问 404」。探针也要校验同一个桶。
 	bucket := cfg.Minio.Bucket
 	if bucket == "" {
 		bucket = "logos-documents"
 	}
+
+	// 初始化文件上传处理器
+	minioClient, err := storage.InitMinio()
+	if err != nil {
+		logger.Error("Failed to init MinIO", logger.ErrorField(err))
+		registry.Register("minio", func(context.Context) error {
+			return fmt.Errorf("minio: client unavailable")
+		})
+	} else {
+		logger.Info("MinIO initialized successfully")
+		registry.Register("minio", func(ctx context.Context) error {
+			// 只校验桶可访问，不列对象：探针要的是「存储能不能用」，
+			// 列目录会把一次健康检查放大成一次对象存储扫描。
+			exists, err := minioClient.BucketExists(ctx, bucket)
+			if err != nil {
+				return fmt.Errorf("minio: %w", err)
+			}
+			if !exists {
+				return fmt.Errorf("minio: bucket %q missing", bucket)
+			}
+			return nil
+		})
+	}
+	minioManager := storage.NewMinioManager(minioClient)
 	uploadHandler := ai.NewFileUploadHandler(minioManager, bucket)
+
+	// Redis 是可选依赖：限流在 Redis 不可用时会退化为单机限流，
+	// 核心收发消息不依赖它。把它当作硬依赖会让一次缓存抖动摘掉整个网关。
+	registry.RegisterOptional("redis", health.Redis(redisCache))
 
 	api := r.Group("/api/v1")
 

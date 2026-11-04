@@ -9,6 +9,7 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/im"
@@ -47,10 +48,15 @@ func main() {
 
 	_ = obs.InitServiceMeters("im")
 
+	// IM 的会话与在线状态以 PostgreSQL 为准，Redis 只承载加速数据；
+	// 缓存故障应降级而不是把整个 IM 摘掉。
+	ready := health.ServiceRegistry(db, health.Redis(redisCache))
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.im",
 		Port:        cfg.Ports.IM,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterIMServiceServer(s, imServiceImpl)
 	}, serverOpt); err != nil {

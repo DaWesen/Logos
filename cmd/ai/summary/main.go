@@ -13,6 +13,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/summary"
@@ -57,10 +58,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("summary")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.summary",
 		Port:        cfg.Ports.Summary,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterSummaryServiceServer(s, &handler.SummaryServiceImpl{
 			SummaryService: summaryService,

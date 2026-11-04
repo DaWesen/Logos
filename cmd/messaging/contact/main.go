@@ -9,6 +9,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/contact"
@@ -47,12 +48,15 @@ func main() {
 
 	_ = obs.InitServiceMeters("contact")
 
+	ready := health.ServiceRegistry(db)
+
 	// 启动服务
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.contact",
 		Port:        cfg.Ports.Contact,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 		Governance:  governance.DefaultConfig(),
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterContactServiceServer(s, contactServiceImpl)
 	}, serverOpt); err != nil {

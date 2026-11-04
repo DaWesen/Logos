@@ -10,6 +10,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
@@ -82,10 +83,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("extraction")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.extraction",
 		Port:        cfg.Ports.Extraction,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterKnowledgeExtractionServiceServer(s, &handler.KnowledgeExtractionServiceImpl{
 			ExtractionService: extractionService,

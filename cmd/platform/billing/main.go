@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"Logos/config"
 	"Logos/internal/service/platform/billing/dao"
@@ -11,6 +12,7 @@ import (
 	"Logos/internal/service/platform/billing/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
@@ -67,10 +69,16 @@ func main() {
 
 	_ = obs.InitServiceMeters("billing")
 
+	// 余额与交易记录都落 PostgreSQL；数据库不可用时不能继续接扣费请求，
+	// 否则用户会看到「请求超时但可能已扣款」的不确定状态。
+	ready := health.New(health.WithTimeout(3 * time.Second))
+	ready.Register("postgres", health.GormPostgres(db))
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.billing",
 		Port:        cfg.Ports.Billing,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterBillingServiceServer(s, &handler.BillingServiceImpl{
 			BillingService: billingService,

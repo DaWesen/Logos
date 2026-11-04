@@ -13,6 +13,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/mcp"
@@ -53,10 +54,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("mcp")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.mcp",
 		Port:        cfg.Ports.MCP,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterMCPServiceServer(s, &handler.MCPServiceImpl{
 			MCPService:    mcpService,

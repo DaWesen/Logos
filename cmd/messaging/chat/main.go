@@ -11,11 +11,13 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/governance"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/chat"
 	"context"
 	"log"
+	"time"
 
 	"google.golang.org/grpc"
 )
@@ -95,11 +97,17 @@ func main() {
 
 	_ = obs.InitServiceMeters("chat")
 
+	// Chat 的读写全部落在 PostgreSQL：连接池不可用时继续接流量，
+	// 只会把每个请求都拖到 SQL 超时，应该主动让编排系统摘除本实例。
+	ready := health.New(health.WithTimeout(3 * time.Second))
+	ready.Register("postgres", health.GormPostgres(db))
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.chat",
 		Port:        cfg.Ports.Chat,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
 		Governance:  governance.DefaultConfig(),
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterChatServiceServer(s, chatServiceImpl)
 	}, serverOpt); err != nil {

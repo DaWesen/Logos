@@ -65,6 +65,8 @@ func Auth(revoker *auth.Revoker) gin.HandlerFunc {
 // 新增的 /api/v1/auth/logout 这类需要认证的接口一旦挂上就被白名单吞掉。
 var publicExactPaths = map[string]struct{}{
 	"/health":                     {},
+	"/livez":                      {},
+	"/readyz":                     {},
 	"/metrics":                    {},
 	"/test":                       {},
 	"/ws":                         {},

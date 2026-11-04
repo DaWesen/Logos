@@ -9,6 +9,7 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
@@ -66,10 +67,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("message")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.message",
 		Port:        cfg.Ports.Message,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterMessageServiceServer(s, &handler.MessageServiceImpl{
 			MessageService: messageService,

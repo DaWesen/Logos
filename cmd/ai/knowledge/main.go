@@ -12,6 +12,7 @@ import (
 	"Logos/pkg/es"
 	"Logos/pkg/graph"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
@@ -99,10 +100,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("knowledge")
 
+	ready := health.ServiceRegistry(db, health.Redis(cacheInstance))
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.knowledge",
 		Port:        cfg.Ports.Knowledge,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterKnowledgeServiceServer(s, &handler.KnowledgeServiceImpl{
 			KnowledgeService: knowledgeService,

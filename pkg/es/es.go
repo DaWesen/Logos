@@ -91,6 +91,25 @@ func NewESManager(client *elasticsearch.Client) *ESManager {
 	}
 }
 
+// Health 是一次轻量集群连通性检查。
+//
+// 用 Ping 而不是查询某个业务索引：探针要回答的是「ES 还能不能服务」，
+// 不应该因为某个索引尚未创建、或某次 reindex 进行中就被判为不健康。
+func (m *ESManager) Health(ctx context.Context) error {
+	if m == nil || m.client == nil {
+		return fmt.Errorf("elasticsearch: client unavailable")
+	}
+	res, err := m.client.Ping(m.client.Ping.WithContext(ctxOrBackground(ctx)))
+	if err != nil {
+		return fmt.Errorf("elasticsearch: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return fmt.Errorf("elasticsearch: %s", res.Status())
+	}
+	return nil
+}
+
 // ctxOrBackground 把 nil ctx 兜底成 Background，避免调用方传 nil 时 panic。
 func ctxOrBackground(ctx context.Context) context.Context {
 	if ctx == nil {

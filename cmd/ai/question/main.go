@@ -10,6 +10,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/question"
@@ -75,10 +76,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("question")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.question",
 		Port:        cfg.Ports.Question,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterQAServiceServer(s, &handler.QAServiceImpl{
 			QAService: qaService,

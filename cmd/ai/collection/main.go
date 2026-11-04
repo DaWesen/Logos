@@ -9,6 +9,7 @@ import (
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
@@ -87,10 +88,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("collection")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.collection",
 		Port:        cfg.Ports.Collection,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterDataCollectionServiceServer(s, &handler.DataCollectionServiceImpl{
 			CollectionService: collectionService,

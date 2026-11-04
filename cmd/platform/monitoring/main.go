@@ -10,6 +10,7 @@ import (
 	"Logos/internal/service/platform/monitoring/service"
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/monitoring"
@@ -70,10 +71,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("monitoring")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.monitoring",
 		Port:        cfg.Ports.Monitoring,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterMonitoringServiceServer(s, &grpchandler.MonitoringServiceImpl{
 			MonitoringService: monitoringService,

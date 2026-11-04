@@ -12,6 +12,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/moderation"
@@ -48,10 +49,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("moderation")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.moderation",
 		Port:        cfg.Ports.Moderation,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterModerationServiceServer(s, &handler.ModerationServiceImpl{
 			ModerationService: moderationService,

@@ -19,6 +19,7 @@ import (
 	"Logos/internal/service/ai/process/service"
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
+	"Logos/pkg/health"
 	"Logos/pkg/httpserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
@@ -158,6 +159,14 @@ func main() {
 
 	processHandler.RegisterMiddlewares(r)
 	processHandler.RegisterRoutes(r)
+
+	// process 是纯 HTTP 服务，探针直接挂在 Gin 上：
+	// /livez 只证明进程存活，/readyz 证明 PostgreSQL 还能服务。
+	registry := health.New(health.WithCacheTTL(2 * time.Second))
+	registry.Register("postgres", health.GormPostgres(db))
+	probe := health.NewHTTPHandler(registry, "logos-process")
+	r.GET("/livez", probe.Live)
+	r.GET("/readyz", probe.Ready)
 
 	port := cfg.Ports.Process
 	if port == 0 {

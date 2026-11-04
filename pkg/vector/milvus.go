@@ -83,6 +83,20 @@ func (m *MilvusManager) Close() error {
 	return m.client.Close(context.Background())
 }
 
+// Health 是轻量连通性检查：只确认 Milvus 能响应一次集合列表请求。
+//
+// 不复用 ListCollections 是因为它会按 INFO 级别打印日志——探针每 10s 调一次，
+// 正常运行时日志会被健康检查刷满。这里静默失败，由调用方统一记录。
+func (m *MilvusManager) Health(ctx context.Context) error {
+	if m == nil || m.client == nil {
+		return fmt.Errorf("milvus: client unavailable")
+	}
+	if _, err := m.client.ListCollections(ctx, milvusclient.NewListCollectionOption()); err != nil {
+		return fmt.Errorf("milvus: %w", err)
+	}
+	return nil
+}
+
 func (m *MilvusManager) CreateCollection(ctx context.Context, collectionName string, dim int) error {
 	logger.Info("创建Milvus集合",
 		logger.StringField("collection", collectionName),

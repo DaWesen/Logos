@@ -10,6 +10,7 @@ import (
 	"Logos/pkg/database/pgsql"
 	"Logos/pkg/eino"
 	"Logos/pkg/grpcserver"
+	"Logos/pkg/health"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	pb "Logos/proto_gen/recommend"
@@ -66,10 +67,13 @@ func main() {
 
 	_ = obs.InitServiceMeters("recommend")
 
+	ready := health.ServiceRegistry(db)
+
 	if err := grpcserver.StartServer(grpcserver.ServerConfig{
 		ServiceName: "logos.recommend",
 		Port:        cfg.Ports.Recommend,
 		Etcd:        grpcserver.EtcdConfig{Endpoints: cfg.Etcd.Endpoints},
+		ReadyCheck:  ready,
 	}, func(s *grpc.Server) {
 		pb.RegisterRecommendationServiceServer(s, &handler.RecommendationServiceImpl{
 			RecommendService: recommendService,
