@@ -45,6 +45,8 @@ type stubMessageRepo struct {
 	lastStatus string
 	batchErr   error
 	updateErr  error
+	updatedID  string
+	updatedTo  string
 
 	claimCalls   int
 	claimedTopic string
@@ -65,7 +67,9 @@ func (s *stubMessageRepo) AckMessages(_ context.Context, ids []string, _ string)
 	return s.batchErr
 }
 
-func (s *stubMessageRepo) UpdateMessageStatus(_ context.Context, _ string, _ string) error {
+func (s *stubMessageRepo) UpdateMessageStatus(_ context.Context, id string, status string) error {
+	s.updatedID = id
+	s.updatedTo = status
 	return s.updateErr
 }
 
@@ -542,5 +546,24 @@ func TestHandleGenericMessage_StatusUpdateErrorIsReturned(t *testing.T) {
 	}
 	if err := svc.handleGenericMessage(msg); err == nil {
 		t.Fatal("状态更新失败应返回错误以触发重试")
+	}
+}
+
+// Kafka 消费成功后必须写统计认识的状态：历史上写 PROCESSED_FROM_KAFKA，
+// 而统计只累加 PROCESSED/ACKED，处理量因此永远显示 0。
+func TestHandleGenericMessage_WritesCountedStatus(t *testing.T) {
+	repo := &stubMessageRepo{}
+	svc := &messageServiceImpl{repo: repo}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicRecommendation,
+		Value:   []byte(`{"message_id":"m-1"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("正常消费不应报错: %v", err)
+	}
+	if repo.updatedID != "m-1" || repo.updatedTo != model.StatusProcessed {
+		t.Fatalf("状态更新 = %q/%q, want m-1/%s", repo.updatedID, repo.updatedTo, model.StatusProcessed)
 	}
 }

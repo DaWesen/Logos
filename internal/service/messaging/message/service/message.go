@@ -113,7 +113,7 @@ func newMessage(topic int32, content string, priority *int32, headers map[string
 		Headers:       dao.MarshalHeaders(headers),
 		CorrelationID: correlationID,
 		Timestamp:     time.Now().UnixMilli(),
-		Status:        "PENDING",
+		Status:        model.StatusPending,
 		CreatedAt:     time.Now(),
 	}
 	return msg, nil
@@ -446,7 +446,9 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	}
 
 	if messageID != "" {
-		if err := s.repo.UpdateMessageStatus(messageContext(msg), messageID, "PROCESSED_FROM_KAFKA"); err != nil {
+		// 状态必须落在统计认识的集合里：历史上写 PROCESSED_FROM_KAFKA，
+		// 而统计只累加 PROCESSED/ACKED，Kafka 消费量永远显示为 0。
+		if err := s.repo.UpdateMessageStatus(messageContext(msg), messageID, model.StatusProcessed); err != nil {
 			return fmt.Errorf("更新消息状态失败: %w", err)
 		}
 	}

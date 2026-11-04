@@ -104,20 +104,20 @@ func (r *messageRepository) ClaimPendingMessages(
 // claimPendingSQL 一条语句完成「筛选 + 行锁 + 更新 + 返回」：
 // CTE 里 FOR UPDATE SKIP LOCKED 保证并发消费者各领各的，不会重复投递；
 // UPDATE ... RETURNING 直接返回更新后的行，省掉第二次查询。
-const claimPendingSQL = `
+var claimPendingSQL = fmt.Sprintf(`
 WITH claimed AS (
 	SELECT id FROM queue_messages
 	WHERE topic = ?
-	  AND (status = 'PENDING' OR (status = 'PROCESSED' AND lease_until IS NOT NULL AND lease_until < ?))
+	  AND (status = '%s' OR (status = '%s' AND lease_until IS NOT NULL AND lease_until < ?))
 	ORDER BY priority DESC, timestamp ASC
 	LIMIT ?
 	FOR UPDATE SKIP LOCKED
 )
 UPDATE queue_messages AS m
-SET status = 'PROCESSED', claimed_by = ?, lease_until = ?, attempts = m.attempts + 1
+SET status = '%s', claimed_by = ?, lease_until = ?, attempts = m.attempts + 1
 FROM claimed
 WHERE m.id = claimed.id
-RETURNING m.*`
+RETURNING m.*`, model.StatusPending, model.StatusProcessed, model.StatusProcessed)
 
 // AckMessage 把消息置为 ACKED 终态。
 // 只有处于 PROCESSED/ACKED 且属于本消费组（或历史无领取者的行）才能确认，
@@ -125,9 +125,9 @@ RETURNING m.*`
 func (r *messageRepository) AckMessage(ctx context.Context, id string, consumerGroup string) error {
 	res := r.db.WithContext(ctx).
 		Model(&model.Message{}).
-		Where("id = ? AND status IN ?", id, []string{"PROCESSED", "ACKED"}).
+		Where("id = ? AND status IN ?", id, []string{model.StatusProcessed, model.StatusAcked}).
 		Where("claimed_by = ? OR claimed_by = ''", consumerGroup).
-		Updates(map[string]interface{}{"status": "ACKED", "lease_until": nil})
+		Updates(map[string]interface{}{"status": model.StatusAcked, "lease_until": nil})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -145,9 +145,9 @@ func (r *messageRepository) AckMessages(ctx context.Context, ids []string, consu
 	}
 	res := r.db.WithContext(ctx).
 		Model(&model.Message{}).
-		Where("id IN ? AND status IN ?", ids, []string{"PROCESSED", "ACKED"}).
+		Where("id IN ? AND status IN ?", ids, []string{model.StatusProcessed, model.StatusAcked}).
 		Where("claimed_by = ? OR claimed_by = ''", consumerGroup).
-		Updates(map[string]interface{}{"status": "ACKED", "lease_until": nil})
+		Updates(map[string]interface{}{"status": model.StatusAcked, "lease_until": nil})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -169,7 +169,7 @@ func (r *messageRepository) ListMessagesByTopic(ctx context.Context, topic strin
 
 func (r *messageRepository) ListPendingMessages(ctx context.Context, limit int) ([]*model.Message, error) {
 	var msgs []*model.Message
-	query := r.db.WithContext(ctx).Where("status = ?", "PENDING").Order("priority desc, timestamp asc")
+	query := r.db.WithContext(ctx).Where("status = ?", model.StatusPending).Order("priority desc, timestamp asc")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -179,7 +179,7 @@ func (r *messageRepository) ListPendingMessages(ctx context.Context, limit int) 
 
 func (r *messageRepository) ListPendingMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error) {
 	var msgs []*model.Message
-	query := r.db.WithContext(ctx).Where("status = ? AND topic = ?", "PENDING", topic).Order("priority desc, timestamp asc")
+	query := r.db.WithContext(ctx).Where("status = ? AND topic = ?", model.StatusPending, topic).Order("priority desc, timestamp asc")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
@@ -194,7 +194,7 @@ func (r *messageRepository) DeleteMessagesByTopic(ctx context.Context, topic str
 func (r *messageRepository) ClearMessagesByTopic(ctx context.Context, topic string) error {
 	return r.db.WithContext(ctx).Model(&model.Message{}).
 		Where("topic = ?", topic).
-		Update("status", "CLEARED").Error
+		Update("status", model.StatusCleared).Error
 }
 
 func (r *messageRepository) DeleteSubscriptionsByTopic(ctx context.Context, topic string) error {
@@ -221,9 +221,10 @@ func (r *messageRepository) GetMessageStatsByTopic(ctx context.Context) ([]Topic
 		Model(&model.Message{}).
 		Select(`topic,
 			COUNT(*) AS total,
-			COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
-			COALESCE(SUM(CASE WHEN status IN ('PROCESSED', 'ACKED') THEN 1 ELSE 0 END), 0) AS processed,
-			COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed`).
+			COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status IN ? THEN 1 ELSE 0 END), 0) AS processed,
+			COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS failed`,
+			model.StatusPending, []string{model.StatusProcessed, model.StatusAcked}, model.StatusFailed).
 		Group("topic").
 		Scan(&rows).Error
 	return rows, err

@@ -6,6 +6,17 @@ import (
 	"gorm.io/gorm"
 )
 
+// 消息状态。状态字符串只在这里定义，避免写入方和统计方各拼一套：
+// Kafka 消费路径曾写入 PROCESSED_FROM_KAFKA，而统计只认 PROCESSED/ACKED，
+// 结果处理量永远显示 0。
+const (
+	StatusPending   = "PENDING"
+	StatusProcessed = "PROCESSED"
+	StatusAcked     = "ACKED"
+	StatusFailed    = "FAILED"
+	StatusCleared   = "CLEARED"
+)
+
 type Message struct {
 	ID            string  `gorm:"primaryKey;size:64;comment:消息ID"`
 	Topic         string  `gorm:"size:64;index;not null;comment:消息主题"`
