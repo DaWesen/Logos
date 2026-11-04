@@ -40,6 +40,9 @@ type ServerConfig struct {
 	ReadyCheck *health.Registry
 	// ReadyInterval 是就绪探测周期，默认 10s（与 K8s probe 的常见周期一致）。
 	ReadyInterval time.Duration
+	// ReadyFailureThreshold 是连续多少次未就绪后才从 etcd 摘除，默认 2。
+	// 单次依赖抖动不应该让所有副本同时退出服务发现。
+	ReadyFailureThreshold int
 }
 
 type EtcdConfig struct {
@@ -55,6 +58,10 @@ const defaultShutdownGrace = 25 * time.Second
 // defaultReadyInterval 与 K8s readinessProbe 的常见 periodSeconds 对齐：
 // 探得太快没有意义（结果缓存本身也是秒级），探得太慢则故障后迟迟不摘流量。
 const defaultReadyInterval = 10 * time.Second
+
+// defaultReadyFailureThreshold 与 ReadyInterval 相乘得到约 20s 的防抖窗口：
+// 足以过滤一次网络抖动，又不会让坏实例在服务发现里停留过久。
+const defaultReadyFailureThreshold = 2
 
 func shutdownGracePeriod() time.Duration {
 	if v := os.Getenv("GRPC_SHUTDOWN_GRACE"); v != "" {
@@ -113,23 +120,39 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 	// 必须停掉后台 ticker，否则进程内的探针 goroutine 会一直泄漏。
 	readyCtx, stopReady := context.WithCancel(context.Background())
 	defer stopReady()
+
+	// registrationManager 统一管理「健康状态 → 服务发现」的映射。
+	// 无 etcd 配置时为 nil，Observe/Close 都是空操作。
+	var manager *registrationManager
+	if len(cfg.Etcd.Endpoints) > 0 {
+		registrar, err := newEtcdRegistrar(cfg)
+		if err != nil {
+			log.Printf("Warning: failed to register with etcd: %v", err)
+		} else {
+			threshold := cfg.ReadyFailureThreshold
+			if threshold <= 0 {
+				threshold = defaultReadyFailureThreshold
+			}
+			manager = newRegistrationManager(registrar, threshold)
+		}
+	}
+
 	if cfg.ReadyCheck != nil {
 		// 有依赖探针时不能先报 SERVING：依赖还没探过就接流量，
 		// 滚动发布期间会把请求打到尚未就绪的新副本上。初始状态保持 NOT_SERVING，
 		// 由第一次探测决定是否放行。
-		go watchReadiness(readyCtx, cfg, healthServer)
+		go watchReadiness(readyCtx, cfg, healthServer, func(ready bool) {
+			manager.Observe(readyCtx, ready)
+		})
 	} else {
+		// 没有依赖探针时，进程启动即视为可接流量，立即注册。
+		// 注册失败只告警，不阻止服务启动：etcd 短暂不可用不应让整个服务拒绝启动。
+		manager.Observe(readyCtx, true)
 		setServing(healthServer, cfg.ServiceName, grpc_health_v1.HealthCheckResponse_SERVING)
-	}
-
-	var deregister func()
-	if len(cfg.Etcd.Endpoints) > 0 {
-		if d, err := registerEtcd(cfg); err != nil {
-			log.Printf("Warning: failed to register with etcd: %v", err)
-		} else {
-			deregister = d
-			log.Printf("Service %s registered with etcd", cfg.ServiceName)
-		}
+		// 无依赖探针就不会再有 ready 事件来触发重试，需要独立校正循环：
+		// 否则首次注册遇到 etcd 不可用、或运行中 lease 失效，实例会一直
+		// 留在服务发现之外，只能靠重启恢复。
+		go keepRegistered(readyCtx, cfg, manager)
 	}
 
 	log.Printf("gRPC server %s starting on :%d", cfg.ServiceName, cfg.Port)
@@ -144,24 +167,24 @@ func StartServer(cfg ServerConfig, register RegisterFunc, serverOptions ...grpc.
 
 	select {
 	case err := <-serveErr:
-		if deregister != nil {
-			deregister()
-		}
+		stopReady()
+		manager.Close()
 		return err
 
 	case sig := <-sigCh:
 		log.Printf("Service %s received %v, shutting down gracefully (grace=%s)",
 			cfg.ServiceName, sig, shutdownGracePeriod())
 
-		// 1) 先从 etcd 摘除，避免新流量继续路由到本实例
-		if deregister != nil {
-			deregister()
-		}
+		// 1) 先停就绪探测，防止停机过程中 watcher 又把实例注册回去
+		stopReady()
 
 		// 2) 健康检查置 NOT_SERVING
 		setServing(healthServer, cfg.ServiceName, grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 
-		// 3) 等待 in-flight 请求排空；宽限期耗尽则强制停止
+		// 3) 从 etcd 摘除并撤销 lease，避免新流量继续路由到本实例
+		manager.Close()
+
+		// 4) 等待 in-flight 请求排空；宽限期耗尽则强制停止
 		done := make(chan struct{})
 		go func() {
 			server.GracefulStop()
@@ -188,10 +211,12 @@ func setServing(h *grpcHealth.Server, service string, status grpc_health_v1.Heal
 }
 
 // watchReadiness 周期性探测依赖，并把聚合结果映射到 gRPC 健康状态。
+// observer 每次探测都会收到结果（不只在状态变化时），
+// 注册状态机需要连续失败计数，不能只靠边沿触发。
 //
 // 只在状态发生变化时写日志与指标：探测每 10s 一次，若每次都打日志，
 // 正常运行时日志会被健康检查刷满，真正的问题反而被淹没。
-func watchReadiness(ctx context.Context, cfg ServerConfig, healthServer *grpcHealth.Server) {
+func watchReadiness(ctx context.Context, cfg ServerConfig, healthServer *grpcHealth.Server, observer func(bool)) {
 	interval := cfg.ReadyInterval
 	if interval <= 0 {
 		interval = defaultReadyInterval
@@ -207,6 +232,9 @@ func watchReadiness(ctx context.Context, cfg ServerConfig, healthServer *grpcHea
 		}
 		setServing(healthServer, cfg.ServiceName, status)
 		obs.RecordReadiness(ctx, cfg.ServiceName, result)
+		if observer != nil {
+			observer(res.Ready)
+		}
 
 		changed := lastReady == nil || *lastReady != res.Ready
 		lastReady = &res.Ready
@@ -235,68 +263,27 @@ func watchReadiness(ctx context.Context, cfg ServerConfig, healthServer *grpcHea
 	}
 }
 
-// registerEtcd 注册服务到 etcd（lease 保活），返回注销函数。
-// 注销函数在停机时主动删除注册 key，并关闭 etcd 连接。
-func registerEtcd(cfg ServerConfig) (deregister func(), err error) {
-	etcdCli, err := clientv3.NewFromURLs(cfg.Etcd.Endpoints)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to etcd: %w", err)
+// keepRegistered 周期性校正「无依赖探针」服务的注册状态。
+// manager 在已注册且 key 仍存在时是纯内存判断，不会给 etcd 增加负担。
+func keepRegistered(ctx context.Context, cfg ServerConfig, manager *registrationManager) {
+	if manager == nil {
+		return
+	}
+	interval := cfg.ReadyInterval
+	if interval <= 0 {
+		interval = defaultReadyInterval
 	}
 
-	hostname := cfg.Host
-	if hostname == "" {
-		hostname = os.Getenv("SERVICE_HOST")
-	}
-	if hostname == "" {
-		hostname = os.Getenv("HOSTNAME")
-	}
-	if hostname == "" {
-		hostname = "127.0.0.1"
-	}
-	serviceAddr := fmt.Sprintf("%s:%d", hostname, cfg.Port)
-	lease, err := etcdCli.Grant(context.Background(), 60)
-	if err != nil {
-		_ = etcdCli.Close()
-		return nil, fmt.Errorf("failed to create etcd lease: %w", err)
-	}
-
-	key := fmt.Sprintf("/grpc/%s/%s", cfg.ServiceName, serviceAddr)
-	_, err = etcdCli.Put(context.Background(), key, serviceAddr, clientv3.WithLease(lease.ID))
-	if err != nil {
-		_ = etcdCli.Close()
-		return nil, fmt.Errorf("failed to register service with etcd: %w", err)
-	}
-
-	log.Printf("Service %s registered with etcd at %s", cfg.ServiceName, serviceAddr)
-
-	kaDone := make(chan struct{})
-	go func() {
-		defer close(kaDone)
-		ch, kaErr := etcdCli.KeepAlive(context.Background(), lease.ID)
-		if kaErr != nil {
-			log.Printf("etcd keep alive error: %v", kaErr)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			manager.Observe(ctx, true)
 		}
-		for range ch {
-		}
-	}()
-
-	deregister = func() {
-		// 主动删除注册 key：立即生效，无需等待 lease 过期
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, delErr := etcdCli.Delete(ctx, key); delErr != nil {
-			// 删除失败时 lease 过期兜底（60s 内自动消失）
-			log.Printf("etcd deregister failed (will expire via lease): %v", delErr)
-		} else {
-			log.Printf("Service %s deregistered from etcd", cfg.ServiceName)
-		}
-		// 撤销 lease 立即释放，并结束保活 goroutine
-		_, _ = etcdCli.Revoke(context.Background(), lease.ID)
-		_ = etcdCli.Close()
-		<-kaDone
 	}
-	return deregister, nil
 }
 
 func NewGRPCClientConn(etcdEndpoints []string, serviceName string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {

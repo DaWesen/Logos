@@ -38,7 +38,7 @@ func TestWatchReadiness_Transitions(t *testing.T) {
 		ServiceName:   "logos.test",
 		ReadyCheck:    reg,
 		ReadyInterval: 30 * time.Millisecond,
-	}, hs)
+	}, hs, nil)
 
 	waitForStatus(t, client, "logos.test", grpc_health_v1.HealthCheckResponse_SERVING)
 
@@ -64,7 +64,7 @@ func TestWatchReadiness_EmptyServiceNameMirrors(t *testing.T) {
 		ServiceName:   "logos.test",
 		ReadyCheck:    reg,
 		ReadyInterval: 30 * time.Millisecond,
-	}, hs)
+	}, hs, nil)
 
 	waitForStatus(t, client, "", grpc_health_v1.HealthCheckResponse_SERVING)
 }
@@ -82,7 +82,7 @@ func TestWatchReadiness_StopsWithContext(t *testing.T) {
 			ServiceName:   "logos.test",
 			ReadyCheck:    reg,
 			ReadyInterval: 30 * time.Millisecond,
-		}, hs)
+		}, hs, nil)
 		close(done)
 	}()
 
