@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"Logos/internal/service/ai/knowledge/dao"
@@ -13,7 +14,10 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/es"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
+	"Logos/pkg/pagination"
+	"Logos/pkg/singleflight"
 
 	"gorm.io/gorm"
 )
@@ -63,14 +67,17 @@ type knowledgeServiceImpl struct {
 	cache      cache.Cache
 	outboxRepo outbox.OutboxRepository
 	esManager  *es.ESManager
+	// entityFills 合并同一实体的并发回源，挡住「热点实体缓存过期瞬间」的击穿。
+	entityFills *singleflight.Group[*model.Entity]
 }
 
 func NewKnowledgeService(repo dao.KnowledgeRepository, cache cache.Cache, outboxRepo outbox.OutboxRepository, esManager *es.ESManager) KnowledgeService {
 	return &knowledgeServiceImpl{
-		repo:       repo,
-		cache:      cache,
-		outboxRepo: outboxRepo,
-		esManager:  esManager,
+		repo:        repo,
+		cache:       cache,
+		outboxRepo:  outboxRepo,
+		esManager:   esManager,
+		entityFills: singleflight.NewGroup[*model.Entity](5 * time.Second),
 	}
 }
 
@@ -271,6 +278,9 @@ func (s *knowledgeServiceImpl) DeleteEntity(ctx context.Context, id string) erro
 				logger.ErrorField(err))
 		}
 	}
+	// 删除后写入空值标记：删除通常伴随客户端重试/轮询，
+	// 没有这一层的话每次重试都会穿透到数据库确认「确实没了」。
+	s.cacheMissingEntity(ctx, id)
 
 	logger.Info("删除实体成功", logger.StringField("id", id))
 	return nil
@@ -282,26 +292,60 @@ func (s *knowledgeServiceImpl) GetEntity(ctx context.Context, id string) (*model
 	cacheKey := fmt.Sprintf("entity:%s", id)
 	if s.cache != nil {
 		if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != "" {
-			var entity model.Entity
-			if err := json.Unmarshal([]byte(cached), &entity); err == nil {
+			if entity, ok := decodeCachedEntity(cached); ok {
 				logger.Info("从缓存获取实体成功", logger.StringField("id", id))
-				return &entity, nil
+				return entity, nil
 			}
 		}
 	}
+	// 空值标记只在实体未命中后查：正常命中路径仍然只有一次 Redis 往返，
+	// 不会为了防穿透给热路径额外加一次网络请求。
+	if s.isMissingEntityCached(ctx, id) {
+		return nil, ErrEntityNotFound
+	}
 
-	entity, err := s.repo.GetEntity(ctx, id)
+	// 缓存未命中：同一实体只允许一个请求回源，其余等待结果。
+	// 回源函数里会再查一次缓存，避免合并窗口内别人已写回还重复查库。
+	entity, shared, err := s.entityFills.Do(ctx, cacheKey, func(fill context.Context) (*model.Entity, error) {
+		if s.cache != nil {
+			if cached, cacheErr := s.cache.Get(fill, cacheKey); cacheErr == nil && cached != "" {
+				if hit, ok := decodeCachedEntity(cached); ok {
+					return hit, nil
+				}
+			}
+		}
+		return s.repo.GetEntity(fill, id)
+	})
 	if err != nil {
+		obs.RecordCacheFill(ctx, "knowledge_entity", "error")
 		logger.Error("查询实体失败", logger.ErrorField(err))
 		return nil, ErrInternalServer
 	}
+	if shared {
+		obs.RecordCacheFill(ctx, "knowledge_entity", "shared")
+	} else {
+		obs.RecordCacheFill(ctx, "knowledge_entity", "fill")
+	}
 	if entity == nil {
 		logger.Warn("实体不存在", logger.StringField("id", id))
+		// 缓存空值防穿透：否则每次查一个不存在的 ID 都要打一次库。
+		// TTL 比正常实体短得多，实体被创建后最多 60s 就能查到。
+		s.cacheMissingEntity(ctx, id)
 		return nil, ErrEntityNotFound
 	}
 
 	s.cacheEntity(ctx, entity)
 	return entity, nil
+}
+
+// decodeCachedEntity 解析缓存内容。解析失败时返回 false，让调用方走回源，
+// 而不是把损坏的缓存当作「实体不存在」。
+func decodeCachedEntity(raw string) (*model.Entity, bool) {
+	var entity model.Entity
+	if err := json.Unmarshal([]byte(raw), &entity); err != nil {
+		return nil, false
+	}
+	return &entity, true
 }
 
 func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, name, collectionID string, properties map[string]string, page, pageSize int) ([]*model.Entity, int64, error) {
@@ -310,8 +354,8 @@ func (s *knowledgeServiceImpl) QueryEntities(ctx context.Context, entityType, na
 		logger.StringField("name", name),
 		logger.StringField("collectionId", collectionID))
 
+	offset, pageSize := pagination.Offset(page, pageSize)
 	userID := getUserIDFromContext(ctx)
-	offset := (page - 1) * pageSize
 	entities, err := s.repo.QueryEntities(ctx, entityType, name, collectionID, userID, properties, offset, pageSize)
 	if err != nil {
 		logger.Error("查询实体失败", logger.ErrorField(err))
@@ -433,7 +477,7 @@ func (s *knowledgeServiceImpl) QueryRelations(ctx context.Context, relationType,
 		logger.StringField("targetId", targetId),
 		logger.StringField("collectionId", collectionID))
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	userID := getUserIDFromContext(ctx)
 	relations, err := s.repo.QueryRelations(ctx, relationType, sourceId, targetId, collectionID, userID, offset, pageSize)
 	if err != nil {
@@ -628,12 +672,22 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 		logger.IntField("page", page),
 		logger.IntField("pageSize", pageSize))
 
+	page, pageSize = pagination.Normalize(page, pageSize)
+
 	if s.esManager == nil {
 		logger.Warn("ES未初始化，降级到数据库搜索")
 		return s.searchEntitiesFallback(ctx, keyword, entityType, collectionID, page, pageSize)
 	}
 
-	from := (page - 1) * pageSize
+	// ES 深分页有 max_result_window 上限，越过时不要降级到数据库：
+	// 一个百万 OFFSET 的 SQL 只会把 ES 的错误换成更慢的数据库错误。
+	from, size, err := pagination.Window(page, pageSize, pagination.MaxResultWindow)
+	if err != nil {
+		logger.Warn("拒绝 ES 深分页",
+			logger.IntField("page", page),
+			logger.IntField("page_size", pageSize))
+		return nil, 0, err
+	}
 
 	query := map[string]interface{}{
 		"bool": map[string]interface{}{
@@ -672,11 +726,11 @@ func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword strin
 	searchQuery := es.SearchQuery{
 		Query: query,
 		From:  from,
-		Size:  pageSize,
+		Size:  size,
 	}
 
 	var result es.SearchResult
-	if err := s.esManager.Search("entities", searchQuery, &result); err != nil {
+	if err := s.esManager.SearchWithContext(ctx, "entities", searchQuery, &result); err != nil {
 		logger.Warn("ES搜索失败，降级到数据库搜索", logger.ErrorField(err))
 		return s.searchEntitiesFallback(ctx, keyword, entityType, collectionID, page, pageSize)
 	}
@@ -717,20 +771,62 @@ func (s *knowledgeServiceImpl) cacheEntity(ctx context.Context, entity *model.En
 	if s.cache == nil {
 		return
 	}
+	// 实体写入后必须清掉空值标记，否则刚创建的实体会被 60s 的
+	// 「不存在」缓存挡住。
+	if err := s.cache.Delete(ctx, missingEntityKey(entity.ID)); err != nil {
+		logger.Warn("清理实体空值缓存失败",
+			logger.StringField("id", entity.ID),
+			logger.ErrorField(err))
+	}
 	cacheKey := fmt.Sprintf("entity:%s", entity.ID)
 	entityJSON, _ := json.Marshal(entity)
-	if err := s.cache.Set(ctx, cacheKey, string(entityJSON), 1*time.Hour); err != nil {
+	// TTL 加 ±10% 抖动：同一批预热的实体会在同一秒过期，
+	// 抖动把失效时间摊开，避免整批 key 同时回源。
+	ttl := cache.JitterTTL(entityCacheTTL, entityCacheTTLJitter, rand.Float64())
+	if err := s.cache.Set(ctx, cacheKey, string(entityJSON), ttl); err != nil {
 		logger.Warn("缓存实体失败",
 			logger.StringField("id", entity.ID),
 			logger.ErrorField(err))
 	}
 }
 
+const (
+	entityCacheTTL       = time.Hour
+	entityCacheTTLJitter = 0.1
+	missingEntityTTL     = 60 * time.Second
+)
+
+func missingEntityKey(id string) string {
+	return fmt.Sprintf("entity:missing:%s", id)
+}
+
+// cacheMissingEntity 缓存「实体不存在」这一事实。
+// 用独立的 key 而不是在实体 key 下写哨兵值：正常实体与空值生命周期不同
+// （1h vs 60s），混在一起既不好调 TTL，也容易在反序列化时分不清。
+func (s *knowledgeServiceImpl) cacheMissingEntity(ctx context.Context, id string) {
+	if s.cache == nil {
+		return
+	}
+	if err := s.cache.Set(ctx, missingEntityKey(id), "1", missingEntityTTL); err != nil {
+		logger.Warn("缓存实体空值失败",
+			logger.StringField("id", id),
+			logger.ErrorField(err))
+	}
+}
+
+func (s *knowledgeServiceImpl) isMissingEntityCached(ctx context.Context, id string) bool {
+	if s.cache == nil {
+		return false
+	}
+	ok, err := s.cache.Exists(ctx, missingEntityKey(id))
+	return err == nil && ok
+}
+
 func (s *knowledgeServiceImpl) indexEntityToES(ctx context.Context, entity *model.Entity) {
 	if s.esManager == nil {
 		return
 	}
-	if err := s.esManager.AddDocument("entities", entity.ID, entity); err != nil {
+	if err := s.esManager.AddDocumentWithContext(ctx, "entities", entity.ID, entity); err != nil {
 		logger.Warn("同步实体到ES失败",
 			logger.StringField("id", entity.ID),
 			logger.ErrorField(err))

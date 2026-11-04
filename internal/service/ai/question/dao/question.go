@@ -7,6 +7,7 @@ import (
 
 	"Logos/internal/service/ai/question/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 )
 
 type QARepository interface {
@@ -61,7 +62,7 @@ func (r *qaRepository) ListQARecords(ctx context.Context, userID int64, page, pa
 	var records []*model.QARecord
 	var total int64
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	result := r.db.WithContext(ctx).Model(&model.QARecord{}).
 		Where("user_id = ?", userID).

@@ -9,6 +9,7 @@ import (
 	"Logos/internal/service/ai/vector/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	"Logos/pkg/vector"
 
 	"github.com/cloudwego/eino/components/embedding"
@@ -841,14 +842,7 @@ func (r *vectorRepository) ListVectors(ctx context.Context, collectionID string,
 		return nil, 0, r.milvusUnavailableError("ListVectors")
 	}
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
-
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	collectionName := "vector_" + collectionID
 

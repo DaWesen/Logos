@@ -8,6 +8,7 @@ import (
 	"Logos/internal/service/ai/moderation/model"
 	"Logos/internal/service/ai/moderation/service"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	pb "Logos/proto_gen/moderation"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -92,14 +93,7 @@ func (s *ModerationServiceImpl) GetModerationRecords(ctx context.Context, req *p
 		endTime = &t
 	}
 
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
 
 	records, total, err := s.ModerationService.GetModerationRecords(ctx, result, startTime, endTime, page, pageSize)
 	if err != nil {

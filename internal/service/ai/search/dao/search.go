@@ -96,7 +96,7 @@ func (r *searchRepository) Search(ctx context.Context, query string, indexType m
 	}
 
 	var result es.SearchResult
-	if err := r.esManager.Search(indexName, searchQuery, &result); err != nil {
+	if err := r.esManager.SearchWithContext(ctx, indexName, searchQuery, &result); err != nil {
 		logger.Error("搜索失败",
 			logger.StringField("index", indexName),
 			logger.StringField("query", query),
@@ -183,7 +183,7 @@ func (r *searchRepository) AddDocument(ctx context.Context, doc *model.SearchDoc
 		mergedDoc[k] = v
 	}
 
-	if err := r.esManager.AddDocument(indexName, doc.ID, mergedDoc); err != nil {
+	if err := r.esManager.AddDocumentWithContext(ctx, indexName, doc.ID, mergedDoc); err != nil {
 		logger.Error("添加文档失败",
 			logger.StringField("id", doc.ID),
 			logger.StringField("index", indexName),
@@ -221,7 +221,7 @@ func (r *searchRepository) UpdateDocument(ctx context.Context, doc *model.Search
 		mergedDoc[k] = v
 	}
 
-	if err := r.esManager.UpdateDocument(indexName, doc.ID, mergedDoc); err != nil {
+	if err := r.esManager.UpdateDocumentWithContext(ctx, indexName, doc.ID, mergedDoc); err != nil {
 		logger.Error("更新文档失败",
 			logger.StringField("id", doc.ID),
 			logger.StringField("index", indexName),
@@ -240,7 +240,7 @@ func (r *searchRepository) DeleteDocument(ctx context.Context, id string) error 
 	indexes := []string{"entities", "relations", "questions", "answers", "documents", "users"}
 
 	for _, index := range indexes {
-		err := r.esManager.DeleteDocument(index, id)
+		err := r.esManager.DeleteDocumentWithContext(ctx, index, id)
 		if err == nil {
 			return nil
 		}
@@ -257,7 +257,7 @@ func (r *searchRepository) GetDocument(ctx context.Context, id string) (*model.S
 	indexes := []string{"entities", "relations", "questions", "answers", "documents", "users"}
 
 	for _, index := range indexes {
-		source, err := r.esManager.GetDocument(index, id)
+		source, err := r.esManager.GetDocumentWithContext(ctx, index, id)
 		if err == nil {
 			var docMap map[string]interface{}
 			if err := json.Unmarshal(source, &docMap); err != nil {
@@ -370,7 +370,7 @@ func (r *searchRepository) CreateIndex(ctx context.Context, indexType model.Inde
 		mappings = model.GenerateDocumentMapping()
 	}
 
-	if err := r.esManager.CreateIndex(indexName, mappings); err != nil {
+	if err := r.esManager.CreateIndexWithContext(ctx, indexName, mappings); err != nil {
 		logger.Error("创建索引失败",
 			logger.StringField("index", indexName),
 			logger.ErrorField(err))
@@ -387,7 +387,7 @@ func (r *searchRepository) DeleteIndex(ctx context.Context, indexType model.Inde
 
 	indexName := r.getIndexName(indexType)
 
-	if err := r.esManager.DeleteIndex(indexName); err != nil {
+	if err := r.esManager.DeleteIndexWithContext(ctx, indexName); err != nil {
 		logger.Error("删除索引失败",
 			logger.StringField("index", indexName),
 			logger.ErrorField(err))
@@ -404,7 +404,7 @@ func (r *searchRepository) RefreshIndex(ctx context.Context, indexType model.Ind
 
 	indexName := r.getIndexName(indexType)
 
-	if err := r.esManager.RefreshIndex(indexName); err != nil {
+	if err := r.esManager.RefreshIndexWithContext(ctx, indexName); err != nil {
 		logger.Error("刷新索引失败",
 			logger.StringField("index", indexName),
 			logger.ErrorField(err))

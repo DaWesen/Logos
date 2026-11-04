@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"Logos/internal/service/ai/mcp/model"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -74,7 +75,7 @@ func (r *mcpRepository) ListTools(ctx context.Context, toolType *int, enabledOnl
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&tools).Error
 	return tools, total, err
 }
@@ -153,7 +154,7 @@ func (r *mcpServiceRepository) ListServices(ctx context.Context, enabledOnly boo
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&services).Error
 	return services, total, err
 }

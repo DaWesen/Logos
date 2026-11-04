@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,9 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
+	"Logos/pkg/pagination"
+	"Logos/pkg/singleflight"
 )
 
 type VectorService interface {
@@ -25,7 +29,7 @@ type KnowledgeService interface {
 }
 
 type RecommendService interface {
-	GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, context map[string]string) ([]*model.RecommendationItem, int64, error)
+	GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, reqContext map[string]string) ([]*model.RecommendationItem, int64, error)
 	GetRelatedRecommendations(ctx context.Context, entityID string, recommendType string, limit int) ([]*model.RecommendationItem, int64, error)
 	SubmitFeedback(ctx context.Context, itemID string, userID int64, action string, timestamp int64) error
 	GetRecommendationHistory(ctx context.Context, userID int64, page, pageSize int) ([]*model.RecommendationHistory, int64, error)
@@ -38,6 +42,15 @@ type recommendServiceImpl struct {
 	vectorService    VectorService
 	knowledgeService KnowledgeService
 	cache            cache.Cache
+	// fills 合并同一 (用户, 类型, 条数) 的并发回源。
+	// 缓存刚过期时是「击穿窗口」：一批请求同时 miss，如果不合并，
+	// 每个请求都会查一次库、跑一次多源生成，缓存反而放大了瞬时压力。
+	fills *singleflight.Group[recommendResult]
+}
+
+type recommendResult struct {
+	Items []*model.RecommendationItem `json:"items"`
+	Total int64                       `json:"total"`
 }
 
 func NewRecommendService(
@@ -52,10 +65,12 @@ func NewRecommendService(
 		vectorService:    vectorService,
 		knowledgeService: knowledgeService,
 		cache:            cache.NewRedisCache(),
+		// 回源上限 10s：推荐生成会调向量检索/知识库，但不应无限期挂住。
+		fills: singleflight.NewGroup[recommendResult](10 * time.Second),
 	}
 }
 
-func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, context map[string]string) ([]*model.RecommendationItem, int64, error) {
+func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, reqContext map[string]string) ([]*model.RecommendationItem, int64, error) {
 	logger.Info("获取推荐请求",
 		logger.Int64Field("user_id", userID),
 		logger.StringField("type", recommendType),
@@ -65,14 +80,11 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 		limit = 10
 	}
 
+	cacheKey := recommendCacheKey(userID, recommendType, limit)
 	if s.cache != nil {
-		cacheKey := fmt.Sprintf("recommend:%d:%s:limit:%d", userID, recommendType, limit)
 		cachedData, err := s.cache.Get(ctx, cacheKey)
 		if err == nil && cachedData != "" {
-			var cachedResult struct {
-				Items []*model.RecommendationItem `json:"items"`
-				Total int64                       `json:"total"`
-			}
+			var cachedResult recommendResult
 			if json.Unmarshal([]byte(cachedData), &cachedResult) == nil {
 				logger.Info("从Redis缓存中获取推荐数据成功",
 					logger.Int64Field("user_id", userID))
@@ -81,15 +93,41 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 		}
 	}
 
-	items, total, err := s.recommendRepo.GetRecommendations(ctx, userID, recommendType, limit)
+	// 缓存未命中：合并并发回源。注意回源函数里要再查一次缓存——
+	// 合并窗口内可能已有别的请求把结果写回，直接查库等于白白多打一次。
+	result, shared, err := s.fills.Do(ctx, cacheKey, func(fill context.Context) (recommendResult, error) {
+		return s.loadRecommendations(fill, userID, recommendType, limit, cacheKey)
+	})
 	if err != nil {
-		logger.Error("从数据库获取推荐失败", logger.ErrorField(err))
+		obs.RecordCacheFill(ctx, "recommend", "error")
+		logger.Error("获取推荐回源失败", logger.ErrorField(err))
 		return nil, 0, err
 	}
+	if shared {
+		obs.RecordCacheFill(ctx, "recommend", "shared")
+	} else {
+		obs.RecordCacheFill(ctx, "recommend", "fill")
+	}
+	return result.Items, result.Total, nil
+}
 
+func (s *recommendServiceImpl) loadRecommendations(ctx context.Context, userID int64, recommendType string, limit int, cacheKey string) (recommendResult, error) {
+	if s.cache != nil {
+		if cachedData, err := s.cache.Get(ctx, cacheKey); err == nil && cachedData != "" {
+			var cached recommendResult
+			if json.Unmarshal([]byte(cachedData), &cached) == nil {
+				return cached, nil
+			}
+		}
+	}
+
+	items, total, err := s.recommendRepo.GetRecommendations(ctx, userID, recommendType, limit)
+	if err != nil {
+		return recommendResult{}, err
+	}
 	if len(items) > 0 {
-		s.cacheRecommendations(ctx, userID, recommendType, items, total)
-		return items, total, nil
+		s.cacheRecommendations(ctx, userID, recommendType, limit, items, total)
+		return recommendResult{Items: items, Total: total}, nil
 	}
 
 	logger.Info("数据库没有推荐数据，基于多源检索生成推荐")
@@ -97,10 +135,13 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 	total = int64(len(items))
 
 	if len(items) > 0 {
-		s.cacheRecommendations(ctx, userID, recommendType, items, total)
+		s.cacheRecommendations(ctx, userID, recommendType, limit, items, total)
 	}
+	return recommendResult{Items: items, Total: total}, nil
+}
 
-	return items, total, nil
+func recommendCacheKey(userID int64, recommendType string, limit int) string {
+	return fmt.Sprintf("recommend:%d:%s:limit:%d", userID, recommendType, limit)
 }
 
 func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context, userID int64, recommendType string, limit int) []*model.RecommendationItem {
@@ -202,12 +243,15 @@ func startsWith(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
-func (s *recommendServiceImpl) cacheRecommendations(ctx context.Context, userID int64, recommendType string, items []*model.RecommendationItem, total int64) {
+func (s *recommendServiceImpl) cacheRecommendations(ctx context.Context, userID int64, recommendType string, limit int, items []*model.RecommendationItem, total int64) {
 	if s.cache == nil {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("recommend:%d:%s:limit:%d", userID, recommendType, len(items))
+	// 写回必须用「请求的 limit」而不是 len(items)：否则数据库只返回 3 条时
+	// 会写到 limit:3 这个 key，下一次 limit:10 的请求永远命中不了，
+	// 缓存命中率被人为归零。
+	cacheKey := recommendCacheKey(userID, recommendType, limit)
 	cacheData := map[string]any{
 		"items": items,
 		"total": total,
@@ -388,12 +432,7 @@ func (s *recommendServiceImpl) GetRecommendationHistory(ctx context.Context, use
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize = pagination.Normalize(page, pageSize)
 
 	histories, total, err := s.recommendRepo.GetHistory(ctx, userID, page, pageSize)
 	if err != nil {
@@ -418,19 +457,43 @@ func (s *recommendServiceImpl) BatchGetRecommendations(ctx context.Context, user
 		limit = 10
 	}
 
-	result := make(map[int64][]*model.RecommendationItem)
+	return s.batchRecommendations(ctx, userIDs, recommendType, limit), nil
+}
+
+// recommendationBatchConcurrency 限制批量回源的并发度。
+//
+// 为什么不做成「每个用户一个 goroutine」：100 个用户就是 100 个并发查询，
+// 直接打满连接池，反而把其他接口的延迟一起拖高。串行的代价则是 N 次
+// 往返叠加；这里取中间值——固定 8 路，既有并发收益又有明确上限。
+const recommendationBatchConcurrency = 8
+
+func (s *recommendServiceImpl) batchRecommendations(ctx context.Context, userIDs []int64, recommendType string, limit int) map[int64][]*model.RecommendationItem {
+	result := make(map[int64][]*model.RecommendationItem, len(userIDs))
+	var mu sync.Mutex
+	sem := make(chan struct{}, recommendationBatchConcurrency)
+	var wg sync.WaitGroup
 
 	for _, userID := range userIDs {
-		items, _, err := s.GetRecommendations(ctx, userID, recommendType, limit, nil)
-		if err != nil {
-			logger.Warn("获取用户推荐失败",
-				logger.Int64Field("user_id", userID),
-				logger.ErrorField(err))
-			result[userID] = []*model.RecommendationItem{}
-		} else {
-			result[userID] = items
-		}
-	}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(userID int64) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-	return result, nil
+			items, _, err := s.GetRecommendations(ctx, userID, recommendType, limit, nil)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				logger.Warn("获取用户推荐失败",
+					logger.Int64Field("user_id", userID),
+					logger.ErrorField(err))
+				result[userID] = []*model.RecommendationItem{}
+				return
+			}
+			result[userID] = items
+		}(userID)
+	}
+	wg.Wait()
+	return result
 }

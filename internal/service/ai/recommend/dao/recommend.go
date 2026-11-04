@@ -1,4 +1,3 @@
-
 package dao
 
 import (
@@ -8,6 +7,7 @@ import (
 
 	"Logos/internal/service/ai/recommend/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 )
 
 type RecommendRepository interface {
@@ -129,7 +129,7 @@ func (r *recommendRepository) GetHistory(ctx context.Context, userID int64, page
 	var histories []*model.RecommendationHistory
 	var total int64
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 
 	result := r.db.WithContext(ctx).Model(&model.RecommendationHistory{}).
 		Where("user_id = ?", userID).

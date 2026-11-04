@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"Logos/config"
@@ -16,6 +19,7 @@ import (
 	"Logos/internal/service/ai/process/service"
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
+	"Logos/pkg/httpserver"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 
@@ -77,6 +81,12 @@ func main() {
 	}
 
 	repo := dao.NewProcessRepository(db)
+
+	// 进程重启/崩溃后，上一轮没跑完的文档会停在 Pending/Processing；
+	// 启动即回收一次，之后按周期兜底，避免用户永远看到「处理中」。
+	documentReaper := service.NewStaleDocumentReaper(repo)
+	documentReaper.Start()
+	defer documentReaper.Stop()
 
 	var vlmModel vlm.VLM
 	var asrModel asr.ASR
@@ -146,6 +156,7 @@ func main() {
 	r.Use(ginRecovery())
 	r.Use(ginLogger())
 
+	processHandler.RegisterMiddlewares(r)
 	processHandler.RegisterRoutes(r)
 
 	port := cfg.Ports.Process
@@ -153,8 +164,18 @@ func main() {
 		port = 8090
 	}
 
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		log.Fatalf("Process service listen failed: %v", err)
+	}
+
+	srv := httpserver.New(ln.Addr().String(), r, httpserver.Options{})
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	logger.Info("Process service starting", logger.IntField("port", port))
-	if err := r.Run(fmt.Sprintf(":%d", port)); err != nil {
+	if err := httpserver.Serve(ctx, srv, ln, 15*time.Second); err != nil {
 		log.Fatalf("Process service failed to run: %v", err)
 	}
+	logger.Info("Process service stopped")
 }

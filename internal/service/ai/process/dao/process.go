@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"Logos/internal/service/ai/process/model"
+	"Logos/pkg/pagination"
 )
 
 type ProcessRepository interface {
@@ -23,6 +24,7 @@ type ProcessRepository interface {
 	DeleteChunksByDocumentID(ctx context.Context, docID string) error
 	GetChunkCountByDocumentID(ctx context.Context, docID string) (int64, error)
 	GetChunkCountsByDocumentIDs(ctx context.Context, docIDs []string) (map[string]int64, error)
+	FailStaleDocuments(ctx context.Context, cutoff time.Time, limit int, reason string) (int64, error)
 	WithTransaction(ctx context.Context, fn func(repo ProcessRepository) error) error
 }
 
@@ -102,7 +104,7 @@ func (r *processRepository) ListDocuments(ctx context.Context, userID string, st
 		return nil, 0, err
 	}
 
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	if err := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&docs).Error; err != nil {
 		return nil, 0, err
 	}
@@ -170,6 +172,34 @@ func (r *processRepository) GetChunkCountsByDocumentIDs(ctx context.Context, doc
 		counts[r.DocumentID] = r.Count
 	}
 	return counts, nil
+}
+
+// FailStaleDocuments 把长时间停留在 Pending/Processing 的文档标记为 Failed。
+//
+// 文档处理是进程内异步任务：进程重启、OOM、节点漂移都会让「已建文档、未完成任务」
+// 永久卡住。这里用有界批量更新兜底，和支付单回收一样，单条状态更新之外再加一层周期扫描。
+// 只按 updated_at 判断，避免把正在处理的任务误杀；阈值要明显大于单篇文档的最长处理时间。
+func (r *processRepository) FailStaleDocuments(ctx context.Context, cutoff time.Time, limit int, reason string) (int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	sub := r.db.WithContext(ctx).
+		Model(&model.Document{}).
+		Select("id").
+		Where("status IN ?", []int{model.DocumentStatusPending, model.DocumentStatusProcessing}).
+		Where("updated_at < ?", cutoff).
+		Limit(limit)
+
+	res := r.db.WithContext(ctx).
+		Model(&model.Document{}).
+		Where("id IN (?)", sub).
+		Updates(map[string]interface{}{
+			"status":     model.DocumentStatusFailed,
+			"error_msg":  reason,
+			"updated_at": time.Now(),
+		})
+	return res.RowsAffected, res.Error
 }
 
 func (r *processRepository) WithTransaction(ctx context.Context, fn func(repo ProcessRepository) error) error {

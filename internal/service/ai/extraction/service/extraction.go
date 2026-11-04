@@ -16,8 +16,8 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
-	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
+	"Logos/pkg/structured"
 	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/schema"
@@ -476,7 +476,11 @@ func (s *extractionServiceImpl) recognizeEntities(ctx context.Context, text stri
 		return nil, fmt.Errorf("LLM实体识别失败: %w", err)
 	}
 
-	entities := parseJSONArray(ctx, response)
+	entities, err := s.parseObjectArray(ctx, response, params,
+		`[{"text":"实体文本","type":"PERSON","confidence":0.9,"startPos":0,"endPos":2}]`)
+	if err != nil {
+		return nil, err
+	}
 	logger.Info("实体识别完成",
 		logger.IntField("count", len(entities)))
 
@@ -555,7 +559,11 @@ func (s *extractionServiceImpl) extractRelations(ctx context.Context, text strin
 		return nil, fmt.Errorf("LLM关系抽取失败: %w", err)
 	}
 
-	relations := parseJSONArray(ctx, response)
+	relations, err := s.parseObjectArray(ctx, response, params,
+		`[{"type":"WORKS_AT","sourceId":"实体A","targetId":"实体B","confidence":0.9,"text":"关系描述"}]`)
+	if err != nil {
+		return nil, err
+	}
 	logger.Info("关系抽取完成",
 		logger.IntField("count", len(relations)))
 
@@ -641,7 +649,11 @@ func (s *extractionServiceImpl) extractTriples(ctx context.Context, text string,
 		return nil, fmt.Errorf("LLM三元组抽取失败: %w", err)
 	}
 
-	triples := parseJSONArray(ctx, response)
+	triples, err := s.parseObjectArray(ctx, response, params,
+		`[{"subject":"主语","predicate":"谓语","object":"宾语","confidence":0.9}]`)
+	if err != nil {
+		return nil, err
+	}
 	logger.Info("三元组抽取完成",
 		logger.IntField("count", len(triples)))
 
@@ -701,9 +713,10 @@ func (s *extractionServiceImpl) extractKeyphrases(ctx context.Context, text stri
 		return nil, fmt.Errorf("LLM关键短语抽取失败: %w", err)
 	}
 
-	var keyphrases []string
-	if err := json.Unmarshal([]byte(response), &keyphrases); err != nil {
-		keyphrases = []string{response}
+	keyphrases, err := s.parseStringArray(ctx, response, params,
+		`["关键词1","关键词2"]`)
+	if err != nil {
+		return nil, err
 	}
 
 	logger.Info("关键短语抽取完成",
@@ -713,6 +726,10 @@ func (s *extractionServiceImpl) extractKeyphrases(ctx context.Context, text stri
 }
 
 func (s *extractionServiceImpl) chatWithParams(ctx context.Context, messages []string, params map[string]string) (string, error) {
+	if s.einoClient == nil {
+		return "", errors.New("LLM客户端未初始化")
+	}
+
 	if params != nil {
 		baseURL := params["llm_base_url"]
 		apiKey := params["llm_api_key"]
@@ -753,18 +770,47 @@ func domainHint(domain string) string {
 	return fmt.Sprintf("\n领域背景：%s\n请根据该领域的特点进行抽取。", domain)
 }
 
-func parseJSONArray(ctx context.Context, jsonStr string) []map[string]interface{} {
-	jsonStr = strutil.ExtractJSONValue(jsonStr)
+// parseObjectArray 解析对象数组，失败时最多做一次定向修复。
+// 修复仍失败就返回错误，让抽取任务进入失败态；不再把「模型输出坏了」
+// 伪装成「成功抽到 0 条」，否则调用方无法区分空结果和格式失败。
+func (s *extractionServiceImpl) parseObjectArray(
+	ctx context.Context, raw string, params map[string]string, schemaHint string,
+) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &results); err != nil {
-		obs.RecordLLMParse(ctx, "extraction", "failed")
+	_, err := structured.ParseWithRepair(ctx, "extraction", raw, &results,
+		func(ctx context.Context, raw string, parseErr error) (string, error) {
+			return s.chatWithParams(ctx, []string{
+				"你是一个JSON修复助手，只输出修正后的JSON。",
+				structured.RepairPrompt(raw, parseErr, schemaHint),
+			}, params)
+		})
+	if err != nil {
 		logger.Warn("解析LLM JSON响应失败",
 			logger.ErrorField(err),
-			logger.StringField("raw", strutil.TruncateByRunes(jsonStr, 200)))
-		return nil
+			logger.StringField("raw", strutil.TruncateByRunes(raw, 200)))
+		return nil, fmt.Errorf("解析LLM JSON响应失败: %w", err)
 	}
-	obs.RecordLLMParse(ctx, "extraction", "ok")
-	return results
+	return results, nil
+}
+
+func (s *extractionServiceImpl) parseStringArray(
+	ctx context.Context, raw string, params map[string]string, schemaHint string,
+) ([]string, error) {
+	var results []string
+	_, err := structured.ParseWithRepair(ctx, "extraction", raw, &results,
+		func(ctx context.Context, raw string, parseErr error) (string, error) {
+			return s.chatWithParams(ctx, []string{
+				"你是一个JSON修复助手，只输出修正后的JSON。",
+				structured.RepairPrompt(raw, parseErr, schemaHint),
+			}, params)
+		})
+	if err != nil {
+		logger.Warn("解析LLM关键短语响应失败",
+			logger.ErrorField(err),
+			logger.StringField("raw", strutil.TruncateByRunes(raw, 200)))
+		return nil, fmt.Errorf("解析LLM关键短语响应失败: %w", err)
+	}
+	return results, nil
 }
 
 func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) error {

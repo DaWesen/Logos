@@ -3,10 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"Logos/internal/service/ai/collection/service"
-	"Logos/pkg/auth"
 	pb "Logos/proto_gen/collection"
 	pbCommon "Logos/proto_gen/common"
 )
@@ -16,12 +16,15 @@ type DataCollectionServiceImpl struct {
 	CollectionService service.CollectionService
 }
 
-func getUserIDFromContext(ctx context.Context) string {
-	userID, err := auth.GetUserID(ctx)
-	if err != nil {
-		return ""
+func statusCodeForError(err error) int32 {
+	switch {
+	case errors.Is(err, service.ErrUnauthenticated):
+		return 401
+	case errors.Is(err, service.ErrNotFound):
+		return 404
+	default:
+		return 500
 	}
-	return userID
 }
 
 // AddDataSource implements the DataCollectionServiceImpl interface.
@@ -38,7 +41,7 @@ func (s *DataCollectionServiceImpl) AddDataSource(ctx context.Context, req *pb.A
 		req.Description,
 	)
 	if addErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(addErr)
 		resp.BaseResp.StatusMessage = addErr.Error()
 		return resp, nil
 	}
@@ -68,7 +71,7 @@ func (s *DataCollectionServiceImpl) UpdateDataSource(ctx context.Context, req *p
 		req.Description,
 	)
 	if updateErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(updateErr)
 		resp.BaseResp.StatusMessage = updateErr.Error()
 		return resp, nil
 	}
@@ -82,7 +85,7 @@ func (s *DataCollectionServiceImpl) DeleteDataSource(ctx context.Context, req *p
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
 
 	if delErr := s.CollectionService.DeleteDataSource(ctx, req.Id); delErr != nil {
-		resp.StatusCode = 500
+		resp.StatusCode = statusCodeForError(delErr)
 		resp.StatusMessage = delErr.Error()
 	}
 	return resp, nil
@@ -96,7 +99,7 @@ func (s *DataCollectionServiceImpl) GetDataSource(ctx context.Context, req *pb.G
 
 	ds, getErr := s.CollectionService.GetDataSource(ctx, req.Id)
 	if getErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(getErr)
 		resp.BaseResp.StatusMessage = getErr.Error()
 		return resp, nil
 	}
@@ -118,7 +121,7 @@ func (s *DataCollectionServiceImpl) ListDataSources(ctx context.Context, req *pb
 
 	list, listErr := s.CollectionService.ListDataSources(ctx)
 	if listErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(listErr)
 		resp.BaseResp.StatusMessage = listErr.Error()
 		return resp, nil
 	}
@@ -142,7 +145,7 @@ func (s *DataCollectionServiceImpl) CreateTask(ctx context.Context, req *pb.Crea
 		req.Schedule,
 	)
 	if createErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(createErr)
 		resp.BaseResp.StatusMessage = createErr.Error()
 		return resp, nil
 	}
@@ -170,7 +173,7 @@ func (s *DataCollectionServiceImpl) UpdateTask(ctx context.Context, req *pb.Upda
 		req.Schedule,
 	)
 	if updateErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(updateErr)
 		resp.BaseResp.StatusMessage = updateErr.Error()
 		return resp, nil
 	}
@@ -184,7 +187,7 @@ func (s *DataCollectionServiceImpl) DeleteTask(ctx context.Context, req *pb.GetB
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
 
 	if delErr := s.CollectionService.DeleteTask(ctx, req.Id); delErr != nil {
-		resp.StatusCode = 500
+		resp.StatusCode = statusCodeForError(delErr)
 		resp.StatusMessage = delErr.Error()
 	}
 	return resp, nil
@@ -198,7 +201,7 @@ func (s *DataCollectionServiceImpl) GetTask(ctx context.Context, req *pb.GetById
 
 	task, getErr := s.CollectionService.GetTask(ctx, req.Id)
 	if getErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(getErr)
 		resp.BaseResp.StatusMessage = getErr.Error()
 		return resp, nil
 	}
@@ -220,7 +223,7 @@ func (s *DataCollectionServiceImpl) ListTasks(ctx context.Context, req *pb.Empty
 
 	tasks, listErr := s.CollectionService.ListTasks(ctx)
 	if listErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(listErr)
 		resp.BaseResp.StatusMessage = listErr.Error()
 		return resp, nil
 	}
@@ -239,7 +242,7 @@ func (s *DataCollectionServiceImpl) ExecuteTask(ctx context.Context, req *pb.Exe
 
 	result, execErr := s.CollectionService.ExecuteTask(ctx, req.TaskId)
 	if execErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(execErr)
 		resp.BaseResp.StatusMessage = execErr.Error()
 	}
 
@@ -252,7 +255,7 @@ func (s *DataCollectionServiceImpl) StopTask(ctx context.Context, req *pb.StopBy
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
 
 	if stopErr := s.CollectionService.StopTask(ctx, req.TaskId); stopErr != nil {
-		resp.StatusCode = 500
+		resp.StatusCode = statusCodeForError(stopErr)
 		resp.StatusMessage = stopErr.Error()
 	}
 	return resp, nil
@@ -266,7 +269,7 @@ func (s *DataCollectionServiceImpl) GetCollectionResult(ctx context.Context, req
 
 	result, getErr := s.CollectionService.GetCollectionResult(ctx, req.Id)
 	if getErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(getErr)
 		resp.BaseResp.StatusMessage = getErr.Error()
 		return resp, nil
 	}
@@ -288,7 +291,7 @@ func (s *DataCollectionServiceImpl) ListCollectionResults(ctx context.Context, r
 
 	results, listErr := s.CollectionService.ListCollectionResults(ctx, req.TaskId)
 	if listErr != nil {
-		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusCode = statusCodeForError(listErr)
 		resp.BaseResp.StatusMessage = listErr.Error()
 		return resp, nil
 	}

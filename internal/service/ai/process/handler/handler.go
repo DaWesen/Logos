@@ -1,38 +1,31 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
-	"io"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"google.golang.org/grpc/metadata"
 
 	"Logos/internal/service/ai/process/model"
 	"Logos/internal/service/ai/process/service"
-	"Logos/pkg/auth"
+	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
+	"Logos/pkg/uploadguard"
 )
 
 type ProcessHandler struct {
 	processService service.ProcessService
+	jwtManager     *jwt.JWTManager
 }
 
 func NewProcessHandler(processService service.ProcessService) *ProcessHandler {
 	return &ProcessHandler{
 		processService: processService,
+		jwtManager:     jwt.NewJWTManager(),
 	}
-}
-
-func getUserIDFromContext(ctx context.Context) string {
-	userID, err := auth.GetUserID(ctx)
-	if err != nil {
-		return ""
-	}
-	return userID
 }
 
 func (h *ProcessHandler) RegisterRoutes(r *gin.Engine) {
@@ -49,9 +42,22 @@ func (h *ProcessHandler) RegisterRoutes(r *gin.Engine) {
 }
 
 func (h *ProcessHandler) ProcessFile(c *gin.Context) {
+	if !uploadguard.LimitBody(c.Writer, c.Request, uploadguard.MaxDocumentBytes+uploadguard.RequestOverhead) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+		return
+	}
+
 	file, err := c.FormFile("file")
 	if err != nil {
+		if uploadguard.IsTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请上传文件"})
+		return
+	}
+	if file.Size > uploadguard.MaxDocumentBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
 		return
 	}
 
@@ -70,8 +76,12 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	if _, err := io.Copy(tmpFile, src); err != nil {
+	if _, err := uploadguard.Copy(tmpFile, src, uploadguard.MaxDocumentBytes); err != nil {
 		tmpFile.Close()
+		if uploadguard.IsTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败"})
 		return
 	}
@@ -87,7 +97,7 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 	doc, err := h.processService.ProcessFileFromPath(c.Request.Context(), file.Filename, tmpPath, file.Size, fileURL, collectionID)
 	if err != nil {
 		logger.Error("处理文件失败", logger.StringField("filename", file.Filename), logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理文件失败"})
+		writeProcessError(c, err, "处理文件失败")
 		return
 	}
 
@@ -114,7 +124,7 @@ func (h *ProcessHandler) ProcessURL(c *gin.Context) {
 	doc, err := h.processService.ProcessURL(c.Request.Context(), req.URL, req.CollectionID)
 	if err != nil {
 		logger.Error("处理URL失败", logger.StringField("url", req.URL), logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理URL失败"})
+		writeProcessError(c, err, "处理URL失败")
 		return
 	}
 
@@ -140,7 +150,7 @@ func (h *ProcessHandler) ListDocuments(c *gin.Context) {
 
 	dtos, total, err := h.processService.ListDocumentDTOs(c.Request.Context(), status, page, pageSize)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档列表失败"})
+		writeProcessError(c, err, "查询文档列表失败")
 		return
 	}
 
@@ -158,7 +168,7 @@ func (h *ProcessHandler) GetDocument(c *gin.Context) {
 
 	dto, err := h.processService.GetDocumentDTO(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档失败"})
+		writeProcessError(c, err, "查询文档失败")
 		return
 	}
 
@@ -174,7 +184,7 @@ func (h *ProcessHandler) DeleteDocument(c *gin.Context) {
 	id := c.Param("id")
 
 	if err := h.processService.DeleteDocument(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除文档失败"})
+		writeProcessError(c, err, "删除文档失败")
 		return
 	}
 
@@ -186,7 +196,7 @@ func (h *ProcessHandler) ReprocessDocument(c *gin.Context) {
 
 	if err := h.processService.ProcessDocument(c.Request.Context(), id); err != nil {
 		logger.Error("重新处理文档失败", logger.StringField("doc_id", id), logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新处理文档失败"})
+		writeProcessError(c, err, "重新处理文档失败")
 		return
 	}
 
@@ -199,7 +209,7 @@ func (h *ProcessHandler) GetDocumentChunks(c *gin.Context) {
 
 	chunks, err := h.processService.GetChunks(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询文档块失败"})
+		writeProcessError(c, err, "查询文档块失败")
 		return
 	}
 
@@ -209,17 +219,20 @@ func (h *ProcessHandler) GetDocumentChunks(c *gin.Context) {
 func (h *ProcessHandler) RegisterMiddlewares(r *gin.Engine) {
 	r.Use(func(c *gin.Context) {
 		c.Header("Content-Type", "application/json")
-
-		// Extract X-User-ID from HTTP header and attach to incoming gRPC metadata
-		// so that auth.GetUserID(ctx) can read it from the context
-		if userID := c.GetHeader("X-User-ID"); userID != "" {
-			md := metadata.Pairs(auth.UserIDKey, userID)
-			ctx := metadata.NewIncomingContext(c.Request.Context(), md)
-			c.Request = c.Request.WithContext(ctx)
-		}
-
 		c.Next()
 	})
+	r.Use(requireAuth(h.jwtManager))
+}
+
+func writeProcessError(c *gin.Context, err error, fallback string) {
+	switch {
+	case errors.Is(err, service.ErrUnauthenticated):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权"})
+	case errors.Is(err, service.ErrDocumentNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "文档不存在"})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fallback})
+	}
 }
 
 func jsonResponse(w http.ResponseWriter, data interface{}, statusCode int) {

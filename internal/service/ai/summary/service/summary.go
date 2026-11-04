@@ -10,8 +10,7 @@ import (
 	summarymodel "Logos/internal/service/ai/summary/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
-	"Logos/pkg/obs"
-	"Logos/pkg/strutil"
+	"Logos/pkg/structured"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -115,11 +114,13 @@ func (s *summaryServiceImpl) chatWithModel(ctx context.Context, chatModel einomo
 	return resp.Content, nil
 }
 
-func (s *summaryServiceImpl) getMessageHistoryWithTimeout(chatID string, limit int) ([]*ChatMessage, error) {
+func (s *summaryServiceImpl) getMessageHistoryWithTimeout(ctx context.Context, chatID string, limit int) ([]*ChatMessage, error) {
 	if s.chatService == nil {
 		return nil, fmt.Errorf("chatService 未配置")
 	}
-	historyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 使用调用方 ctx：总结/候选/待办都是请求内操作，客户端断开后
+	// 不应继续拉取历史并占用 Chat 服务的连接。
+	historyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return s.chatService.GetMessageHistory(historyCtx, chatID, limit, nil)
 }
@@ -134,7 +135,7 @@ func (s *summaryServiceImpl) SummarizeMessages(ctx context.Context, chatID strin
 
 	var messagesText string
 	if len(messageIDs) == 0 {
-		msgs, err := s.getMessageHistoryWithTimeout(chatID, limit)
+		msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, limit)
 		if err != nil {
 			logger.Warn("获取消息历史失败", logger.ErrorField(err))
 		} else {
@@ -202,7 +203,7 @@ func (s *summaryServiceImpl) GenerateReplyCandidates(ctx context.Context, chatID
 	logger.Info("生成回复候选", logger.StringField("chat_id", chatID))
 
 	var contextText string
-	msgs, err := s.getMessageHistoryWithTimeout(chatID, 20)
+	msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, 20)
 	if err == nil {
 		for _, msg := range msgs {
 			contextText += fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content)
@@ -230,7 +231,7 @@ func (s *summaryServiceImpl) ExtractTodos(ctx context.Context, chatID string, ch
 	}
 
 	var messagesText string
-	msgs, err := s.getMessageHistoryWithTimeout(chatID, limit)
+	msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, limit)
 	if err == nil {
 		for _, msg := range msgs {
 			messagesText += fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content)
@@ -272,13 +273,11 @@ func (s *summaryServiceImpl) extractKeyPointsWithModel(ctx context.Context, chat
 	}
 
 	var points []string
-	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &points); err != nil {
-		obs.RecordLLMParse(ctx, "summary", "failed")
+	if err := s.parseStructured(ctx, chatModel, "summary", `["要点1","要点2"]`, response, &points); err != nil {
 		logger.Warn("关键要点解析失败，按纯文本处理",
 			logger.ErrorField(err))
 		return []string{response}, nil
 	}
-	obs.RecordLLMParse(ctx, "summary", "ok")
 	return points, nil
 }
 
@@ -295,12 +294,10 @@ func (s *summaryServiceImpl) extractParticipantsWithModel(ctx context.Context, c
 	}
 
 	var participants []string
-	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &participants); err != nil {
-		obs.RecordLLMParse(ctx, "summary", "failed")
+	if err := s.parseStructured(ctx, chatModel, "summary", `["user1","user2"]`, response, &participants); err != nil {
 		logger.Warn("参与者解析失败，返回空列表", logger.ErrorField(err))
 		return []string{}, nil
 	}
-	obs.RecordLLMParse(ctx, "summary", "ok")
 	return participants, nil
 }
 
@@ -322,12 +319,12 @@ func (s *summaryServiceImpl) extractTodosFromTextWithModel(ctx context.Context, 
 	}
 
 	var todos []TodoItem
-	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &todos); err != nil {
-		obs.RecordLLMParse(ctx, "summary", "failed")
+	if err := s.parseStructured(ctx, chatModel, "summary",
+		`[{"id":"...","content":"...","assignee":"...","deadline":"...","status":"pending|in_progress|completed"}]`,
+		response, &todos); err != nil {
 		logger.Warn("待办事项解析失败，返回空列表", logger.ErrorField(err))
 		return []TodoItem{}, nil
 	}
-	obs.RecordLLMParse(ctx, "summary", "ok")
 	return todos, nil
 }
 
@@ -354,13 +351,26 @@ func (s *summaryServiceImpl) generateCandidatesWithModel(ctx context.Context, ch
 	}
 
 	var candidates []ReplyCandidate
-	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &candidates); err != nil {
-		obs.RecordLLMParse(ctx, "summary", "failed")
+	if err := s.parseStructured(ctx, chatModel, "summary",
+		`[{"id":"...","content":"...","confidence":0.0,"type":"..."}]`,
+		response, &candidates); err != nil {
 		logger.Warn("回复候选解析失败，返回空列表", logger.ErrorField(err))
 		return []ReplyCandidate{}, nil
 	}
-	obs.RecordLLMParse(ctx, "summary", "ok")
 	return candidates, nil
+}
+
+// parseStructured 解析模型输出；失败时带错误信息与期望结构做一次定向修复。
+// 四个提取点共用，避免每个方法各自写一套「解析失败怎么办」。
+func (s *summaryServiceImpl) parseStructured(
+	ctx context.Context, chatModel einomodel.BaseChatModel, module, schemaHint, raw string, out interface{},
+) error {
+	_, err := structured.ParseWithRepair(ctx, module, raw, out,
+		func(ctx context.Context, raw string, parseErr error) (string, error) {
+			return s.chatWithModel(ctx, chatModel, "你是一个JSON修复助手，只输出修正后的JSON。",
+				structured.RepairPrompt(raw, parseErr, schemaHint))
+		})
+	return err
 }
 
 func mustMarshal(v interface{}) string {

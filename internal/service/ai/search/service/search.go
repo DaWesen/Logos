@@ -7,6 +7,7 @@ import (
 	"Logos/internal/service/ai/search/dao"
 	"Logos/internal/service/ai/search/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 )
 
 var (
@@ -52,12 +53,7 @@ func (s *searchServiceImpl) Search(ctx context.Context, query string, indexType 
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize = pagination.Normalize(page, pageSize)
 
 	results, total, err := s.repo.Search(ctx, query, indexType, page, pageSize, conditions, sorts, filters)
 	if err != nil {

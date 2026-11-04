@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"Logos/internal/service/ai/moderation/model"
+	"Logos/pkg/pagination"
 
 	"gorm.io/gorm"
 )
@@ -43,7 +44,7 @@ func (r *moderationRepository) ListModerationRecords(ctx context.Context, result
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	err := query.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&records).Error
 	return records, total, err
 }

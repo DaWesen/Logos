@@ -8,6 +8,7 @@ import (
 	"Logos/internal/service/ai/mcp/service"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	pb "Logos/proto_gen/mcp"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -82,14 +83,7 @@ func (s *MCPServiceImpl) ListTools(ctx context.Context, req *pb.ListToolsRequest
 		toolType = &t
 	}
 
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
 
 	tools, total, err := s.MCPService.ListTools(ctx, toolType, req.EnabledOnly, getUserIDFromContext(ctx), page, pageSize)
 	if err != nil {
@@ -237,14 +231,7 @@ func (s *MCPServiceImpl) GetMCPService(ctx context.Context, req *pb.GetMCPServic
 func (s *MCPServiceImpl) ListMCPServices(ctx context.Context, req *pb.ListMCPServicesRequest) (*pb.ListMCPServicesResponse, error) {
 	resp := &pb.ListMCPServicesResponse{}
 
-	page := int(req.Page)
-	if page <= 0 {
-		page = 1
-	}
-	pageSize := int(req.PageSize)
-	if pageSize <= 0 {
-		pageSize = 20
-	}
+	page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
 
 	services, total, err := s.MCPServiceSvc.ListServices(ctx, req.EnabledOnly, getUserIDFromContext(ctx), page, pageSize)
 	if err != nil {

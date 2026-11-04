@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"Logos/internal/models/asr"
@@ -22,9 +24,38 @@ import (
 	"Logos/internal/service/ai/process/parser"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
+	"Logos/pkg/safehttp"
 
 	"github.com/google/uuid"
 )
+
+var (
+	// ErrVectorizationAllFailed 表示所有 chunk 都没能生成向量。
+	// 这不是「部分降级」，文档实际不可检索，不能继续标记为 Completed。
+	ErrVectorizationAllFailed = errors.New("all document chunks failed to vectorize")
+	// ErrUnauthenticated 表示调用方没有提供可用的用户身份。
+	// 用户态接口必须 fail closed，不能把空 userID 解释成「查所有用户」。
+	ErrUnauthenticated = errors.New("missing user identity")
+	// ErrDocumentNotFound 表示文档不存在，或当前用户不是它的 owner。
+	ErrDocumentNotFound = errors.New("document not found")
+)
+
+const (
+	// 向量化并发度：既要把 N 次往返压成 N/10，又不能把向量服务打满。
+	vectorizationConcurrency = 10
+	// 单个 chunk 的向量化预算；外层还有一个更短的总预算，取两者更早的 deadline。
+	vectorizeChunkTimeout = 60 * time.Second
+	// 用户 URL 抓取的响应体上限：超过后直接失败，不把整个文件读进内存。
+	maxURLDownloadBytes = 100 << 20
+)
+
+// vectorizationStats 用于区分「全部失败」和「部分失败」。
+// 只返回 error 的话，调用方无法判断文档是完整可检索、部分可检索，还是完全不可检索。
+type vectorizationStats struct {
+	Total     int
+	Succeeded int
+	Failed    int
+}
 
 type Config struct {
 	ProcessPort      int
@@ -110,6 +141,11 @@ func NewProcessService(
 }
 
 func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileData []byte, fileURL string, collectionID string) (*model.Document, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	doc := &model.Document{
 		ID:                 generateID(),
 		VectorCollectionID: collectionID,
@@ -118,12 +154,12 @@ func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileD
 		FileURL:            fileURL,
 		FileSize:           int64(len(fileData)),
 		Status:             model.DocumentStatusPending,
-		UserID:             getUserIDFromContext(ctx),
+		UserID:             userID,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, userID); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
@@ -133,6 +169,11 @@ func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileD
 }
 
 func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename string, filePath string, fileSize int64, fileURL string, collectionID string) (*model.Document, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	doc := &model.Document{
 		ID:                 generateID(),
 		VectorCollectionID: collectionID,
@@ -141,12 +182,12 @@ func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename strin
 		FileURL:            fileURL,
 		FileSize:           fileSize,
 		Status:             model.DocumentStatusPending,
-		UserID:             getUserIDFromContext(ctx),
+		UserID:             userID,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, userID); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
@@ -156,6 +197,16 @@ func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename strin
 }
 
 func (s *ProcessService) ProcessURL(ctx context.Context, url string, collectionID string) (*model.Document, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// 先校验再建文档：非法 URL 不应该在库里留下一条注定失败的 pending 记录。
+	if _, err := safehttp.ValidateURL(url); err != nil {
+		return nil, fmt.Errorf("URL 不合法: %w", err)
+	}
+
 	doc := &model.Document{
 		ID:                 generateID(),
 		VectorCollectionID: collectionID,
@@ -163,25 +214,34 @@ func (s *ProcessService) ProcessURL(ctx context.Context, url string, collectionI
 		FileType:           filepath.Ext(url),
 		FileURL:            url,
 		Status:             model.DocumentStatusPending,
-		UserID:             getUserIDFromContext(ctx),
+		UserID:             userID,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
 
-	if err := s.repo.CreateDocument(ctx, doc, getUserIDFromContext(ctx)); err != nil {
+	if err := s.repo.CreateDocument(ctx, doc, userID); err != nil {
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
-	go s.processURLAsync(doc.ID, url)
+	go s.processURLAsync(ctx, doc.ID, url)
 
 	return doc, nil
 }
 
-func (s *ProcessService) processURLAsync(docID string, rawURL string) {
-	ctx := context.Background()
+func (s *ProcessService) processURLAsync(parent context.Context, docID string, rawURL string) {
+	// 下载不应被客户端断开打断（否则文档永远停在 Pending），但仍要有独立上限。
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Minute)
+	defer cancel()
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.Get(rawURL)
+	// 用户可控 URL 必须防 SSRF：协议白名单 + DNS 解析后逐 IP 校验 + 重定向逐跳校验。
+	httpClient := safehttp.NewClient(60*time.Second, 5)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		s.markFailed(ctx, docID, fmt.Sprintf("创建下载请求失败: %v", err))
+		return
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		s.markFailed(ctx, docID, fmt.Sprintf("下载URL失败: %v", err))
 		return
@@ -193,9 +253,19 @@ func (s *ProcessService) processURLAsync(docID string, rawURL string) {
 		return
 	}
 
-	fileData, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxURLDownloadBytes {
+		s.markFailed(ctx, docID, fmt.Sprintf("文件超过下载上限: %d > %d", resp.ContentLength, maxURLDownloadBytes))
+		return
+	}
+
+	// 多读 1 字节判断是否超限；chunked 响应没有 Content-Length，必须靠这里兜底。
+	fileData, err := io.ReadAll(io.LimitReader(resp.Body, maxURLDownloadBytes+1))
 	if err != nil {
 		s.markFailed(ctx, docID, fmt.Sprintf("读取URL内容失败: %v", err))
+		return
+	}
+	if int64(len(fileData)) > maxURLDownloadBytes {
+		s.markFailed(ctx, docID, fmt.Sprintf("文件超过下载上限 %d 字节", maxURLDownloadBytes))
 		return
 	}
 
@@ -325,39 +395,16 @@ func (s *ProcessService) processDocumentAsync(docID string, reader io.Reader, fi
 		logger.BoolField("has_collection", doc.VectorCollectionID != ""),
 		logger.StringField("collection_id", doc.VectorCollectionID))
 
-	var wg sync.WaitGroup
-
-	if s.vectorService != nil && doc.VectorCollectionID != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			logger.Info("开始向量化", logger.StringField("doc_id", docID), logger.StringField("collection_id", doc.VectorCollectionID))
-			vecCtx, vecCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer vecCancel()
-			if err := s.processVectorization(vecCtx, doc, chunks); err != nil {
-				logger.Warn("向量化失败（不影响文档状态）", logger.StringField("doc_id", docID), logger.ErrorField(err))
-			} else {
-				logger.Info("向量化完成", logger.StringField("doc_id", docID))
-			}
-		}()
+	enrichment := s.runEnrichment(ctx, doc, chunks, content)
+	if enrichment.vectorErr != nil {
+		s.markFailed(ctx, docID, fmt.Sprintf("向量化失败: %v", enrichment.vectorErr))
+		return
 	}
-
-	if s.extractionService != nil && s.knowledgeService != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			logger.Info("开始知识提取", logger.StringField("doc_id", docID))
-			extCtx, extCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer extCancel()
-			if err := s.processKnowledgeExtraction(extCtx, doc, content); err != nil {
-				logger.Warn("知识提取失败（不影响文档状态）", logger.StringField("doc_id", docID), logger.ErrorField(err))
-			} else {
-				logger.Info("知识提取完成", logger.StringField("doc_id", docID))
-			}
-		}()
+	if enrichment.partialMsg != "" {
+		doc.ErrorMsg = &enrichment.partialMsg
+	} else {
+		doc.ErrorMsg = nil
 	}
-
-	wg.Wait()
 
 	doc.Status = model.DocumentStatusCompleted
 	now := time.Now()
@@ -397,11 +444,20 @@ func (s *ProcessService) parseFile(ctx context.Context, reader io.Reader, filena
 }
 
 func (s *ProcessService) ListDocuments(ctx context.Context, status *int, page, pageSize int) ([]*model.Document, int64, error) {
-	return s.repo.ListDocuments(ctx, getUserIDFromContext(ctx), status, page, pageSize)
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	return s.repo.ListDocuments(ctx, userID, status, page, pageSize)
 }
 
 func (s *ProcessService) ListDocumentDTOs(ctx context.Context, status *int, page, pageSize int) ([]*model.DocumentDTO, int64, error) {
-	docs, total, err := s.repo.ListDocuments(ctx, getUserIDFromContext(ctx), status, page, pageSize)
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	docs, total, err := s.repo.ListDocuments(ctx, userID, status, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -426,11 +482,20 @@ func (s *ProcessService) ListDocumentDTOs(ctx context.Context, status *int, page
 }
 
 func (s *ProcessService) GetDocument(ctx context.Context, id string) (*model.Document, error) {
-	return s.repo.GetDocumentWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.GetDocumentWithOwnerCheck(ctx, id, userID)
 }
 
 func (s *ProcessService) GetDocumentDTO(ctx context.Context, id string) (*model.DocumentDTO, error) {
-	doc, err := s.repo.GetDocumentWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := s.repo.GetDocumentWithOwnerCheck(ctx, id, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -447,11 +512,28 @@ func (s *ProcessService) GetDocumentDTO(ctx context.Context, id string) (*model.
 }
 
 func (s *ProcessService) GetChunks(ctx context.Context, docID string) ([]*model.DocumentChunk, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	doc, err := s.repo.GetDocumentWithOwnerCheck(ctx, docID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, ErrDocumentNotFound
+	}
+
 	return s.repo.GetChunksByDocumentID(ctx, docID)
 }
 
 func (s *ProcessService) DeleteDocument(ctx context.Context, id string) error {
-	return s.repo.DeleteDocument(ctx, id, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return err
+	}
+	return s.repo.DeleteDocument(ctx, id, userID)
 }
 
 func (s *ProcessService) ProcessDocument(ctx context.Context, id string) error {
@@ -534,33 +616,16 @@ func (s *ProcessService) reprocessAsync(docID string) {
 		return
 	}
 
-	var wg sync.WaitGroup
-
-	if s.vectorService != nil && doc.VectorCollectionID != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			vecCtx, vecCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-			defer vecCancel()
-			if err := s.processVectorization(vecCtx, doc, chunks); err != nil {
-				logger.Warn("向量化失败（不影响文档状态）", logger.StringField("doc_id", docID), logger.ErrorField(err))
-			}
-		}()
+	enrichment := s.runEnrichment(ctx, doc, chunks, doc.Content)
+	if enrichment.vectorErr != nil {
+		s.markFailed(ctx, docID, fmt.Sprintf("向量化失败: %v", enrichment.vectorErr))
+		return
 	}
-
-	if s.extractionService != nil && s.knowledgeService != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			extCtx, extCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer extCancel()
-			if err := s.processKnowledgeExtraction(extCtx, doc, doc.Content); err != nil {
-				logger.Warn("知识提取失败（不影响文档状态）", logger.StringField("doc_id", docID), logger.ErrorField(err))
-			}
-		}()
+	if enrichment.partialMsg != "" {
+		doc.ErrorMsg = &enrichment.partialMsg
+	} else {
+		doc.ErrorMsg = nil
 	}
-
-	wg.Wait()
 
 	doc.Status = model.DocumentStatusCompleted
 	now := time.Now()
@@ -647,22 +712,107 @@ func (s *ProcessService) extractImageChunks(doc *model.Document, metadata map[st
 	return chunks, len(chunks) > 0
 }
 
-func (s *ProcessService) processVectorization(ctx context.Context, doc *model.Document, chunks []*model.DocumentChunk) error {
-	if s.vectorService == nil || doc.VectorCollectionID == "" {
-		return nil
+type enrichmentResult struct {
+	vectorErr  error
+	partialMsg string
+}
+
+// runEnrichment 并行执行「向量化」与「知识提取」两条旁路。
+//
+// 两条旁路的失败语义不同：知识提取失败可以降级（关键词检索仍在），
+// 向量化全部失败则文档在向量库里不可检索，必须让调用方把状态标为 Failed。
+func (s *ProcessService) runEnrichment(ctx context.Context, doc *model.Document, chunks []*model.DocumentChunk, content string) enrichmentResult {
+	var (
+		wg     sync.WaitGroup
+		result enrichmentResult
+	)
+
+	// 向量化/知识提取是文档落库后的收尾工作：客户端断开不应该把它们打断，
+	// 否则文档会永远停在 Processing。用 WithoutCancel 保留上下文值、脱离请求取消，
+	// 再由各自的超时兜住最坏执行时间。
+	baseCtx := context.WithoutCancel(ctx)
+
+	if s.vectorService != nil && doc.VectorCollectionID != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			logger.Info("开始向量化",
+				logger.StringField("doc_id", doc.ID),
+				logger.StringField("collection_id", doc.VectorCollectionID))
+
+			vecCtx, cancel := context.WithTimeout(baseCtx, 3*time.Minute)
+			defer cancel()
+
+			stats, err := s.processVectorization(vecCtx, doc, chunks)
+			switch {
+			case err != nil:
+				result.vectorErr = err
+			case stats.Failed > 0:
+				result.partialMsg = fmt.Sprintf("向量化部分失败: %d/%d 个分块未生成向量", stats.Failed, stats.Total)
+				logger.Warn("向量化部分失败",
+					logger.StringField("doc_id", doc.ID),
+					logger.IntField("failed", stats.Failed),
+					logger.IntField("total", stats.Total))
+			default:
+				logger.Info("向量化完成", logger.StringField("doc_id", doc.ID))
+			}
+		}()
 	}
 
-	concurrency := 10
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	failedCount := 0
-
-	for i, chunk := range chunks {
+	if s.extractionService != nil && s.knowledgeService != nil {
 		wg.Add(1)
-		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			logger.Info("开始知识提取", logger.StringField("doc_id", doc.ID))
 
-		go func(idx int, c *model.DocumentChunk) {
+			extCtx, cancel := context.WithTimeout(baseCtx, 30*time.Second)
+			defer cancel()
+
+			if err := s.processKnowledgeExtraction(extCtx, doc, content); err != nil {
+				logger.Warn("知识提取失败（不影响文档状态）",
+					logger.StringField("doc_id", doc.ID),
+					logger.ErrorField(err))
+			} else {
+				logger.Info("知识提取完成", logger.StringField("doc_id", doc.ID))
+			}
+		}()
+	}
+
+	wg.Wait()
+	return result
+}
+
+func (s *ProcessService) processVectorization(ctx context.Context, doc *model.Document, chunks []*model.DocumentChunk) (vectorizationStats, error) {
+	if s.vectorService == nil || doc.VectorCollectionID == "" {
+		return vectorizationStats{}, nil
+	}
+
+	stats := vectorizationStats{Total: len(chunks)}
+	if len(chunks) == 0 {
+		return stats, nil
+	}
+
+	sem := make(chan struct{}, vectorizationConcurrency)
+	var wg sync.WaitGroup
+	var succeeded atomic.Int64
+	var failed atomic.Int64
+	var firstErr error
+	var errOnce sync.Once
+
+loop:
+	for _, chunk := range chunks {
+		// 外层 ctx 已取消时不再发起新请求：排队中的 chunk 不应该继续占用配额。
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			failed.Add(1)
+			errOnce.Do(func() { firstErr = ctx.Err() })
+			break loop
+		}
+
+		wg.Add(1)
+
+		go func(c *model.DocumentChunk) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
@@ -672,38 +822,66 @@ func (s *ProcessService) processVectorization(ctx context.Context, doc *model.Do
 				"chunk_type":  c.ChunkType,
 			}
 
-			vectorCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			// 继承外层 ctx，而不是 context.Background()：
+			// 否则外层 3 分钟的总预算形同虚设，每个 chunk 都能跑满自己的 5 分钟。
+			vectorCtx, cancel := context.WithTimeout(ctx, vectorizeChunkTimeout)
 			vector, err := s.vectorService.Vectorize(vectorCtx, c.Content, doc.VectorCollectionID, metadata)
 			cancel()
 
 			if err != nil {
 				logger.Warn("单个chunk向量化失败", logger.StringField("chunk_id", c.ID), logger.ErrorField(err))
-				mu.Lock()
-				failedCount++
-				mu.Unlock()
+				failed.Add(1)
+				errOnce.Do(func() { firstErr = err })
 				return
 			}
 
-			if vector != nil {
-				id := vector.GetID()
-				c.VectorID = &id
-				if updateErr := s.repo.UpdateChunk(ctx, c); updateErr != nil {
-					logger.Warn("保存chunk向量ID失败", logger.StringField("chunk_id", c.ID), logger.ErrorField(updateErr))
-				}
+			if vector == nil || vector.GetID() == "" {
+				failed.Add(1)
+				errOnce.Do(func() { firstErr = fmt.Errorf("vector service returned empty vector") })
+				return
 			}
-		}(i, chunk)
+
+			id := vector.GetID()
+			c.VectorID = &id
+			if updateErr := s.repo.UpdateChunk(ctx, c); updateErr != nil {
+				logger.Warn("保存chunk向量ID失败", logger.StringField("chunk_id", c.ID), logger.ErrorField(updateErr))
+				failed.Add(1)
+				errOnce.Do(func() { firstErr = updateErr })
+				return
+			}
+			succeeded.Add(1)
+		}(chunk)
 	}
 
 	wg.Wait()
 
-	if failedCount > 0 {
-		logger.Warn("向量化部分失败",
-			logger.StringField("doc_id", doc.ID),
-			logger.IntField("failed_count", failedCount),
-			logger.IntField("total_count", len(chunks)))
+	stats.Succeeded = int(succeeded.Load())
+	stats.Failed = int(failed.Load())
+
+	// 调用方预算耗尽属于硬失败：即使之前有部分成功，也不能把整篇文档当成正常完成。
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return stats, fmt.Errorf("vectorization canceled after %d/%d chunks: %w", stats.Succeeded, stats.Total, ctxErr)
 	}
 
-	return nil
+	if stats.Failed > 0 {
+		logger.Warn("向量化部分失败",
+			logger.StringField("doc_id", doc.ID),
+			logger.IntField("failed_count", stats.Failed),
+			logger.IntField("success_count", stats.Succeeded),
+			logger.IntField("total_count", stats.Total))
+	}
+
+	// 一个成功的都没有，文档在向量库里就是不可检索的。
+	// 返回错误让上层标记 Failed，而不是把「空壳文档」标成 Completed。
+	if stats.Succeeded == 0 {
+		if firstErr == nil {
+			firstErr = ErrVectorizationAllFailed
+		}
+		return stats, fmt.Errorf("%w: %d/%d failed: %v",
+			ErrVectorizationAllFailed, stats.Failed, stats.Total, firstErr)
+	}
+
+	return stats, nil
 }
 
 func (s *ProcessService) processKnowledgeExtraction(ctx context.Context, doc *model.Document, content string) error {
@@ -826,10 +1004,10 @@ func generateID() string {
 	return uuid.New().String()
 }
 
-func getUserIDFromContext(ctx context.Context) string {
-	userID, err := auth.GetUserID(ctx)
+func requireUserID(ctx context.Context) (string, error) {
+	userID, err := auth.RequireUserID(ctx)
 	if err != nil {
-		return ""
+		return "", ErrUnauthenticated
 	}
-	return userID
+	return userID, nil
 }

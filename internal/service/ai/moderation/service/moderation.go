@@ -10,8 +10,7 @@ import (
 	"Logos/internal/service/ai/moderation/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
-	"Logos/pkg/obs"
-	"Logos/pkg/strutil"
+	"Logos/pkg/structured"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -202,14 +201,20 @@ func (s *moderationServiceImpl) doModerate(ctx context.Context, content string, 
 	}
 
 	var output moderationOutput
-	if err := json.Unmarshal([]byte(strutil.ExtractJSONValue(response)), &output); err != nil {
-		obs.RecordLLMParse(ctx, "moderation", "failed")
+	_, parseErr := structured.ParseWithRepair(ctx, "moderation", response, &output,
+		func(ctx context.Context, raw string, parseErr error) (string, error) {
+			// 审核是失败关闭的链路：解析失败会直接拒绝内容。
+			// 所以这里值得再花一次模型调用做定向修复，而不是让用户白等一次拒绝。
+			return s.chatWithModel(ctx, chatModel, "你是一个JSON修复助手，只输出修正后的JSON。",
+				structured.RepairPrompt(raw, parseErr,
+					`{"result":"passed|flagged|rejected","categories":["..."],"scores":{"category":0.0},"action":"none|warn|block"}`))
+		})
+	if parseErr != nil {
 		logger.Error("审核结果解析失败，按失败关闭策略拒绝",
-			logger.ErrorField(err),
+			logger.ErrorField(parseErr),
 			logger.StringField("response", response))
-		return "", nil, nil, "", fmt.Errorf("审核结果解析失败: %w", err)
+		return "", nil, nil, "", fmt.Errorf("审核结果解析失败: %w", parseErr)
 	}
-	obs.RecordLLMParse(ctx, "moderation", "ok")
 
 	// 成功解析但缺少审核结论，等价于没有给出判定，同样按失败关闭处理
 	if output.Result == "" {

@@ -13,6 +13,7 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 )
 
 type KnowledgeService interface {
@@ -189,12 +190,7 @@ func (s *qaServiceImpl) GetHistory(ctx context.Context, userID int64, page, page
 		logger.IntField("page", page),
 		logger.IntField("page_size", pageSize))
 
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	page, pageSize = pagination.Normalize(page, pageSize)
 
 	records, total, err := s.qaRepo.ListQARecords(ctx, userID, page, pageSize)
 	if err != nil {

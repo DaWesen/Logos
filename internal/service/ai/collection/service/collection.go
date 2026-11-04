@@ -55,6 +55,11 @@ type collectionServiceImpl struct {
 	outboxRepo        outbox.OutboxRepository
 }
 
+var (
+	ErrUnauthenticated = auth.ErrMissingUser
+	ErrNotFound        = errors.New("资源不存在")
+)
+
 func NewCollectionService(repo dao.CollectionRepository, knowledgeService KnowledgeService, extractionService ExtractionService, outboxRepo outbox.OutboxRepository) CollectionService {
 	return &collectionServiceImpl{
 		repo:              repo,
@@ -64,15 +69,20 @@ func NewCollectionService(repo dao.CollectionRepository, knowledgeService Knowle
 	}
 }
 
-func getUserIDFromContext(ctx context.Context) string {
-	userID, err := auth.GetUserID(ctx)
+func requireUserID(ctx context.Context) (string, error) {
+	userID, err := auth.RequireUserID(ctx)
 	if err != nil {
-		return ""
+		return "", ErrUnauthenticated
 	}
-	return userID
+	return userID, nil
 }
 
 func (s *collectionServiceImpl) AddDataSource(ctx context.Context, name string, dsType int32, url string, config map[string]string, description *string) (*model.DataSource, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Info("添加数据源",
 		logger.StringField("name", name),
 		logger.IntField("type", int(dsType)))
@@ -84,7 +94,7 @@ func (s *collectionServiceImpl) AddDataSource(ctx context.Context, name string, 
 		URL:         url,
 		Config:      dao.MarshalConfig(config),
 		Description: description,
-		UserID:      getUserIDFromContext(ctx),
+		UserID:      userID,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -96,15 +106,20 @@ func (s *collectionServiceImpl) AddDataSource(ctx context.Context, name string, 
 }
 
 func (s *collectionServiceImpl) UpdateDataSource(ctx context.Context, id string, name *string, dsType *int32, url *string, config map[string]string, description *string) (*model.DataSource, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Info("更新数据源",
 		logger.StringField("id", id))
 
-	ds, err := s.repo.GetDataSource(ctx, id)
+	ds, err := s.repo.GetDataSourceWithOwnerCheck(ctx, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("查询数据源失败: %w", err)
 	}
 	if ds == nil {
-		return nil, errors.New("数据源不存在")
+		return nil, ErrNotFound
 	}
 
 	if name != nil {
@@ -131,29 +146,54 @@ func (s *collectionServiceImpl) UpdateDataSource(ctx context.Context, id string,
 }
 
 func (s *collectionServiceImpl) DeleteDataSource(ctx context.Context, id string) error {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return err
+	}
+
 	logger.Info("删除数据源", logger.StringField("id", id))
+	ds, err := s.repo.GetDataSourceWithOwnerCheck(ctx, id, userID)
+	if err != nil {
+		return fmt.Errorf("查询数据源失败: %w", err)
+	}
+	if ds == nil {
+		return ErrNotFound
+	}
 	return s.repo.DeleteDataSource(ctx, id)
 }
 
 func (s *collectionServiceImpl) GetDataSource(ctx context.Context, id string) (*model.DataSource, error) {
-	return s.repo.GetDataSourceWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.GetDataSourceWithOwnerCheck(ctx, id, userID)
 }
 
 func (s *collectionServiceImpl) ListDataSources(ctx context.Context) ([]*model.DataSource, error) {
-	return s.repo.ListDataSources(ctx, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListDataSources(ctx, userID)
 }
 
 func (s *collectionServiceImpl) CreateTask(ctx context.Context, dataSourceID string, name string, format int32, schedule *string) (*model.CollectionTask, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Info("创建采集任务",
 		logger.StringField("name", name),
 		logger.StringField("data_source_id", dataSourceID))
 
-	ds, err := s.repo.GetDataSource(ctx, dataSourceID)
+	ds, err := s.repo.GetDataSourceWithOwnerCheck(ctx, dataSourceID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("查询数据源失败: %w", err)
 	}
 	if ds == nil {
-		return nil, errors.New("数据源不存在")
+		return nil, ErrNotFound
 	}
 
 	task := &model.CollectionTask{
@@ -163,7 +203,7 @@ func (s *collectionServiceImpl) CreateTask(ctx context.Context, dataSourceID str
 		Format:       int(format),
 		Status:       "PENDING",
 		Schedule:     schedule,
-		UserID:       getUserIDFromContext(ctx),
+		UserID:       userID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -175,14 +215,19 @@ func (s *collectionServiceImpl) CreateTask(ctx context.Context, dataSourceID str
 }
 
 func (s *collectionServiceImpl) UpdateTask(ctx context.Context, id string, name *string, format *int32, schedule *string) (*model.CollectionTask, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Info("更新采集任务", logger.StringField("id", id))
 
-	task, err := s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("查询任务失败: %w", err)
 	}
 	if task == nil {
-		return nil, errors.New("任务不存在")
+		return nil, ErrNotFound
 	}
 
 	if name != nil {
@@ -203,28 +248,53 @@ func (s *collectionServiceImpl) UpdateTask(ctx context.Context, id string, name 
 }
 
 func (s *collectionServiceImpl) DeleteTask(ctx context.Context, taskID string) error {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return err
+	}
+
 	logger.Info("删除采集任务", logger.StringField("id", taskID))
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, taskID, userID)
+	if err != nil {
+		return fmt.Errorf("查询任务失败: %w", err)
+	}
+	if task == nil {
+		return ErrNotFound
+	}
 	return s.repo.DeleteTask(ctx, taskID)
 }
 
 func (s *collectionServiceImpl) GetTask(ctx context.Context, id string) (*model.CollectionTask, error) {
-	return s.repo.GetTaskWithOwnerCheck(ctx, id, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.GetTaskWithOwnerCheck(ctx, id, userID)
 }
 
 func (s *collectionServiceImpl) ListTasks(ctx context.Context) ([]*model.CollectionTask, error) {
-	return s.repo.ListTasks(ctx, getUserIDFromContext(ctx))
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListTasks(ctx, userID)
 }
 
 func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) (*model.CollectionResult, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Info("执行采集任务",
 		logger.StringField("task_id", taskID))
 
-	task, err := s.repo.GetTask(ctx, taskID)
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, taskID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("查询任务失败: %w", err)
 	}
 	if task == nil {
-		return nil, errors.New("任务不存在")
+		return nil, ErrNotFound
 	}
 
 	now := time.Now()
@@ -241,7 +311,7 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		EndTime:        now.Unix(),
 	}
 
-	ds, _ := s.repo.GetDataSource(ctx, task.DataSourceID)
+	ds, _ := s.repo.GetDataSourceWithOwnerCheck(ctx, task.DataSourceID, userID)
 
 	collectErr := s.doCollect(ctx, task, ds, result)
 
@@ -447,15 +517,20 @@ func (s *collectionServiceImpl) collectFromWebsite(ctx context.Context, task *mo
 }
 
 func (s *collectionServiceImpl) StopTask(ctx context.Context, taskID string) error {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return err
+	}
+
 	logger.Info("停止采集任务",
 		logger.StringField("task_id", taskID))
 
-	task, err := s.repo.GetTask(ctx, taskID)
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, taskID, userID)
 	if err != nil {
 		return err
 	}
 	if task == nil {
-		return errors.New("任务不存在")
+		return ErrNotFound
 	}
 
 	if task.Status != "RUNNING" && task.Status != "PENDING" {
@@ -469,10 +544,40 @@ func (s *collectionServiceImpl) StopTask(ctx context.Context, taskID string) err
 }
 
 func (s *collectionServiceImpl) GetCollectionResult(ctx context.Context, id string) (*model.CollectionResult, error) {
-	return s.repo.GetResult(ctx, id)
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.repo.GetResult(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, ErrNotFound
+	}
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, result.TaskID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, ErrNotFound
+	}
+	return result, nil
 }
 
 func (s *collectionServiceImpl) ListCollectionResults(ctx context.Context, taskID string) ([]*model.CollectionResult, error) {
+	userID, err := requireUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.repo.GetTaskWithOwnerCheck(ctx, taskID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, ErrNotFound
+	}
 	return s.repo.ListResultsByTaskID(ctx, taskID)
 }
 
