@@ -145,7 +145,7 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **上传守卫**：BodyLimit 跳过 multipart 不等于上传无上限。`pkg/uploadguard` 在解析前限制整个请求体、读取时用 `io.LimitReader` 兜底、写临时文件/对象存储用有界 `Copy`；头像 5MB 且必须通过内容嗅探（HTML 改名成 .jpg 会被拒），聊天媒体 500MB 先看 `header.Size` 再流式上传（不再整份读进内存），文档/通用文件 100MB、批量最多 10 个；扩展名统一净化，避免奇怪字符进入对象键
 - **内网服务身份校验**：process 服务不信任 `X-User-ID`，入口独立校验 JWT 后再写入 metadata；service 层拒绝空身份，避免空 userID 被 DAO 解释成「查所有用户」；文档块读取先校验 owner。compose 中 process 仅 `expose` 到服务网络，不发布宿主机端口
 - **下游超时与连接池**：网关到 process 的普通转发统一 30s、上传 10min，所有请求透传 `c.Request.Context()`；Transport 设置拨号超时、响应头 30s、空闲连接回收与单 host 上限，避免下游卡死时网关 goroutine/fd 被拖满
-- **HTTP 入口默认值**：`pkg/httpserver` 统一 `ReadHeaderTimeout=10s`、`IdleTimeout=120s`、`MaxHeaderBytes=1MB`；process 监听 SIGTERM 后先停止接收连接，再以 15s 窗口排空在途请求
+- **HTTP 入口默认值**：`pkg/httpserver` 统一 `ReadHeaderTimeout=10s`、`IdleTimeout=120s`、`MaxHeaderBytes=1MB`；process 与 monitoring 看板都监听 SIGTERM 后先停止接收连接，再以 15s 窗口排空在途请求。monitoring 的监听失败（如端口被占用）只禁用看板并记录错误，不会连带 gRPC 服务退出——看板是旁路能力，不该成为整个服务的单点
 - **存活/就绪分离**：`/livez` 只回答「进程还在不在」，永不查依赖；`/readyz` 检查依赖，不可用返回 503 并列出失败项。两者混用会造成真实事故——拿就绪探针当存活探针，数据库抖动会让编排系统把所有副本一起重启；拿存活探针当就绪探针，依赖挂了仍然接流量，用户看到的全是超时
 - **gRPC 依赖感知健康**：`pkg/health` 注册中心支持硬依赖与可选依赖；探测并发执行、共享 3s 总预算、2s 结果缓存，并发探针合并成一次回源（失败结果也缓存，避免探针自己把过载的下游打死）。依赖状态变化时同步更新 `grpc_health_v1` 的具名服务与空 service 名（`grpc_health_probe` 默认查后者），状态变化才打日志，正常探测不会刷满日志
 - **依赖分级而不是一刀切**：PostgreSQL 是 Chat/User/Billing 等服务的硬依赖，不可用即摘流量；Redis 只是缓存/限流加速器，降级为 `degraded` 但不摘流量（网关限流有单机兜底、用户查询会回源）。把可选依赖也当硬依赖，一次缓存抖动会摘掉整个网关，故障反而被放大
