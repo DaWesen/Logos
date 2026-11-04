@@ -507,6 +507,8 @@ Logos/
 - **毒丸消息止损**：同一条消息（topic + partition + offset）连续失败 5 次后判定为毒丸，先转存到 `<topic>.dlq`（保留原始 topic/partition/offset/key/error 与原始负载），转存成功后才提交 offset；转存失败则落原始负载日志，保证可人工恢复
 - **规范化**：消息按 `chat_id` 等 Key 哈希分区，同一会话有序；消费端通过数据库主键/唯一约束实现幂等
 - **幂等键保留期**：`message_idempotency` 只覆盖客户端重试窗口，默认保留 7 天；每小时分批回收，每批 1000 行、单轮最多 10 批，并补 `created_at` 索引，避免表随消息量无限增长和一次删除锁表
+- **内部 topic 名不能直接当 Kafka topic**：DAO/gRPC enum/统计使用 `QA_REQUEST` 这类大写下划线内部名，而 Kafka 常量是 `qa_request`。outbox relay 原样把 Topic 字段当 Kafka topic 发，导致 QA 事件被投进一个没人订阅的 topic——`dispatch=sent`，业务却永远不执行。现在由 `kafkaTopicFor` 做唯一映射，避免两套命名再次漂移
+- **问答执行不能裸起 goroutine**：handler 里 `go AskQuestion(Background)` 后立即返回 nil，offset 会被提交；LLM 失败或进程崩溃时请求永久丢失，突发流量还会堆出无界 goroutine。现在消费端同步执行并返回错误，复用既有的就地重试/死信路径；单条问答应带 120s 上限，且使用 `Message.Context`，停机时可取消
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
