@@ -60,8 +60,26 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **输入状态提示**
 - **在线状态管理**
 - **历史消息搜索**：按关键词、时间范围搜索
+- **会话列表分页**：默认 keyset 游标分页（`(updated_at, id)` 锚点，深页代价恒定），同时兼容 `page/page_size`
+- **分页边界统一**：`pkg/pagination` 收敛 `page>=1`、`pageSize∈[1,100]` 与默认页大小，DAO/Service 不再各写一份；ES 检索额外检查 `from+size ≤ 10000`（`index.max_result_window`），深页直接拒绝而不是把后端原始错误透给客户端
+- **消息发送幂等**：客户端带 `(sender_id, request_id)` 重复提交时回放首次消息；`logos.message.idempotency.count{result=replayed}` 暴露重试率，重试被挡住但请求在放大时能第一时间看到
 - **离线推送与上线同步**
 - **多端消息同步**：同一账号多端登录，消息实时同步
+- **QQ 媒体中转**：QQ 入站图片/语音/视频先经 `safehttp` 校验（协议白名单、逐 IP 拒绝私网/回环/云元数据、重定向逐跳复核）再下载，单文件默认 100MB 上限（可配）；本地临时文件用 UUID 命名、`0600` 权限，不信任上游文件名；上传 MinIO 时对象键同样随机化，并按内容嗅探决定 `Content-Type`，HTML 等非媒体内容一律降级为 `application/octet-stream`，避免媒体代理变成 XSS 入口。并发下载/上传默认 8 路（可配），排队与消息预算共用同一个 ctx，等太久就放弃媒体而不是无限占住处理协程。MinIO/QQ CDN 失败只降级为文本占位，消息本身不丢；`logos.qqbridge.media.count{stage,result}` 单独暴露失败率，`stage=queue` 把「容量不足」与「下载/上传故障」分开，因为这条链路失败不会体现在消息发送成功率里
+- **跨系统媒体地址**：媒体代理返回的是 `/api/v1/...` 相对路径，只对浏览器同源有效；出站到 QQ（LLOneBot 在容器外）前用 `gateway.public_base_url` 拼成绝对 URL，未配置时跳过媒体段而不是发一个注定失效的链接。qqbridge 与网关必须使用同一个 MinIO 桶（`logos-documents`），否则图片会 404
+- **QQ→Bot 路由自愈**：Bot 创建/更新时写 `qq:bot_bind:<QQ号>` 缓存，但 Redis 重启或 key 被逐出后路由会退化成普通 QQ 用户（私聊不进 Bot 会话）。Bridge 启动时从 Bot 表批量预热；运行期缓存未命中或 Redis 不可用时按 QQ 号唯一索引回源一次并回填。`NewRedisCache()` 初始化失败返回 nil，所有调用点都做了 nil 判断，避免一条 QQ 消息把 Bridge panic 掉
+- **QQ 出站媒体与快速路径一致性**：Bot 回复经 `LogosEventToQQMessage` 统一转成 `text/image/record/video` 多段消息，媒体地址在出站前拼成公网绝对 URL；纯图片消息不再因为 `Content==""` 被丢弃。快速路径直发 QQ 与 Kafka 出站订阅共用同一转换逻辑；直发失败不写 `qq_fast_replied`，否则订阅会跳过这条消息、QQ 侧永久收不到回复
+- **快速路径有界并发**：每条私聊消息都会触发一次 LLM 调用，Bridge 用 4 个槽位限流；槽位满时不再堆 goroutine，直接交给 Chat Service → Kafka 慢路径兜底。异步任务拿的是事件快照（Metadata/MentionUserIDs/MediaMeta 深拷贝），避免与发布路径共享 map 产生数据竞争
+- **出站失败语义**：`chat_outgoing` 的 handler 现在把可重试失败（QQ 未连接、API 调用失败）上抛给消费者，触发就地重试与死信兜底；此前只记日志并返回 nil，Kafka 会提交 offset，Bot 回复永久丢失。消息本身不可恢复（缺目标 QQ 号/群号、空内容、不支持的会话类型）用 `mq.ErrSkipMessage` 标记，消费者直接提交跳过，不浪费 5 次指数退避、也不污染死信队列。`logos.qqbridge.outbound.count{result,reason}` 区分 ok/failed/skipped
+- **快速路径接管必须真实发生**：`qq_direct_bot` 是「这条消息已经由 Bridge 直接调用 Bot」的契约，Chat Service 看到它就会跳过 Bot。此前无条件置位，Bot 客户端未连接或槽位已满时消息会「谁都不处理」（群里 @Bot 永不回复）。现在 `tryDispatchFastReply` 返回是否真正接管，只有接管成功才写标记，且标记随事件一起进 Kafka
+- **接管失败要有回收路径**：快速路径返回结构化结果，只有可恢复的失败（Bot 超时、空响应、panic、回复完全发不出去）才发布 `bot_recovery` 补偿事件，并显式撤销 `qq_direct_bot`；Chat Service 对该事件只补跑 Bot，不重复落库与推送。`logos.qqbridge.fastpath.count{result=recovered|failed}` 把「兜底成功」和「彻底没回复」分开，后者配 critical 告警，因为它在消息成功率上完全隐形
+- **Bot 回复可去重**：回复 ID 由 `(botID, 源消息ID)` 做 SHA-256 派生，快速路径与慢路径共用同一规则；重投/补偿产生的第二次回复会落到同一主键。发布 outgoing 前再查一次主键做重放守卫，数据库挡住重复写入、守卫挡住重复推送；查询失败时失败开放，避免把正常回复吞掉
+- **QQ 并发与限额可配置**：快速路径并发、媒体并发、单文件上限、媒体预算都可通过 `qqbridge.*` / `QQBRIDGE_*` 调整；所有值在构造时归一化到安全区间（0 会变成无缓冲 chan、过大等于没限流，因此必须收敛），非法环境变量保留配置文件值
+- **启动重试不泄漏连接池**：PostgreSQL 初始化在 `Ping` 失败时显式关闭已创建的 `*sql.DB`（`gorm.Open` 成功不等于可用），最后一次失败后不再白等退避周期；可选任务（缓存预热）用更小 attempts + 独立 ctx，不阻塞主服务启动
+- **缓存懒加载可自愈**：Redis 连接失败不再被 `sync.Once` 永久记住，而是进入 30s 冷却期后重试；冷却内直接降级、不重复连接，避免把缓存故障放大成连接超时风暴。`Mapper` 按需取实例而不是构造时缓存 nil，Redis 恢复后映射写入自动恢复
+- **直连与集群共享治理**：`NewDirectClientConnWithGovernance` 给直连模式补上超时/熔断/重试拦截器；此前只有 etcd 模式有治理，而直连的 `WaitForReady(true)` 会在下游不可用时无限等待，导致单机部署比集群部署更易被拖垮
+- **重试只给幂等方法**：gRPC 重试拦截器改为白名单策略，只有只读查询与幂等覆盖写会自动重试；`SendMessage`、`Deposit`、`ConsumeModelCall` 等非幂等写在 `Unavailable` 时也只执行一次，避免重复发消息/重复扣费。同时修正 `retryable_codes` 配置从未生效的问题（`RESOURCE_EXHAUSTED` 与 `ResourceExhausted` 写法不同）
+- **白名单可增量配置**：`grpc.client.retry_safe_methods` 允许运维追加可重试的只读方法，且只做加法（不能削弱内置白名单）；策略持有配置切片副本，etcd 与直连两条路径共用同一策略，避免「集群能重试、单机不能」
 
 ### 好友与群组
 
@@ -79,17 +97,25 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **结构感知分块**：文档入库按 Markdown 标题边界切分并合并短小节，超长小节降级为重叠窗口，检索上下文更完整
 - **自动存入知识库**：Bot 聊天界面可开启"自动存入知识库"开关，每条对话自动向量化存入关联的 RAG 知识库
 - **向量模型自动同步**：Bot 配置向量模型时自动同步到关联的 RAG 知识库，确保向量化一致性
+- **文档向量化失败语义**：chunk 向量化继承外层预算（不再用 `context.Background()` 把 3 分钟总预算架空），10 路并发；全部失败返回 `ErrVectorizationAllFailed` 并把文档标为 Failed，部分失败保留 Completed 但把 `x/y 未生成向量` 写入 `ErrorMsg`，避免“空壳文档”被当成处理成功
+- **孤儿文档回收**：文档处理是进程内异步任务，重启/OOM 会让 Pending/Processing 永久卡住；`StaleDocumentReaper` 启动即回收一次、之后每 5 分钟有界批量（200 条）把超过 30 分钟未更新的文档标为 Failed，并写清失败原因；`logos.document.reap.count` / `failure.count` 分别记录救回数量与回收器健康度
 - **MCP 工具集成**：Bot 可调用外部工具（天气查询、代码执行、Web 搜索、计算器等），扩展能力边界
 - **MCP 代码执行沙箱**：多层防护——环境变量白名单（服务密钥不泄漏给被执行代码）、超时硬上限 + 进程树终止、输出/代码大小限额、全局并发限制；设置 `LOGOS_CODE_SANDBOX=docker` 时升级为容器级隔离（`--network none --memory 128m`，无网络、只读挂载）
+- **工具执行内核**：所有只读检索工具共用一套策略——20s 总超时（覆盖所有重试）、16 路并发上限、同参调用合并、单条 32k/单轮 48k 结果预算；可重试错误按 100→200→400ms 退避，最多 3 次尝试；连续 5 次失败后熔断 30s，冷却后只放一个半开探针。重试、熔断、缓存只对 `ReadOnly`/`Cacheable` 工具生效，MCP 等有副作用工具即使误配 `Retryable` 也不会重复执行；调用方取消不计入熔断，同参等待者也能随自己的 ctx 取消
 - **语义缓存**：语义相似的重复问题直接返回缓存答案（Redis + 向量余弦相似度 ≥ 0.90 命中），省一次 LLM 调用、毫秒级响应；Redis 不可用时自动降级直通
+- **缓存三件套**：击穿（缓存过期瞬间并发回源）用 `pkg/singleflight` 合并成一次，等待者随自己的 ctx 取消、回源用 `WithoutCancel` + 超时避免被单个客户端拖死；穿透（查不存在的实体）写 60s 空值标记，实体写回时立即清除；雪崩（同时过期）由 TTL 抖动（±10%）把失效时间摊开。`logos.cache.fill.count{result=fill/shared/error}` 能量化拦截比例
+- **缓存调用有自己的预算**：Redis 读 200ms、写 500ms，超时/错误即降级回源，不会因为依赖抖动把请求拖到 gRPC 的 30s 超时；`logos.cache.redis.count{op,result}` 把 `miss / timeout / error` 分开统计，避免正常未命中稀释错误率
 - **长对话上下文压缩**：历史消息按 token 预算装载，超出预算的早期对话滚动摘要为「对话背景」注入（按会话缓存，均摊成本 O(新溢出消息数)）；摘要失败自动降级为截断，不阻塞主流程
 - **Prompt 注入防护**：规则引擎检测疑似指令注入（中英文 15 类模式），命中时注入安全护栏而非拒绝（控制误伤）；RAG 检索结果统一加内容边界声明，防止知识库文档中的间接注入
+- **用户 URL 抓取防 SSRF**：文档导入的 URL 来自用户，不能直接 `http.Get`；`pkg/safehttp` 做协议白名单（仅 http/https）、拒绝 URL 内凭据、**DNS 解析后逐 IP 校验**（回环/私网/CGNAT/链路本地/云元数据 169.254.169.254/IPv6 ULA 全部拦截）、重定向逐跳复核、下载响应体 100MB 上限。校验和拨号使用同一份解析结果，避免 DNS rebinding 的 TOCTOU
 - **多 Bot 协作**：支持配置多个不同人设/能力的 Bot，按场景自动路由或由用户指定
 - **Plan-and-Execute 任务规划**：Bot 可开启规划模式（`enable_planner`）——复杂任务先由 Planner 生成显式步骤清单（1-8 步，可展示可审计），逐步交给带工具的 ReAct Agent 执行（单步内工具调用能力完整保留），步骤失败自动重规划一次而非整体失败，最后由 Synthesizer 综合作答；流式模式下规划与步骤进度实时推送到前端
 - **记忆管理**：Bot 记住用户偏好与历史交互，跨会话保持上下文；支持 7 种记忆分类（preference/habit/fact/goal/relationship/style/other），手动添加的记忆受保护不被自动清理
 - **记忆置信度生命周期**：LLM 抽取的记忆带证据引用（消息 ID，可审计；编造引用整条作废）与归一化置信度（异常值 → 0.5"不知道"）；跨轮次三态合并——确认 +0.05 封顶 0.98（重复确认 ≠ 绝对真理）、补充取更详细值、矛盾 −0.15 保底 0.2 并保留双结论不自动选边；注入 prompt 双档消费：< 0.5 不注入（agent 不会因为标注就不当真）、[0.5, 0.65) 标注「⚠︎证据较少」、类内按置信度降序、截断声明条数
 - **消息总结**：一键总结群聊/单聊历史消息，生成要点摘要与待办提取
 - **智能回复候选**：根据上下文生成回复候选，用户可一键选用
+- **批量推荐**：`BatchGetRecommendations` 固定 8 路有界并发（信号量背压），重复 userID 由单飞合并，避免串行 N 次往返或一次性打满连接池
+- **批量向量化**：多模态 Embedding 接口一次只收一条文本，批量只能拆成多次 HTTP；改成 4 路有界并发 + 结果按下标保序 + 首错取消剩余请求，响应体 8MB 上限、错误报文截断 512 字节。串行时 100 条文本就是 100 次往返叠加，无上限并发又会把供应商打限流
 - **实时多语言翻译**：支持前端配置翻译模型（DeepSeek/OpenAI 等），不再硬编码
 - **消息审核**：接入模型对消息内容进行实时审核与过滤；审核模型不可用或输出无法解析时按**失败关闭**处理，直接拒绝群聊发送而非放行
 
@@ -111,6 +137,15 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **指标/日志/告警**：支持按服务、类型、级别等多维度查询
 - **自动采集**：Monitoring 服务启动后自动通过 etcd 采集各服务注册状态
 - **请求上下文全链路透传**：Gateway 所有接口统一以 `c.Request.Context()` 调用下游 gRPC，客户端断开即取消下游计算（避免继续烧 LLM token），trace 与调用方身份 metadata 随链路传递
+- **入口防护**：网关对普通请求体设 2MB 上限（`Content-Length` 超限直接 413，chunked 用 `MaxBytesReader` 兜底），只有白名单上传路由才跳过 multipart 限制，普通接口伪造 `Content-Type` 也不能绕过；CORS 默认通配但不开凭据，需要凭据时用 `CORS_ALLOWED_ORIGINS` 白名单并返回 `Vary: Origin`；OPTIONS 预检放在限流之后短路，避免绕过配额；默认不信任任何代理，`TRUSTED_PROXIES` 显式配置后才采信 `X-Forwarded-For`，防止伪造 IP 绕过限流
+- **文件代理防存储型 XSS**：`/api/v1/file/minio/*` 的 `Content-Type` 来自上传时的客户端声明，不能原样回传。代理层只允许图片/音视频/PDF/Office 文档内联展示；`text/*`、`image/svg+xml`、XHTML、JavaScript 等可在同源执行的内容统一降级为 `application/octet-stream` 并加 `Content-Disposition: attachment`，同时始终返回 `X-Content-Type-Options: nosniff`；上游请求带 60s 超时，chunked 响应不再写非法的 `Content-Length: -1`
+- **对象存储写接口鉴权**：通用上传/删除/取预签名 URL（`/api/v1/file/upload*`、`DELETE /api/v1/file`、`/api/v1/file/url`）移到 JWT 鉴权组——否则任何人都能往存储写文件、删除已知对象或换取 30 天预签名链接。媒体代理 `GET /api/v1/file/minio/*` 保持公开（`<img>` 无法带 Authorization 头），安全性由不可猜测的 UUID 对象键 + 类型白名单保证；所有对象键入口统一拒绝 `..`、空路径段、反斜杠与控制字符
+- **上传守卫**：BodyLimit 跳过 multipart 不等于上传无上限。`pkg/uploadguard` 在解析前限制整个请求体、读取时用 `io.LimitReader` 兜底、写临时文件/对象存储用有界 `Copy`；头像 5MB 且必须通过内容嗅探（HTML 改名成 .jpg 会被拒），聊天媒体 500MB 先看 `header.Size` 再流式上传（不再整份读进内存），文档/通用文件 100MB、批量最多 10 个；扩展名统一净化，避免奇怪字符进入对象键
+- **内网服务身份校验**：process 服务不信任 `X-User-ID`，入口独立校验 JWT 后再写入 metadata；service 层拒绝空身份，避免空 userID 被 DAO 解释成「查所有用户」；文档块读取先校验 owner。compose 中 process 仅 `expose` 到服务网络，不发布宿主机端口
+- **下游超时与连接池**：网关到 process 的普通转发统一 30s、上传 10min，所有请求透传 `c.Request.Context()`；Transport 设置拨号超时、响应头 30s、空闲连接回收与单 host 上限，避免下游卡死时网关 goroutine/fd 被拖满
+- **HTTP 入口默认值**：`pkg/httpserver` 统一 `ReadHeaderTimeout=10s`、`IdleTimeout=120s`、`MaxHeaderBytes=1MB`；process 监听 SIGTERM 后先停止接收连接，再以 15s 窗口排空在途请求
+- **对象级授权**：collection 的公开方法统一要求 user_id，单资源读写全部带 owner 条件；跨用户更新、删除、执行任务与读取结果均返回 404，不泄露资源是否存在
+- **连接池安全默认值**：`sql.DB` 的零值语义容易踩坑（`MaxOpen=0` 不限、`MaxIdle=0` 不保留空闲连接），初始化时统一归一化并补 `ConnMaxIdleTime`，启动日志打印实际生效值
 
 ## 快速开始
 
@@ -382,16 +417,22 @@ Logos/
 │   ├── governance/                   #   服务治理 (熔断/重试/限流/超时/LLM 治理)
 │   ├── graph/                        #   Neo4j
 │   ├── grpcserver/                   #   gRPC 服务器 (Etcd 注册/健康检查/Keepalive)
+│   ├── httpserver/                   #   HTTP 入口超时与优雅停机
 │   ├── jwt/                          #   JWT 认证
 │   ├── logger/                       #   Zap 日志
 │   ├── mq/                           #   Kafka
 │   ├── obs/                          #   OpenTelemetry 可观测性
 │   ├── outbox/                       #   Outbox 模式 (事件可靠投递)
+│   ├── pagination/                   #   分页参数统一边界（page/pageSize/ES 窗口）
 │   ├── push/                         #   离线推送
 │   ├── ratelimit/                    #   Redis 限流器
 │   ├── register/                     #   Etcd 服务注册
+│   ├── safehttp/                     #   用户可控 URL 抓取（SSRF 防护）
+│   ├── singleflight/                 #   并发回源合并（防缓存击穿）
 │   ├── storage/                      #   MinIO 对象存储
+│   ├── structured/                    #   LLM 结构化输出解析与一次修复
 │   ├── strutil/                      #   字符串工具
+│   ├── uploadguard/                  #   上传大小/类型/扩展名守卫
 │   └── vector/                       #   Milvus 向量数据库
 ├── deployment/                       # Kubernetes 部署配置 (kind)
 │   ├── kind-cluster.yaml             #   Kind 集群定义
@@ -427,6 +468,8 @@ Logos/
 | 熔断器    | 50 次失败阈值 / 10s 超时 / 3 次成功恢复   | 基于 sony/gobreaker |
 | 限流     | 100 RPS / 50 并发              | gRPC 服务端拦截器（线程安全令牌桶） |
 | LLM 治理 | 120s 超时 / 特殊重试策略             | 专为大模型调用设计         |
+| 请求体上限 | JSON 2MB，multipart 跳过         | 网关中间件；先看 Content-Length，再用 MaxBytesReader 兜底 |
+| gRPC 消息上限 | 默认 4MB，最大 64MB            | 服务端/客户端分别读取 `grpc.server` / `grpc.client` 配置，之前只写配置未生效 |
 
 ### 事务性发件箱（Outbox）
 
@@ -446,6 +489,7 @@ Logos/
 - **at-least-once**：消费端用 `FetchMessage` 只拉取不提交，handler 成功后才 `CommitMessages`；失败不提交，下次拉取到同一条消息重投
 - **毒丸消息止损**：同一条消息（topic + partition + offset）连续失败 5 次后判定为毒丸，先转存到 `<topic>.dlq`（保留原始 topic/partition/offset/key/error 与原始负载），转存成功后才提交 offset；转存失败则落原始负载日志，保证可人工恢复
 - **规范化**：消息按 `chat_id` 等 Key 哈希分区，同一会话有序；消费端通过数据库主键/唯一约束实现幂等
+- **幂等键保留期**：`message_idempotency` 只覆盖客户端重试窗口，默认保留 7 天；每小时分批回收，每批 1000 行、单轮最多 10 批，并补 `created_at` 索引，避免表随消息量无限增长和一次删除锁表
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
@@ -464,7 +508,8 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 
 ## 监控与可观测性
 
-- **Request-ID 链路贯穿**：Gateway 为每个请求生成/透传 `X-Request-ID`（UUID），响应头回写、日志与 monitoring 上报统一携带，单请求全链路可串联排障
+- **Request-ID 链路贯穿**：Gateway 为每个请求生成/透传 `X-Request-ID`（UUID），响应头回写、日志与 monitoring 上报统一携带，单请求全链路可串联排障；透传值限 64 字符且只允许 ASCII 字母数字与 `-_.`，非法值丢弃并重新生成，避免日志注入与 trace 串链
+- **观测旁路可丢弃**：访问日志上报不再「每请求一个 goroutine」，改为固定 4 个 worker 消费容量 4096 的有界队列；队列满立即丢弃并打 `dropped`，每条 RPC 独立 3s 超时，停机最多等 5s。观测系统变慢时不会反向拖垮网关
 - **优雅停机**：全部 gRPC 微服务在 SIGTERM 时执行三段式下线——etcd 主动注销（新流量立即摘除，无需等 lease 过期）→ 健康检查置 NOT_SERVING → GracefulStop 等待 in-flight 请求排空（默认 25s 宽限期，`GRPC_SHUTDOWN_GRACE` 可调，小于 K8s terminationGracePeriodSeconds 保证不被 SIGKILL 撕断）；Gateway HTTP 侧并行关闭 TCP/WebSocket/EventBus 并超时兜底
 
 ### 可靠性指标与告警
@@ -479,7 +524,32 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 | `logos.outbox.dispatch.count` | Counter | `topic`、`result=sent/failed` | Outbox 投递成功/失败数 |
 | `logos.outbox.dispatch.duration` | Histogram | `topic`、`result` | Kafka 发送耗时 |
 | `logos.outbox.deadletter.count` | Counter | `topic` | Outbox 重试耗尽进入死信的域事件数 |
+| `logos.outbox.pending.count` | Gauge | 无 | 当前 pending 消息数（含退避等待），反映积压规模 |
+| `logos.outbox.oldest.pending.seconds` | Gauge | 无 | 最老一条 pending 的等待时长，反映投递延迟 |
+| `logos.ratelimit.degraded.count` | Counter | `layer=global/user/ip/burst` | Redis 不可用、切换单机兜底的次数 |
 | `logos.llm.parse.count` | Counter | `module`、`result=ok/failed` | AI 结构化输出解析成功/失败数（memory/moderation/summary/extraction） |
+| `logos.llm.repair.count` | Counter | `module`、`result=fixed/failed` | 解析失败后一次定向修复的结果，用于判断修复是否值得 |
+| `logos.ai.semantic_cache.count` | Counter | `op=lookup/store`、`result=hit/miss/error/unavailable/disabled` | 语义缓存命中与故障，命中率直接对应省下的 LLM 调用 |
+| `logos.es.request.count` | Counter | `index`、`operation`、`result=ok/failed/canceled` | Elasticsearch 访问结果，取消与真实失败分开计数 |
+| `logos.es.request.duration` | Histogram | `index`、`operation`、`result` | Elasticsearch 访问耗时，可直接算检索 P95 |
+| `logos.db.statement.duration` | Histogram | `operation=query/create/update/delete/row`、`table`、`result=ok/failed` | GORM 统一埋点，所有 DAO 自动获得 SQL 耗时分布 |
+| `logos.db.slow_query.count` | Counter | `operation`、`table` | 超过 200ms 的 SQL 条数，日志排查单条、指标回答“是否变多” |
+| `logos.db.pool.connections` | Gauge | `state=open/in_use/idle` | 连接池使用情况，区分“SQL 慢”和“拿不到连接” |
+| `logos.db.pool.wait.count` | Counter | 无 | 等待获取连接的累计次数 |
+| `logos.db.pool.wait.duration` | Counter | 无 | 等待获取连接的累计耗时，可直接算每秒等待时长 |
+| `logos.retention.cleanup.rows` | Counter | `table`、`result=ok` | 按保留期成功清理的行数（变更日志/幂等键） |
+| `logos.retention.cleanup.failures` | Counter | `table`、`result=failed` | 保留期清理失败次数，失败不会中断消息主链路 |
+| `logos.cache.fill.count` | Counter | `cache`、`result=fill/shared/error` | 缓存回源合并效果：`shared/(fill+shared)` 即击穿防护的实际拦截比例 |
+| `logos.message.idempotency.count` | Counter | `result=created/replayed` | 消息幂等写入结果；`replayed` 占比即客户端重试率 |
+| `logos.cache.redis.count` | Counter | `op=get/set/delete/...`、`result=hit/miss/ok/error/timeout/canceled` | Redis 操作结果；`miss` 与 `error` 分开，错误率分母不含正常未命中 |
+| `logos.cache.redis.duration` | Histogram | `op`、`result` | 单次 Redis 耗时，可直接算 P95 与 200ms 读预算的余量 |
+| `logos.tool.call.count` | Counter | `tool`、`result=ok/error/timeout/canceled/rejected` | 工具单次尝试结果；`rejected` 是熔断器直接拒绝，不代表后端又被调用一次 |
+| `logos.tool.retry.count` | Counter | `tool` | 可重试错误触发的重试次数；与 `call.count{result=error}` 对比可判断抖动是否被吸收 |
+| `logos.tool.breaker.count` | Counter | `tool`、`event=open/half_open/closed/open_rejected/half_open_rejected` | 熔断状态事件；`open` 突增说明某个工具后端持续不可用 |
+| `logos.gateway.log_report.count` | Counter | `result=enqueued/dropped/ok/error` | 访问日志上报结果；`dropped` 是旁路队列的背压信号，主链路不受观测系统拖累 |
+| `logos.gateway.log_report.duration` | Histogram | `result=ok/error` | 单条日志上报耗时，用于判断监控服务是否变慢 |
+| `logos.document.reap.count` | Counter | 无 | 回收的孤儿文档数（长时间停留在 Pending/Processing） |
+| `logos.document.reap.failure.count` | Counter | 无 | 文档孤儿回收失败次数，持续失败会让卡住文档无法自愈 |
 
 配套告警规则见 `deployment/examples/prometheus-rules.yaml` 的 `logos.reliability` 组：
 
@@ -487,7 +557,27 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 - `KafkaConsumeFailureRateHigh`（warning）：消费失败率 > 5%，通常意味着下游 DB/Redis 异常
 - `OutboxDeadLetter`（critical）：域事件已停止投递，需人工确认后调用 `ReplayDeadLetters`
 - `OutboxDispatchFailureRateHigh`（warning）：投递失败率 > 10%，通常意味着 Kafka 抖动
+- `OutboxBacklogHigh`（warning）：pending > 1000 持续 10 分钟，成功率高但吞吐不足
+- `OutboxDeliveryLagHigh`（critical）：最老 pending 等待 > 5 分钟，域事件已出现业务延迟
+- `RateLimiterDegraded`（warning）：Redis 限流不可用，已降级为单机兜底，全局配额不再准确
 - `LLMParseFailureRateHigh`（warning）：LLM 输出解析失败率 > 20%，业务已在静默降级为空结果
+- `LLMRepairIneffective`（warning）：修复失败率 > 50%，说明 prompt/schema 需要调整而不是继续重试
+- `SemanticCacheUnavailable`（warning）：缓存查询错误/不可用占比 > 10%，命中率下降会直接推高 LLM 成本
+- `ElasticsearchFailureRateHigh`（warning）：真实失败率 > 5%，分母已排除 `canceled`，避免被断连流量稀释
+- `ElasticsearchSearchLatencyHigh`（warning）：检索 P95 > 500ms，通常是索引膨胀或分片不均
+- `DBSlowQuerySurge`（warning）：按 `operation/table` 的慢 SQL 速率 > 1 条/秒持续 10 分钟，说明查询计划或数据量发生变化
+- `DBPoolSaturation`（warning）：连接池 `in_use/open > 90%` 持续 10 分钟，请求可能已经开始排队
+- `DBPoolWaitHigh`（warning）：连接等待累计耗时增速 > 0.5 秒/秒持续 5 分钟，说明瓶颈在连接池而不是 SQL
+- `RetentionCleanupFailing`（warning）：1 小时内任意表清理失败，过期数据会持续堆积，需检查数据库连接与锁等待
+- `CacheFillFailureHigh`（warning）：缓存回源失败率 > 20%，缓存不可用时会直接放大成接口错误
+- `MessageIdempotencyReplaySurge`（warning）：幂等回放占比 > 30%，消息没有重复，但客户端/网关可能在放大重试
+- `RedisCacheErrorRateHigh`（warning）：Redis 超时/错误占比 > 5%，缓存已降级为回源
+- `RedisCacheLatencyHigh`（warning）：Redis P95 > 100ms，接近 200ms 读预算，继续恶化会触发超时降级
+- `ToolCircuitOpen`（warning）：5 分钟内某工具熔断器打开，模型工具链路已主动停止打后端
+- `ToolCallRejectedRateHigh`（warning）：熔断拒绝占该工具调用 > 20% 持续 5 分钟，需检查检索/图谱后端
+- `GatewayLogReportDropping`（warning）：访问日志开始丢弃，说明有界队列已满、monitoring 服务跟不上请求量
+- `GatewayLogReportFailing`（warning）：日志上报失败率 > 10%，观测链路自身故障，需先恢复 monitoring 服务
+- `DocumentReapFailing`（warning）：文档孤儿回收持续失败，重启后残留的 Pending/Processing 不会自愈
 
 | 服务            | 地址                       | 说明       |
 | ------------- | ------------------------ | -------- |
@@ -545,7 +635,9 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 | `RETRY_INITIAL_DELAY`         | 重试初始延迟 (ms)             | 200                     |
 | `MESSAGE_RATE_LIMIT`          | 消息接口限流 (次/分钟)           | 50                      |
 | `RECOMMEND_RATE_LIMIT`        | 推荐接口限流 (次/分钟)           | 60                      |
-| `LOGOS_CODE_SANDBOX`          | MCP 代码执行沙箱模式            | process                |
+| `LOGOS_CODE_SANDBOX`          | MCP 代码执行沙箱模式            | process                 |
+| `CORS_ALLOWED_ORIGINS`        | 允许跨域携带凭据的来源（逗号分隔）      | 空（通配、不允许凭据）             |
+| `TRUSTED_PROXIES`             | 可信反向代理 IP/CIDR（逗号分隔）    | 空（不信任任何代理）              |
 
 完整环境变量列表参见 `.env.example`。
 

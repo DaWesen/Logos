@@ -85,6 +85,28 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **限流分档**：`gateway/middleware` 验证各接口阈值互不相同（登录 5 / 问答 30 / 消息 50 / 默认 600），避免四层同值导致限流失效
 - **群禁言**：`chat/service` 验证永久禁言、临时禁言未到期、已到期、缺少截止时间四种状态的发送拦截
 - **AI 链路**：记忆合并、RRF 混合检索、提示词守卫、语义缓存、上下文压缩、planner、分块、熔断与重试
+- **工具执行器**：只读工具瞬时错误重试、副作用工具不重试、panic 不重试、连续失败熔断、半开恢复/再熔断、调用方取消不触发熔断、缓存命中绕过熔断、同参等待者随自己的 ctx 取消
+- **QQ 媒体中转**（`internal/service/messaging/qqbridge`）：对象键随机化且不含上游文件名、按内容嗅探纠正扩展名、HTML 伪装图片降级为 `application/octet-stream`、`Content-Length` 超限提前拒绝、伪造路径穿越文件名不生效、上传阶段随 ctx 取消、上游失败保留 `[图片]` 文本占位且不写半成品 URL、临时目录只清理超过 1 小时的遗留文件（正在下载的文件不会被误删）、并发槽位耗尽时随 ctx 超时且成功后必定释放
+- **出站媒体地址**：相对路径必须拼上 `gateway.public_base_url`；已有绝对 URL 原样透传；`file://` 等非 http(s) scheme 拒绝；未配置公网基址时只发文本、不发坏链接
+- **配置环境变量**：`MINIO_BUCKET`、`QQBRIDGE_TEMP_DIR`、`LOGOS_PUBLIC_BASE_URL` 确实能覆盖配置文件值，环境变量为空时保留文件值
+- **文件代理安全**：`SafeProxyContentType` 只允许媒体/文档内联；`text/html`、`image/svg+xml`、XHTML、JavaScript 与未知类型统一降级为 `application/octet-stream` 并强制下载；空类型与带 charset 的类型都能正确归一化
+- **对象键校验**：合法 UUID 路径通过；绝对路径、空路径段、`..`、`.`、反斜杠和控制字符全部拒绝
+- **QQ→Bot 路由缓存**：启动预热写入全部绑定；单个 key 写失败不中断其余绑定；不完整绑定跳过；缓存命中不查库；缓存未命中/Redis 故障时回源并回填
+- **QQ 出站消息**：相对媒体路径拼成绝对 URL；绝对 URL 原样透传；`file://` 等 scheme 拒绝；纯图片消息生成 image 段；语音/视频分别生成 record/video 段
+- **快速路径并发**：槽位满时立即返回不阻塞（降级慢路径）；任务完成后槽位释放；异步任务持有事件深拷贝，修改原事件不影响异步侧
+- **快速路径隔离**：后台任务 panic 被 recover 并记录，不退出进程且槽位必定释放
+- **Kafka 跳过语义**：`ErrSkipMessage` 只处理一次并提交 offset，不重试、不进死信；普通错误仍就地重试，达上限后转死信
+- **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
+- **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
+- **快速路径补偿**：可恢复失败（panic、Bot 调用失败、空响应、回复完全发不出去）生成 `bot_recovery` 事件；成功与「未绑定 Bot」不补偿；补偿事件换新 ID、撤销 `qq_direct_bot`、保留 QQ 地址与 Bot 提及、不携带接收者；Chat Service 只补跑 Bot，不重复落库/推送；缺少补偿标记的事件安静忽略
+- **Bot 回复幂等**：`(botID, 源消息ID)` 派生确定性 ID，同输入稳定、不同输入不碰撞、缺字段返回空、长度不超 `varchar(64)`；回复已落库时补偿不再调 Bot；重放守卫只拦 `bot_` 发送者，普通用户重复内容不受影响；主键查询失败时失败开放
+- **QQ 并发与限额配置**：`fast_concurrency`/`media_concurrency`/`media_max_bytes_mb`/`media_timeout_seconds` 支持配置文件与环境变量；nil、未配置、负数回落默认值，0 不会产生无缓冲 chan，超大值被压到硬上限；配置真实作用到 Bridge 与 MediaRelay；非法环境变量保留配置文件值
+- **容量信号与故障信号分离**：媒体排队失败打 `stage=queue`，快速路径槽位打满打 `result=busy`；两条容量告警必须引用这两个专用标签，不能混回 `failed`
+- **数据库重试边界**：`shouldWaitBeforeNextAttempt` 覆盖单次尝试、中间一次、最后一次与非法 attempts；最后一次失败后不再白等一个退避周期
+- **缓存懒加载自愈**：连接失败进入 30s 冷却期而非永久失败；冷却内不重连，冷却结束后恢复；成功实例只连一次且并发首调唯一；`Mapper` 构造时缓存不可用、恢复后仍能写入；缓存不可用时用户/群映射返回确定性 ID，反查返回错误
+- **直连治理**：直连一个无人监听的端口且调用方不设 deadline 时，客户端超时拦截器必须让调用在预算内返回；调用方自带 deadline 时不被放大
+- **重试白名单**：SendMessage/SendBotMessage/CreatePaymentOrder/ConfirmPayment/Deposit/Withdraw/Consume*/Refund/AddFriend/Create*/Delete* 一律不重试；只读方法与幂等覆盖写可重试；方法名为空保守不重试；配置的 `retryable_codes` 真正生效，`UNAVAILABLE` 与 `Unavailable` 两种写法都能匹配；空配置保留最小安全集合
+- **重试白名单可配置**：`grpc.client.retry_safe_methods` 只做加法且被真正读取；空配置下危险写仍不重试；策略持有切片副本，调用方后续修改不影响已建连接；etcd 与直连两条路径都接收同一策略
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
