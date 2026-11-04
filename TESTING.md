@@ -125,6 +125,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **消费生命周期 ctx**：订阅时传入的 ctx 会出现在 handler 收到的 `Message.Context` 上；ES 实体 create/update/delete 与索引统计使用该 ctx，停机时在途写请求可被取消，不再退回 `context.Background()`
 - **Milvus 启动预算**：持续连接失败时在总预算内返回而不是固定重试 60 次；单次尝试超时被剩余预算截断（预算 200ms、单次超时 10s 时仍在 1s 内返回）；首次成功立即返回且不继续重试；日志包含「预算耗尽」结论
 - **日志无配置降级**：`GetLogger` 在没有配置文件时退回 info + stdout，不 panic。单元测试、CLI 工具等未加载配置的场景仍可正常打日志
+- **HTTP 排空兜底**：`Shutdown` 在窗口内完成时在途请求正常返回；handler 超过窗口时 `Serve` 返回错误并调用 `Close` 强制断开，卡住请求的 `r.Context()` 会被取消，不会留下悬挂连接与 goroutine
 - **Outbox 租约**：领取同时写 `lease_owner`；续租 SQL 带 `lease_owner + status` 条件；`MarkSent` 校验 fencing token；`leaseWindow` 在任意 `sendTimeout` 下都覆盖 `size × sendTimeout`；分块条数落在 `[1, 20]` 且不超预算；空 id 列表不发 `IN ()`；`Stop` 在有界时间内返回；每个 relay 实例的 token 唯一
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
