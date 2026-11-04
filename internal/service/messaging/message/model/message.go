@@ -7,15 +7,21 @@ import (
 )
 
 type Message struct {
-	ID            string    `gorm:"primaryKey;size:64;comment:消息ID"`
-	Topic         string    `gorm:"size:64;index;not null;comment:消息主题"`
-	Content       string    `gorm:"type:text;not null;comment:消息内容"`
-	Priority      int       `gorm:"not null;default:2;comment:优先级 1-低 2-普通 3-高 4-紧急"`
-	Headers       string    `gorm:"type:text;comment:头部JSON"`
-	CorrelationID *string   `gorm:"size:128;comment:关联ID"`
-	Timestamp     int64     `gorm:"not null;comment:时间戳"`
-	Status        string    `gorm:"size:32;not null;default:PENDING;comment:状态 PENDING/PROCESSED/FAILED/ACKED"`
-	CreatedAt     time.Time `gorm:"autoCreateTime;comment:创建时间"`
+	ID            string  `gorm:"primaryKey;size:64;comment:消息ID"`
+	Topic         string  `gorm:"size:64;index;not null;comment:消息主题"`
+	Content       string  `gorm:"type:text;not null;comment:消息内容"`
+	Priority      int     `gorm:"not null;default:2;comment:优先级 1-低 2-普通 3-高 4-紧急"`
+	Headers       string  `gorm:"type:text;comment:头部JSON"`
+	CorrelationID *string `gorm:"size:128;comment:关联ID"`
+	Timestamp     int64   `gorm:"not null;comment:时间戳"`
+	Status        string  `gorm:"size:32;not null;default:PENDING;comment:状态 PENDING/PROCESSED/FAILED/ACKED"`
+	// ClaimedBy/LeaseUntil/Attempts 组成消费租约：
+	// 客户端拉取后若崩溃未 ACK，租约到期消息会重新进入可领取集合，
+	// 而不是像旧实现那样被提前标成 PROCESSED 后永久丢失。
+	ClaimedBy  string     `gorm:"size:128;index;comment:当前领取者（消费组）"`
+	LeaseUntil *time.Time `gorm:"index;comment:租约到期时间"`
+	Attempts   int        `gorm:"not null;default:0;comment:已投递次数"`
+	CreatedAt  time.Time  `gorm:"autoCreateTime;comment:创建时间"`
 }
 
 func (Message) TableName() string {

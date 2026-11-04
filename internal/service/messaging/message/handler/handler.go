@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"Logos/internal/service/messaging/message/service"
 	pbCommon "Logos/proto_gen/common"
@@ -191,7 +192,7 @@ func (s *MessageServiceImpl) AcknowledgeMessage(ctx context.Context, req *pb.Ack
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
 
 	if ackErr := s.MessageService.AcknowledgeMessage(ctx, req.ConsumerGroup, req.MessageId, int32(req.Topic)); ackErr != nil {
-		resp.StatusCode = 500
+		resp.StatusCode = ackErrorCode(ackErr)
 		resp.StatusMessage = ackErr.Error()
 	}
 	return resp, nil
@@ -202,10 +203,17 @@ func (s *MessageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, req *
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
 
 	if ackErr := s.MessageService.BatchAcknowledgeMessages(ctx, req.ConsumerGroup, req.MessageIds, int32(req.Topic)); ackErr != nil {
-		resp.StatusCode = 500
+		resp.StatusCode = ackErrorCode(ackErr)
 		resp.StatusMessage = ackErr.Error()
 	}
 	return resp, nil
+}
+
+func ackErrorCode(err error) int32 {
+	if errors.Is(err, service.ErrMessageNotClaimed) {
+		return 404
+	}
+	return 500
 }
 
 // GetMessageStats implements the MessageServiceImpl interface.

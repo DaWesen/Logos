@@ -22,6 +22,13 @@ import (
 // 造成长事务、锁表与内存放大。
 const maxBatchSize = 100
 
+// claimLease 是消费租约时长。客户端拉取后必须在租约内 ACK，
+// 否则消息会被其他消费者重新领取（至少一次投递）。
+const claimLease = 60 * time.Second
+
+// ErrMessageNotClaimed 由 dao 透出，供 handler 映射成 404/409 而不是一律 500。
+var ErrMessageNotClaimed = dao.ErrMessageNotClaimed
+
 type QuestionService interface {
 	AskQuestion(ctx context.Context, question string, userID *string) (interface{ GetID() string }, error)
 }
@@ -235,17 +242,9 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 		limit = 10
 	}
 
-	msgs, err := s.repo.ListPendingMessagesByTopic(ctx, topicStr, limit)
+	msgs, err := s.repo.ClaimPendingMessages(ctx, topicStr, limit, consumerGroup, time.Now().Add(claimLease))
 	if err != nil {
-		return nil, fmt.Errorf("查询待处理消息失败: %w", err)
-	}
-
-	ids := make([]string, 0, len(msgs))
-	for _, msg := range msgs {
-		ids = append(ids, msg.ID)
-	}
-	if err := s.repo.UpdateMessagesStatus(ctx, ids, "PROCESSED"); err != nil {
-		return nil, fmt.Errorf("标记消息已处理失败: %w", err)
+		return nil, fmt.Errorf("领取待处理消息失败: %w", err)
 	}
 
 	return msgs, nil
@@ -255,7 +254,10 @@ func (s *messageServiceImpl) AcknowledgeMessage(ctx context.Context, consumerGro
 	logger.Info("operation",
 		logger.StringField("message_id", messageID))
 
-	return s.repo.UpdateMessageStatus(ctx, messageID, "ACKED")
+	if err := s.repo.AckMessage(ctx, messageID, consumerGroup); err != nil {
+		return fmt.Errorf("确认消息失败: %w", err)
+	}
+	return nil
 }
 
 func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consumerGroup string, messageIDs []string, topic int32) error {
@@ -266,7 +268,7 @@ func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consu
 	if len(ids) == 0 {
 		return nil
 	}
-	if err := s.repo.UpdateMessagesStatus(ctx, ids, "ACKED"); err != nil {
+	if err := s.repo.AckMessages(ctx, ids, consumerGroup); err != nil {
 		return fmt.Errorf("批量确认消息失败: %w", err)
 	}
 	return nil

@@ -97,4 +97,3 @@ func TestBatchSendMessage_ResponseEchoesActualTopic(t *testing.T) {
 		t.Fatalf("第二条 topic = %v, want SYSTEM_EVENT", resp.Responses[1].Topic)
 	}
 }
-

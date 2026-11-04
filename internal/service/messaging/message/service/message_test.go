@@ -45,17 +45,44 @@ type stubMessageRepo struct {
 	lastStatus string
 	batchErr   error
 	updateErr  error
+
+	claimCalls   int
+	claimedTopic string
+	claimedGroup string
+	leaseUntil   time.Time
+	claimLimit   int
+	claimResult  []*model.Message
+	claimErr     error
 }
 
-func (s *stubMessageRepo) UpdateMessagesStatus(_ context.Context, ids []string, status string) error {
+func (s *stubMessageRepo) AckMessages(_ context.Context, ids []string, _ string) error {
 	s.batchCalls++
 	s.lastIDs = append([]string(nil), ids...)
-	s.lastStatus = status
+	s.lastStatus = "ACKED"
 	return s.batchErr
 }
 
 func (s *stubMessageRepo) UpdateMessageStatus(_ context.Context, _ string, _ string) error {
 	return s.updateErr
+}
+
+func (s *stubMessageRepo) AckMessage(_ context.Context, _ string, _ string) error {
+	return s.updateErr
+}
+
+func (s *stubMessageRepo) ClaimPendingMessages(
+	_ context.Context,
+	topic string,
+	limit int,
+	consumerGroup string,
+	leaseUntil time.Time,
+) ([]*model.Message, error) {
+	s.claimCalls++
+	s.claimedTopic = topic
+	s.claimLimit = limit
+	s.claimedGroup = consumerGroup
+	s.leaseUntil = leaseUntil
+	return s.claimResult, s.claimErr
 }
 
 // 内部 topic 名与 Kafka topic 必须一一对应。历史上 outbox 直接把
@@ -283,6 +310,61 @@ func TestBatchSendMessage_RejectsOversizedBatch(t *testing.T) {
 	}, maxBatchSize+1)
 	if _, err := svc.BatchSendMessage(context.Background(), inputs); err == nil {
 		t.Fatal("超过批量上限应直接拒绝，避免长事务")
+	}
+}
+
+// 消费必须先领取再返回：旧实现返回前就把消息改成 PROCESSED，
+// 客户端崩溃未 ACK 时消息再也不会被任何消费者看到。
+func TestConsumeMessages_ClaimsWithLeaseInsteadOfPreMarking(t *testing.T) {
+	repo := &stubMessageRepo{
+		claimResult: []*model.Message{{ID: "m1", Topic: "QA_REQUEST"}},
+	}
+	svc := &messageServiceImpl{repo: repo}
+
+	before := time.Now()
+	msgs, err := svc.ConsumeMessages(context.Background(), "group-a", 3, 10, 0)
+	if err != nil {
+		t.Fatalf("领取消息不应报错: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != "m1" {
+		t.Fatalf("返回消息不符: %+v", msgs)
+	}
+	if repo.claimCalls != 1 {
+		t.Fatalf("应调用一次原子领取, calls = %d", repo.claimCalls)
+	}
+	if repo.claimedTopic != "QA_REQUEST" || repo.claimedGroup != "group-a" {
+		t.Fatalf("领取参数错误: topic=%q group=%q", repo.claimedTopic, repo.claimedGroup)
+	}
+	if repo.claimLimit != 10 {
+		t.Fatalf("默认 limit = %d, want 10", repo.claimLimit)
+	}
+	if !repo.leaseUntil.After(before.Add(claimLease - time.Second)) {
+		t.Fatalf("租约到期时间过早: %v", repo.leaseUntil)
+	}
+	if repo.batchCalls != 0 {
+		t.Fatalf("不应在返回前额外标记状态, calls = %d", repo.batchCalls)
+	}
+}
+
+func TestConsumeMessages_RejectsInvalidTopicAndPropagatesClaimError(t *testing.T) {
+	svc := &messageServiceImpl{repo: &stubMessageRepo{}}
+	if _, err := svc.ConsumeMessages(context.Background(), "g", 7, 10, 0); err == nil {
+		t.Fatal("越界 topic 应被拒绝")
+	}
+
+	repo := &stubMessageRepo{claimErr: errors.New("db down")}
+	svc = &messageServiceImpl{repo: repo}
+	if _, err := svc.ConsumeMessages(context.Background(), "g", 3, 10, 0); err == nil {
+		t.Fatal("领取失败必须上抛，不能返回空列表让客户端以为队列为空")
+	}
+}
+
+func TestAcknowledgeMessage_PropagatesNotClaimed(t *testing.T) {
+	repo := &stubMessageRepo{updateErr: dao.ErrMessageNotClaimed}
+	svc := &messageServiceImpl{repo: repo}
+	err := svc.AcknowledgeMessage(context.Background(), "g", "m1", 3)
+	if !errors.Is(err, dao.ErrMessageNotClaimed) {
+		t.Fatalf("应保留 not claimed 语义供 handler 映射 404, got %v", err)
 	}
 }
 

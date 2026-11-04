@@ -3,19 +3,26 @@ package dao
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"Logos/internal/service/messaging/message/model"
 
 	"gorm.io/gorm"
 )
 
+// ErrMessageNotClaimed 表示消息不存在、不在可确认状态，或已被其他消费组领取。
+var ErrMessageNotClaimed = errors.New("message not found or not claimed by this consumer group")
+
 type MessageRepository interface {
 	SaveMessage(ctx context.Context, msg *model.Message) error
 	SaveMessages(ctx context.Context, msgs []*model.Message) error
 	GetMessage(ctx context.Context, id string) (*model.Message, error)
 	UpdateMessageStatus(ctx context.Context, id string, status string) error
-	UpdateMessagesStatus(ctx context.Context, ids []string, status string) error
+	ClaimPendingMessages(ctx context.Context, topic string, limit int, consumerGroup string, leaseUntil time.Time) ([]*model.Message, error)
+	AckMessage(ctx context.Context, id string, consumerGroup string) error
+	AckMessages(ctx context.Context, ids []string, consumerGroup string) error
 	ListMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
 	ListPendingMessages(ctx context.Context, limit int) ([]*model.Message, error)
 	ListPendingMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
@@ -70,19 +77,84 @@ func (r *messageRepository) UpdateMessageStatus(ctx context.Context, id string, 
 	return r.db.WithContext(ctx).Model(&model.Message{}).Where("id = ?", id).Update("status", status).Error
 }
 
-// UpdateMessagesStatus 用一条 UPDATE 完成批量确认。
+// ClaimPendingMessages 原子领取一批消息。
 //
-// 逐条 UpdateMessageStatus 是 N 次数据库往返；调用方还容易「失败 continue、
-// 最后返回 nil」，让客户端把部分失败当成全部成功。单条语句要么全部生效，
-// 要么返回错误由上游重试。
-func (r *messageRepository) UpdateMessagesStatus(ctx context.Context, ids []string, status string) error {
+// 旧实现先 SELECT PENDING 再 UPDATE 成 PROCESSED：两个消费者会拿到同一批消息，
+// 而且客户端崩溃未 ACK 时消息已经不在待处理集合里，等于 at-most-once。
+// 现在用 FOR UPDATE SKIP LOCKED 让并发消费者各领各的，并写入租约：
+// 租约过期后（客户端崩溃/超时）消息重新可领取，确认成功才进入 ACKED 终态。
+func (r *messageRepository) ClaimPendingMessages(
+	ctx context.Context,
+	topic string,
+	limit int,
+	consumerGroup string,
+	leaseUntil time.Time,
+) ([]*model.Message, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	var msgs []*model.Message
+	err := r.db.WithContext(ctx).
+		Raw(claimPendingSQL, topic, time.Now(), limit, consumerGroup, leaseUntil).
+		Scan(&msgs).Error
+	return msgs, err
+}
+
+// claimPendingSQL 一条语句完成「筛选 + 行锁 + 更新 + 返回」：
+// CTE 里 FOR UPDATE SKIP LOCKED 保证并发消费者各领各的，不会重复投递；
+// UPDATE ... RETURNING 直接返回更新后的行，省掉第二次查询。
+const claimPendingSQL = `
+WITH claimed AS (
+	SELECT id FROM queue_messages
+	WHERE topic = ?
+	  AND (status = 'PENDING' OR (status = 'PROCESSED' AND lease_until IS NOT NULL AND lease_until < ?))
+	ORDER BY priority DESC, timestamp ASC
+	LIMIT ?
+	FOR UPDATE SKIP LOCKED
+)
+UPDATE queue_messages AS m
+SET status = 'PROCESSED', claimed_by = ?, lease_until = ?, attempts = m.attempts + 1
+FROM claimed
+WHERE m.id = claimed.id
+RETURNING m.*`
+
+// AckMessage 把消息置为 ACKED 终态。
+// 只有处于 PROCESSED/ACKED 且属于本消费组（或历史无领取者的行）才能确认，
+// 避免租约过期后旧消费者迟到的 ACK 把新消费者的处理结果覆盖掉。
+func (r *messageRepository) AckMessage(ctx context.Context, id string, consumerGroup string) error {
+	res := r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id = ? AND status IN ?", id, []string{"PROCESSED", "ACKED"}).
+		Where("claimed_by = ? OR claimed_by = ''", consumerGroup).
+		Updates(map[string]interface{}{"status": "ACKED", "lease_until": nil})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrMessageNotClaimed
+	}
+	return nil
+}
+
+// AckMessages 用一条 UPDATE 完成批量确认，并校验每条都真实生效。
+// 逐条更新既多 N 次往返，失败只 continue 还会让客户端误以为整批已确认。
+func (r *messageRepository) AckMessages(ctx context.Context, ids []string, consumerGroup string) error {
 	if len(ids) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).
+	res := r.db.WithContext(ctx).
 		Model(&model.Message{}).
-		Where("id IN ?", ids).
-		Update("status", status).Error
+		Where("id IN ? AND status IN ?", ids, []string{"PROCESSED", "ACKED"}).
+		Where("claimed_by = ? OR claimed_by = ''", consumerGroup).
+		Updates(map[string]interface{}{"status": "ACKED", "lease_until": nil})
+	if res.Error != nil {
+		return res.Error
+	}
+	if int(res.RowsAffected) != len(ids) {
+		return fmt.Errorf("%w: %d/%d acknowledged", ErrMessageNotClaimed, res.RowsAffected, len(ids))
+	}
+	return nil
 }
 
 func (r *messageRepository) ListMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error) {
