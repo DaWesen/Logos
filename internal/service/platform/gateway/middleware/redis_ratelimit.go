@@ -227,51 +227,91 @@ func ConcurrentRequestLimit(cache cache.Cache, maxConcurrent int, timeout time.D
 	}
 }
 
+// burstCache 是突发保护真正用到的最小 Redis 能力集。
+// 收窄接口是为了能用一个轻量 fake 覆盖「封禁键是否真的被读取」这类回归。
+type burstCache interface {
+	Exists(ctx context.Context, key string) (bool, error)
+	IncrBy(ctx context.Context, key string, value int64) (int64, error)
+	Expire(ctx context.Context, key string, expiration time.Duration) error
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+}
+
+type burstGuard struct {
+	cache     burstCache
+	threshold int
+	cooldown  time.Duration
+	local     *ratelimit.LocalLimiter
+}
+
+func newBurstGuard(c burstCache, threshold int, cooldown time.Duration) *burstGuard {
+	if threshold < 1 {
+		threshold = 1
+	}
+	if cooldown <= 0 {
+		cooldown = time.Minute
+	}
+	return &burstGuard{
+		cache:     c,
+		threshold: threshold,
+		cooldown:  cooldown,
+		local:     localFallback,
+	}
+}
+
+// allow 判断本次请求是否放行，degraded 表示 Redis 不可用、已退化为单机窗口。
+//
+// 这里必须先读 blocked:<ip>：旧实现只写不读，所谓「超限后短期封禁」从未生效，
+// 攻击者只要等到 burst 计数窗口过期就能继续打。
+func (g *burstGuard) allow(ctx context.Context, ip string) (allowed, degraded bool) {
+	burstKey := fmt.Sprintf("burst:%s", ip)
+	blockedKey := fmt.Sprintf("blocked:%s", ip)
+
+	if blocked, err := g.cache.Exists(ctx, blockedKey); err == nil && blocked {
+		return false, false
+	}
+
+	current, err := g.cache.IncrBy(ctx, burstKey, 1)
+	if err != nil {
+		// Redis 不可用时退化为单机固定窗口：窗口内超限同样拒绝，
+		// 不能因为依赖故障就变成无限流。
+		return g.local.Allow(burstKey, g.threshold, g.cooldown), true
+	}
+
+	if current == 1 {
+		// 封禁状态必须独立于请求生命周期：请求取消后仍要落盘，
+		// 否则攻击者可以用「发起即断开」绕过封禁。
+		_ = g.cache.Expire(context.Background(), burstKey, g.cooldown)
+	}
+
+	if current > int64(g.threshold) {
+		// 封禁时长为窗口的两倍：让攻击者在计数窗口过期后仍被挡一段时间。
+		_ = g.cache.Set(context.Background(), blockedKey, "1", g.cooldown*2)
+		return false, false
+	}
+	return true, false
+}
+
 func BurstProtection(cache cache.Cache, threshold int, cooldown time.Duration) gin.HandlerFunc {
+	if cache == nil {
+		return func(c *gin.Context) { c.Next() }
+	}
+	guard := newBurstGuard(cache, threshold, cooldown)
+
 	return func(c *gin.Context) {
-		if cache == nil {
-			c.Next()
-			return
-		}
 		ip := c.ClientIP()
-
-		burstKey := fmt.Sprintf("burst:%s", ip)
-
-		current, err := cache.IncrBy(c.Request.Context(), burstKey, 1)
-		if err != nil {
+		allowed, degraded := guard.allow(c.Request.Context(), ip)
+		if degraded {
 			obs.RecordRateLimitDegraded(c.Request.Context(), "burst")
 			logger.Warn("burst protection degraded to local limiter",
-				logger.StringField("ip", ip),
-				logger.ErrorField(err))
-			if localFallback.Allow(burstKey, threshold, cooldown) {
-				c.Next()
-				return
-			}
+				logger.StringField("ip", ip))
+		}
+		if !allowed {
+			logger.Warn("burst protection blocked",
+				logger.StringField("ip", ip))
 			c.JSON(http.StatusForbidden, model.Error(403, "operation"))
 			c.Abort()
 			return
 		}
-
-		if current == 1 {
-			// 封禁状态必须独立于请求生命周期：请求取消后仍要落盘，
-			// 否则攻击者可以用「发起即断开」绕过封禁。
-			cache.Expire(context.Background(), burstKey, cooldown)
-		}
-
-		if current > int64(threshold) {
-			logger.Warn("operation",
-				logger.StringField("ip", ip),
-				logger.Int64Field("count", current))
-
-			blockedKey := fmt.Sprintf("blocked:%s", ip)
-			// 同上：封禁写入不随请求取消而回滚。
-			cache.Set(context.Background(), blockedKey, "1", cooldown*2)
-
-			c.JSON(http.StatusForbidden, model.Error(403, "operation"))
-			c.Abort()
-			return
-		}
-
 		c.Next()
 	}
 }
