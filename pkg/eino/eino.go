@@ -3,7 +3,6 @@ package eino
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	openaiembed "github.com/cloudwego/eino-ext/components/embedding/openai"
@@ -14,6 +13,7 @@ import (
 
 	"Logos/config"
 	"Logos/pkg/governance"
+	"Logos/pkg/lazyinit"
 	"Logos/pkg/logger"
 )
 
@@ -25,35 +25,34 @@ type EinoManager struct {
 }
 
 var (
-	einoInstance *EinoManager
-	einoOnce     sync.Once
+	// 初始化失败不能被永久缓存：否则 GetEinoManager 会永久返回空对象，
+	// 后续调用看起来「成功」但实际不可用。
+	einoResource = lazyinit.New(lazyinit.Options{
+		RetryInterval: 5 * time.Second,
+	}, initEinoManager)
 )
 
 func InitEino() (*EinoManager, error) {
-	var err error
-	einoOnce.Do(func() {
-		cfg := config.GetConfig()
+	return einoResource.Get()
+}
 
-		einoInstance, err = NewEinoManager(
-			cfg.Eino.APIKey,
-			cfg.Eino.Model,
-			cfg.Eino.BaseURL,
-			cfg.Eino.EmbeddingModel,
-		)
-	})
-	return einoInstance, err
+func initEinoManager() (*EinoManager, error) {
+	cfg := config.GetConfig()
+	return NewEinoManager(
+		cfg.Eino.APIKey,
+		cfg.Eino.Model,
+		cfg.Eino.BaseURL,
+		cfg.Eino.EmbeddingModel,
+	)
 }
 
 func GetEinoManager() *EinoManager {
-	if einoInstance == nil {
-		einoManager, err := InitEino()
-		if err != nil {
-			logger.Warn("获取 EinoManager 失败", logger.ErrorField(err))
-			return &EinoManager{}
-		}
-		return einoManager
+	einoManager, err := InitEino()
+	if err != nil {
+		logger.Warn("获取 EinoManager 失败", logger.ErrorField(err))
+		return &EinoManager{}
 	}
-	return einoInstance
+	return einoManager
 }
 
 func NewEinoManager(apiKey, modelName, baseURL, embeddingModel string) (*EinoManager, error) {

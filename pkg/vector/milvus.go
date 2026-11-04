@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"Logos/config"
+	"Logos/pkg/lazyinit"
 	"Logos/pkg/logger"
 
 	"github.com/milvus-io/milvus/client/v2/column"
@@ -21,8 +21,8 @@ type MilvusManager struct {
 }
 
 var (
-	milvusInstance *MilvusManager
-	milvusOnce     sync.Once
+	// 初始化失败不能被永久缓存：否则第二次调用返回 (nil, nil)。
+	milvusResource = lazyinit.New(lazyinit.Options{}, initMilvusManager)
 )
 
 func isCollectionNotFound(err error) bool {
@@ -36,12 +36,12 @@ func isCollectionNotFound(err error) bool {
 }
 
 func InitMilvus() (*MilvusManager, error) {
-	var err error
-	milvusOnce.Do(func() {
-		cfg := config.GetConfig()
-		milvusInstance, err = NewMilvusManager(cfg.Milvus.Host, cfg.Milvus.Port)
-	})
-	return milvusInstance, err
+	return milvusResource.Get()
+}
+
+func initMilvusManager() (*MilvusManager, error) {
+	cfg := config.GetConfig()
+	return NewMilvusManager(cfg.Milvus.Host, cfg.Milvus.Port)
 }
 
 func NewMilvusManager(host string, port int) (*MilvusManager, error) {

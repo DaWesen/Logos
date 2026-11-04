@@ -1,19 +1,19 @@
-﻿package graph
+package graph
 
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"Logos/config"
+	"Logos/pkg/lazyinit"
 	"Logos/pkg/logger"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 var (
-	neo4jDriver neo4j.DriverWithContext
-	neo4jOnce   sync.Once
+	// 初始化失败不能被永久缓存：否则第二次调用返回 (nil, nil)。
+	neo4jResource = lazyinit.New(lazyinit.Options{}, initNeo4jDriver)
 )
 
 type Neo4jManager struct {
@@ -31,32 +31,33 @@ type PathResult struct {
 }
 
 func InitNeo4j() (neo4j.DriverWithContext, error) {
-	var err error
-	neo4jOnce.Do(func() {
-		cfg := config.GetConfig()
-		neo4jConfig := cfg.Neo4j
+	return neo4jResource.Get()
+}
 
-		neo4jDriver, err = neo4j.NewDriverWithContext(
-			neo4jConfig.URI,
-			neo4j.BasicAuth(neo4jConfig.User, neo4jConfig.Password, ""),
-		)
-		if err != nil {
-			err = fmt.Errorf("failed to create neo4j driver: %w", err)
-			logger.Error("创建Neo4j驱动失败", logger.ErrorField(err))
-			return
-		}
+func initNeo4jDriver() (neo4j.DriverWithContext, error) {
+	cfg := config.GetConfig()
+	neo4jConfig := cfg.Neo4j
 
-		err = neo4jDriver.VerifyConnectivity(context.Background())
-		if err != nil {
-			err = fmt.Errorf("failed to verify neo4j connectivity: %w", err)
-			logger.Error("Neo4j连接验证失败", logger.ErrorField(err))
-			return
-		}
+	driver, err := neo4j.NewDriverWithContext(
+		neo4jConfig.URI,
+		neo4j.BasicAuth(neo4jConfig.User, neo4jConfig.Password, ""),
+	)
+	if err != nil {
+		err = fmt.Errorf("failed to create neo4j driver: %w", err)
+		logger.Error("创建Neo4j驱动失败", logger.ErrorField(err))
+		return nil, err
+	}
 
-		logger.Info("Neo4j初始化成功")
-	})
+	if err := driver.VerifyConnectivity(context.Background()); err != nil {
+		// 驱动创建成功但连不上时，必须关闭它，否则每次重试都会泄漏连接与 goroutine。
+		_ = driver.Close(context.Background())
+		err = fmt.Errorf("failed to verify neo4j connectivity: %w", err)
+		logger.Error("Neo4j连接验证失败", logger.ErrorField(err))
+		return nil, err
+	}
 
-	return neo4jDriver, err
+	logger.Info("Neo4j初始化成功")
+	return driver, nil
 }
 
 func NewNeo4jManager(driver neo4j.DriverWithContext) *Neo4jManager {

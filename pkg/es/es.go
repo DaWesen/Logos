@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"Logos/config"
+	"Logos/pkg/lazyinit"
 	"Logos/pkg/obs"
 
 	"github.com/elastic/go-elasticsearch/v8"
@@ -17,8 +17,11 @@ import (
 )
 
 var (
-	esClient *elasticsearch.Client
-	esOnce   sync.Once
+	// 初始化失败不能被永久缓存：否则第二次调用返回 (nil, nil)，
+	// 调用方以为成功，随后在 nil client 上 panic。
+	esResource = lazyinit.New(lazyinit.Options{
+		RetryInterval: 5 * time.Second,
+	}, initElasticsearchClient)
 )
 
 type SearchQuery struct {
@@ -49,40 +52,37 @@ type ESManager struct {
 }
 
 func InitElasticsearch() (*elasticsearch.Client, error) {
-	var err error
-	esOnce.Do(func() {
-		cfg := config.GetConfig()
-		esConfig := cfg.Elasticsearch
+	return esResource.Get()
+}
 
-		esCfg := elasticsearch.Config{
-			Addresses: []string{esConfig.URL},
-		}
+func initElasticsearchClient() (*elasticsearch.Client, error) {
+	cfg := config.GetConfig()
+	esConfig := cfg.Elasticsearch
 
-		if esConfig.Username != "" && esConfig.Password != "" {
-			esCfg.Username = esConfig.Username
-			esCfg.Password = esConfig.Password
-		}
+	esCfg := elasticsearch.Config{
+		Addresses: []string{esConfig.URL},
+	}
 
-		esClient, err = elasticsearch.NewClient(esCfg)
-		if err != nil {
-			err = fmt.Errorf("failed to create elasticsearch client: %w", err)
-			return
-		}
+	if esConfig.Username != "" && esConfig.Password != "" {
+		esCfg.Username = esConfig.Username
+		esCfg.Password = esConfig.Password
+	}
 
-		res, pingErr := esClient.Ping()
-		if pingErr != nil {
-			err = fmt.Errorf("failed to ping elasticsearch: %w", pingErr)
-			return
-		}
-		defer res.Body.Close()
+	client, err := elasticsearch.NewClient(esCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create elasticsearch client: %w", err)
+	}
 
-		if res.IsError() {
-			err = fmt.Errorf("elasticsearch ping failed: %s", res.Status())
-			return
-		}
-	})
+	res, err := client.Ping()
+	if err != nil {
+		return nil, fmt.Errorf("failed to ping elasticsearch: %w", err)
+	}
+	defer res.Body.Close()
 
-	return esClient, err
+	if res.IsError() {
+		return nil, fmt.Errorf("elasticsearch ping failed: %s", res.Status())
+	}
+	return client, nil
 }
 
 func NewESManager(client *elasticsearch.Client) *ESManager {
