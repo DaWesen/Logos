@@ -27,6 +27,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
+	"Logos/pkg/pagination"
 	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/components/model"
@@ -600,7 +601,7 @@ func (s *botServiceImpl) GetBot(ctx context.Context, id string) (*botmodel.Bot, 
 }
 
 func (s *botServiceImpl) ListBots(ctx context.Context, userID, botType, status string, page, pageSize int) ([]*botmodel.Bot, int64, error) {
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	bots, err := s.repo.ListBots(ctx, userID, botType, status, offset, pageSize)
 	if err != nil {
 		logger.Error("获取 Bot 列表失败", logger.ErrorField(err))
@@ -753,7 +754,7 @@ func (s *botServiceImpl) GetConversation(ctx context.Context, id string) (*botmo
 }
 
 func (s *botServiceImpl) ListConversations(ctx context.Context, botID, userID string, page, pageSize int) ([]*botmodel.Conversation, int64, error) {
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	conversations, err := s.repo.ListConversations(ctx, botID, userID, offset, pageSize)
 	if err != nil {
 		logger.Error("获取对话列表失败", logger.ErrorField(err))
@@ -873,7 +874,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	}
 
 	agentStartTime := time.Now()
-	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID)
+	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID, content)
 	if err != nil {
 		logger.Error("获取 Agent 失败", logger.ErrorField(err))
 		return "", "", 0, 0, fmt.Errorf("Agent 创建失败，请检查 Bot 的 API 配置: %w", err)
@@ -1082,7 +1083,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return conversationID, nil
 	}
 
-	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID)
+	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID, content)
 	if err != nil {
 		logger.Error("获取 Agent 失败", logger.ErrorField(err))
 		return "", ErrInternalServer
@@ -1342,7 +1343,7 @@ func (s *botServiceImpl) GetPrompt(ctx context.Context, id string) (*botmodel.Pr
 }
 
 func (s *botServiceImpl) ListPrompts(ctx context.Context, userID, promptType string, isPreset, isPublic *bool, page, pageSize int) ([]*botmodel.Prompt, int64, error) {
-	offset := (page - 1) * pageSize
+	offset, pageSize := pagination.Offset(page, pageSize)
 	prompts, err := s.repo.ListPrompts(ctx, userID, promptType, isPreset, isPublic, offset, pageSize)
 	if err != nil {
 		logger.Error("获取提示词列表失败", logger.ErrorField(err))
@@ -1459,8 +1460,8 @@ func (s *botServiceImpl) WithTransaction(ctx context.Context, fn func(txService 
 	})
 }
 
-func (s *botServiceImpl) getOrCreateAgentWithMemory(ctx context.Context, bot *botmodel.Bot, userID string) (agent.BotAgent, error) {
-	enhancedPrompt := s.buildMemoryEnhancedSystemPrompt(ctx, bot, userID)
+func (s *botServiceImpl) getOrCreateAgentWithMemory(ctx context.Context, bot *botmodel.Bot, userID, query string) (agent.BotAgent, error) {
+	enhancedPrompt := s.buildMemoryEnhancedSystemPrompt(ctx, bot, userID, query)
 
 	cfg := &agent.AgentConfig{
 		ID:            bot.ID,
@@ -1705,7 +1706,7 @@ func (s *botServiceImpl) createChatModelForBot(bot *botmodel.Bot) (model.BaseCha
 	return p.NewChatModel(bot.APIKey, bot.BaseURL, bot.Model)
 }
 
-func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bot *botmodel.Bot, userID string) string {
+func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bot *botmodel.Bot, userID, query string) string {
 	basePrompt := bot.SystemPrompt
 	if basePrompt == "" {
 		basePrompt = "你是一个有用的AI助手。"
@@ -1716,7 +1717,7 @@ func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bo
 	}
 
 	memMgr := botmemory.GetMemoryManager(s.repo, s.einoManager, s.agentManager)
-	memoryPrompt := memMgr.BuildMemoryPrompt(ctx, userID, bot.ID)
+	memoryPrompt := memMgr.BuildMemoryPromptFor(ctx, userID, bot.ID, query)
 	if memoryPrompt == "" {
 		return basePrompt
 	}

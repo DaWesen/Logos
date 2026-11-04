@@ -18,7 +18,12 @@ type BotToolInput struct {
 }
 
 func NewBotTool(botAgent agent.BotAgent) (tool.InvokableTool, error) {
-	name := sanitizeToolName(botAgent.GetName())
+	return newBotToolNamed(botAgent, botToolBaseName(botAgent.GetName()))
+}
+
+// newBotToolNamed 用调用方指定的函数名构造工具。
+// 名字由装配方统一分配，才能在「多个 Bot 名清洗后塌缩成同一个」时做重名消解。
+func newBotToolNamed(botAgent agent.BotAgent, name string) (tool.InvokableTool, error) {
 	description := fmt.Sprintf("Bot: %s. %s", botAgent.GetName(), botAgent.GetDescription())
 
 	t, err := utils.InferTool(name, description, func(ctx context.Context, input *BotToolInput) (string, error) {
@@ -45,8 +50,9 @@ func NewBotTool(botAgent agent.BotAgent) (tool.InvokableTool, error) {
 
 func BuildBotTools(agents []agent.BotAgent) []tool.BaseTool {
 	var tools []tool.BaseTool
+	names := toolNameSet{}
 	for _, a := range agents {
-		t, err := NewBotTool(a)
+		t, err := newBotToolNamed(a, names.unique(botToolBaseName(a.GetName())))
 		if err != nil {
 			logger.Warn("创建 BotTool 失败",
 				logger.StringField("bot", a.GetName()),
@@ -59,6 +65,9 @@ func BuildBotTools(agents []agent.BotAgent) []tool.BaseTool {
 }
 
 func sanitizeName(name string) string {
+	// 先 trim 再替换：纯空白名会被逐个替换成下划线（"   " → "___"），
+	// 最终产出 bot____ 这种既不好看又可能与其他兜底名冲突的函数名。
+	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, " ", "_")
 	var sb strings.Builder
 	for _, r := range name {
@@ -74,11 +83,18 @@ func sanitizeName(name string) string {
 }
 
 func sanitizeToolName(name string) string {
+	return botToolBaseName(name)
+}
+
+// botToolBaseName 生成 Bot 工具的完整函数名。
+// 长度预算必须覆盖 "bot_" 前缀：旧实现先截断到 64 再拼前缀，最终 68 个字符，
+// 超过供应商的函数名上限后整次请求 400，且只发生在「名字很长」这一小撮 Bot 上。
+func botToolBaseName(name string) string {
 	cleaned := sanitizeName(name)
 	if cleaned == "" {
 		cleaned = "bot"
 	}
-	return "bot_" + cleaned
+	return truncateToolName("bot_"+cleaned, maxToolNameRunes)
 }
 
 var _ tool.InvokableTool = (*botToolWrapper)(nil)

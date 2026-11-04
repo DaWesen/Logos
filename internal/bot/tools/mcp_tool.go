@@ -117,6 +117,9 @@ func newMCPToolNamed(mcpTool mcp_server.Tool, name string) (tool.InvokableTool, 
 func BuildMCPTools(registry *mcp_server.ToolRegistry) []tool.BaseTool {
 	var tools []tool.BaseTool
 	names := toolNameSet{}
+	// MCP 工具来自外部进程，超时与 panic 隔离是硬要求；
+	// 但不做缓存/同参合并——外部工具可能带副作用，合并会吞掉真实操作。
+	inv := NewInvoker(DefaultToolTimeout)
 	for _, mcpTool := range registry.List() {
 		t, err := newMCPToolNamed(mcpTool, names.unique("mcp_"+mcpTool.Name()))
 		if err != nil {
@@ -125,7 +128,7 @@ func BuildMCPTools(registry *mcp_server.ToolRegistry) []tool.BaseTool {
 				logger.ErrorField(err))
 			continue
 		}
-		tools = append(tools, t)
+		tools = append(tools, inv.Wrap(t, ToolPolicy{}))
 	}
 	return tools
 }

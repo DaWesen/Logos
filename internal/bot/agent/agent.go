@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"Logos/internal/bot/toolbudget"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 
@@ -22,6 +23,11 @@ import (
 // 这是一个必须显式上抛的失败态：调用方（Bot 服务）会把返回内容原样存库并计费，
 // 空字符串 + nil error 会被当成「回答成功」，用户看到一条空白消息，监控上却是 100% 成功。
 var ErrEmptyResponse = errors.New("agent 未产出任何内容")
+
+// ErrEmptyRequest 组装后的消息里没有任何对话轮次（只有 system prompt 或全空）。
+// 大多数供应商对「只有 system 的消息」直接 400，提前拦下能把错误定位到调用方，
+// 而不是变成一条看起来像模型故障的上游报错。
+var ErrEmptyRequest = errors.New("请求中没有有效的对话消息")
 
 // agentEventIter 事件源的最小抽象（adk.AsyncIterator 天然满足）。
 // 单独抽出来只为一件事：让「事件 → 增量输出」这段纯逻辑能脱离真实 LLM 单测，
@@ -182,10 +188,18 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 	if a.run == nil {
 		return "", fmt.Errorf("agent runner not initialized")
 	}
+	if !hasConversationTurn(messages) {
+		return "", ErrEmptyRequest
+	}
 
 	logger.Info("Bot chat request",
 		logger.StringField("bot", a.name),
 		logger.IntField("messages_count", len(messages)))
+
+	// 每一轮对话挂一份新的工具结果预算：ReAct 循环里模型可能并行调用多个工具，
+	// 单条结果的硬上限挡不住「N 条加起来撑爆上下文」。轮次结束即失效，
+	// 不会跨轮累积，也避免把长对话的旧额度算到新一轮。
+	ctx, turn := toolbudget.WithTurn(ctx, toolbudget.DefaultTurnBudget)
 
 	iter := a.run(ctx, messages)
 
@@ -270,7 +284,8 @@ func (a *BaseBotAgent) chatWithMessages(ctx context.Context, messages []*schema.
 	logger.Info("Bot chat response",
 		logger.StringField("bot", a.name),
 		logger.IntField("response_len", len(lastValidContent)),
-		logger.IntField("events", eventCount))
+		logger.IntField("events", eventCount),
+		logger.IntField("tool_result_runes", turn.Used()))
 
 	if lastValidContent == "" {
 		return "", a.emptyResultError(ctx, firstErr)
@@ -295,10 +310,16 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 	if a.stream == nil {
 		return fmt.Errorf("agent stream runner not initialized")
 	}
+	if !hasConversationTurn(messages) {
+		return ErrEmptyRequest
+	}
 
 	logger.Info("Bot stream chat request",
 		logger.StringField("bot", a.name),
 		logger.IntField("messages_count", len(messages)))
+
+	// 与 Chat 一致：一轮一份预算，流式只是把回答边收边推，工具结果同样进 prompt。
+	ctx, turn := toolbudget.WithTurn(ctx, toolbudget.DefaultTurnBudget)
 
 	iter := a.stream(ctx, messages)
 
@@ -385,7 +406,8 @@ func (a *BaseBotAgent) chatStreamWithMessages(ctx context.Context, messages []*s
 	logger.Info("Bot stream chat response",
 		logger.StringField("bot", a.name),
 		logger.IntField("response_len", emitted.Len()),
-		logger.IntField("events", eventCount))
+		logger.IntField("events", eventCount),
+		logger.IntField("tool_result_runes", turn.Used()))
 
 	if emitted.Len() == 0 {
 		return a.emptyResultError(ctx, firstErr)
@@ -411,12 +433,22 @@ func forwardMessageStream(
 ) (chunks []*schema.Message, recvErr error, chunkErr error) {
 	defer stream.Close()
 
+	buf := newChunkBuffer(onChunk)
+
 	for {
 		chunk, err := stream.Recv()
 		if err == io.EOF {
+			// 尾部不足一个合并窗口的残余必须推出，否则回答最后一截会丢失。
+			if err := buf.Flush(); err != nil {
+				return chunks, nil, err
+			}
 			return chunks, nil, nil
 		}
 		if err != nil {
+			// 出错时尽力把已收到的内容交付，避免部分成功只剩前半句。
+			if flushErr := buf.Flush(); flushErr != nil {
+				return chunks, err, flushErr
+			}
 			return chunks, err, nil
 		}
 		if chunk == nil {
@@ -430,7 +462,7 @@ func forwardMessageStream(
 			continue
 		}
 		emitted.WriteString(chunk.Content)
-		if err := onChunk(chunk.Content); err != nil {
+		if err := buf.Add(chunk.Content); err != nil {
 			return chunks, nil, err
 		}
 	}
@@ -458,14 +490,32 @@ func closeMessageStream(mv *adk.MessageVariant) {
 }
 
 func (a *BaseBotAgent) buildMessages(currentMessage string, history []*schema.Message) []*schema.Message {
-	var messages []*schema.Message
+	messages := make([]*schema.Message, 0, len(history)+2)
 
-	if a.systemPrompt != "" {
-		messages = append(messages, schema.SystemMessage(a.systemPrompt))
+	// 历史先按预算裁剪，再拼 system prompt：被省略的条数要写进提示，
+	// 否则模型会以为「用户只说过这些」，对早期内容给出确定的错误回答。
+	trimmed, omitted := trimHistory(history, historyRuneBudget)
+	systemPrompt := a.systemPrompt
+	if omitted > 0 {
+		systemPrompt += historyNotice(omitted)
 	}
 
-	if len(history) > 0 {
-		messages = append(messages, history...)
+	if systemPrompt != "" {
+		messages = append(messages, schema.SystemMessage(systemPrompt))
+	}
+
+	// 历史来自调用方组装，必须在这里做防御：
+	//   - nil 元素会被 SDK 直接解引用 → panic，且发生在真正请求时，难以定位；
+	//   - content 为空且没有 tool_calls 的消息会被供应商拒绝（400），
+	//     但带 tool_calls 的空内容 assistant 消息是合法的，必须保留。
+	for _, m := range trimmed {
+		if m == nil {
+			continue
+		}
+		if m.Content == "" && len(m.ToolCalls) == 0 {
+			continue
+		}
+		messages = append(messages, m)
 	}
 
 	if currentMessage != "" {
@@ -473,4 +523,14 @@ func (a *BaseBotAgent) buildMessages(currentMessage string, history []*schema.Me
 	}
 
 	return messages
+}
+
+// hasConversationTurn 判断消息里是否至少有一条非 system 内容。
+func hasConversationTurn(messages []*schema.Message) bool {
+	for _, m := range messages {
+		if m != nil && m.Role != schema.System {
+			return true
+		}
+	}
+	return false
 }

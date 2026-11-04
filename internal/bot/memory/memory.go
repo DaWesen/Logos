@@ -2,7 +2,7 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -16,7 +16,7 @@ import (
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
-	"Logos/pkg/strutil"
+	"Logos/pkg/structured"
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -67,6 +67,10 @@ type MemoryManager struct {
 	agentMgr   *agent.AgentManager
 	mu         sync.Mutex
 	processing map[string]bool
+	// states 记录每个 (user, bot) 的提取进度，用于节流与增量窗口。
+	states map[string]*extractionState
+	// now 可注入时钟，便于验证节流逻辑。
+	now func() time.Time
 }
 
 var memoryMgr *MemoryManager
@@ -79,6 +83,8 @@ func GetMemoryManager(repo dao.BotRepository, einoMgr *eino.EinoManager, agentMg
 			einoMgr:    einoMgr,
 			agentMgr:   agentMgr,
 			processing: make(map[string]bool),
+			states:     make(map[string]*extractionState),
+			now:        time.Now,
 		}
 	})
 	return memoryMgr
@@ -86,12 +92,24 @@ func GetMemoryManager(repo dao.BotRepository, einoMgr *eino.EinoManager, agentMg
 
 func (m *MemoryManager) ExtractAndSaveMemories(ctx context.Context, userID, botID string, messages []*botmodel.Message, chatModel einomodel.BaseChatModel) {
 	key := fmt.Sprintf("%s:%s", userID, botID)
+
+	// 先做节流决策，再抢 processing 标志：
+	// 反过来会导致「被跳过的调用占了并发位」，真正的提取反而排队。
+	batch, run, next := m.decide(key, messages)
+	if !run {
+		return
+	}
+
 	m.mu.Lock()
 	if m.processing[key] {
 		m.mu.Unlock()
 		return
 	}
+	if m.states == nil {
+		m.states = make(map[string]*extractionState)
+	}
 	m.processing[key] = true
+	m.states[key] = next
 	m.mu.Unlock()
 
 	defer func() {
@@ -100,7 +118,14 @@ func (m *MemoryManager) ExtractAndSaveMemories(ctx context.Context, userID, botI
 		m.mu.Unlock()
 	}()
 
-	go m.doExtractAndSave(userID, botID, messages, chatModel)
+	go m.doExtractAndSave(userID, botID, batch, chatModel)
+}
+
+// decide 在锁内读取提取进度并给出本次的增量批次。
+func (m *MemoryManager) decide(key string, messages []*botmodel.Message) ([]*botmodel.Message, bool, *extractionState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return decideExtraction(m.states[key], messages, m.now())
 }
 
 func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmodel.Message, chatModel einomodel.BaseChatModel) {
@@ -140,21 +165,46 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 	}
 
 	var result MemoryExtractionResult
-	cleanResp := strutil.ExtractJSONValue(resp)
-	if err := json.Unmarshal([]byte(cleanResp), &result); err != nil {
-		obs.RecordLLMParse(ctx, "memory", "failed")
-		logger.Warn("记忆提取结果解析失败", logger.ErrorField(err), logger.StringField("response", resp))
+	_, parseErr := structured.ParseWithRepair(ctx, "memory", resp, &result,
+		func(ctx context.Context, raw string, parseErr error) (string, error) {
+			repairPrompt := structured.RepairPrompt(raw, parseErr,
+				`{"memories":[{"key":"...","value":"...","category":"...","confidence":0.0,"evidence":[1]}]}`)
+			if chatModel != nil {
+				fixed, err := chatModel.Generate(ctx, []*schema.Message{
+					schema.SystemMessage("你是一个JSON修复助手，只输出修正后的JSON。"),
+					schema.UserMessage(repairPrompt),
+				})
+				if err == nil {
+					return fixed.Content, nil
+				}
+			}
+			if m.einoMgr == nil {
+				return "", parseErr
+			}
+			return m.einoMgr.Chat(ctx, []string{repairPrompt})
+		})
+	if parseErr != nil {
+		logger.Warn("记忆提取结果解析失败", logger.ErrorField(parseErr), logger.StringField("response", resp))
 		return
 	}
-	obs.RecordLLMParse(ctx, "memory", "ok")
 
+	// 一次提取的结果也要设上限：模型可能把整段对话拆成几十条，
+	// 全量写入会让记忆表迅速膨胀，反过来挤占注入预算。
+	seenKeys := make(map[string]struct{}, len(result.Memories))
+	saved, failed, deduped, mergedCount := 0, 0, 0, 0
+	processed := 0
+	// 相似度合并需要已有记忆快照；只在首次未命中时才加载，避免每条都查一次库。
+	var known []*botmodel.UserMemory
+	knownLoaded := false
 	for _, mem := range result.Memories {
-		if mem.Key == "" || mem.Value == "" {
+		if processed >= maxMemoriesPerExtraction {
+			break
+		}
+		if !prepareExtractedMemory(&mem, seenKeys) {
+			deduped++
 			continue
 		}
-		if mem.Category == "" {
-			mem.Category = "fact"
-		}
+		processed++
 		// 归一化：模型没好好打分按"不知道"(0.5)处理，越界收敛
 		mem.Confidence = normalizeConfidence(mem.Confidence)
 
@@ -173,7 +223,38 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 			merged, relation := ApplyMemoryMerge(existing, mem.Value, mem.Confidence, evidence)
 			if relation != RelationUserOverride {
 				merged.Category = mem.Category
-				_ = m.repo.SetUserMemory(ctx, merged)
+				if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
+					failed++
+					logger.Warn("合并记忆写入失败",
+						logger.StringField("key", mem.Key),
+						logger.ErrorField(setErr))
+				} else {
+					saved++
+				}
+			}
+			continue
+		}
+
+		// 精确键未命中时，再看是否有「措辞几乎一致」的已有记忆：
+		// 归一化只能消格式差异，同义措辞仍会各存一条，最后互相挤占注入预算。
+		if !knownLoaded {
+			known, _ = m.repo.GetUserMemoriesByUser(ctx, userID, botID)
+			knownLoaded = true
+		}
+		if idx := findSimilarMemoryIndex(known, mem.Key, mem.Category); idx >= 0 {
+			merged, relation := ApplyMemoryMerge(known[idx], mem.Value, mem.Confidence, evidence)
+			if relation != RelationUserOverride {
+				merged.Category = mem.Category
+				if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
+					failed++
+					logger.Warn("相似记忆合并失败",
+						logger.StringField("key", mem.Key),
+						logger.StringField("existing_key", known[idx].Key),
+						logger.ErrorField(setErr))
+				} else {
+					known[idx] = merged
+					mergedCount++
+				}
 			}
 			continue
 		}
@@ -188,13 +269,70 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 			Confidence: mem.Confidence,
 			Evidence:   botmodel.StringSlice(evidence),
 		}
-		_ = m.repo.SetUserMemory(ctx, newMem)
+		if setErr := m.repo.SetUserMemory(ctx, newMem); setErr != nil {
+			failed++
+			logger.Warn("新记忆写入失败",
+				logger.StringField("key", mem.Key),
+				logger.ErrorField(setErr))
+		} else {
+			saved++
+			if knownLoaded {
+				// 保证同批次后续条目能看到这条新记忆
+				known = append(known, newMem)
+			}
+		}
 	}
 
 	logger.Info("自动提取记忆完成",
 		logger.StringField("user_id", userID),
 		logger.StringField("bot_id", botID),
-		logger.IntField("count", len(result.Memories)))
+		logger.IntField("candidates", len(result.Memories)),
+		logger.IntField("saved", saved),
+		logger.IntField("failed", failed),
+		logger.IntField("deduped", deduped),
+		logger.IntField("merged_similar", mergedCount))
+	if failed > 0 {
+		// 旧实现 `_ =` 吞掉写入错误，日志照样报「完成 N 条」，
+		// 结果双方都以为存进去了，下次提取又生成一遍。
+		logger.Warn("部分记忆未能写入",
+			logger.StringField("user_id", userID),
+			logger.IntField("failed", failed))
+	}
+}
+
+// maxMemoriesPerExtraction 单次提取最多写入的记忆条数。
+const maxMemoriesPerExtraction = 10
+
+// normalizeMemoryKey 归一化记忆键，消除「同一个事实、不同写法」造成的重复条目。
+//
+// 写路径用 Key 做精确匹配（GetUserMemoryByKey），模型每次措辞略有差异
+// （"喜欢喝咖啡" / " 喜欢 喝咖啡。 "）就会被当成新记忆插入。
+// 语义级去重要靠向量，这里先把格式变体收敛掉——成本几乎为零。
+func normalizeMemoryKey(key string) string {
+	k := strings.TrimSpace(key)
+	k = strings.Join(strings.Fields(k), " ")
+	return strings.Trim(k, "。.,，;；:：!！?？")
+}
+
+// prepareExtractedMemory 归一化字段并做批次内去重。
+// 返回 false 表示该条不应写入（空键/空值/本批次已出现）。
+func prepareExtractedMemory(mem *ExtractedMemory, seen map[string]struct{}) bool {
+	if mem == nil {
+		return false
+	}
+	mem.Key = normalizeMemoryKey(mem.Key)
+	mem.Value = strings.TrimSpace(mem.Value)
+	if mem.Category == "" {
+		mem.Category = "fact"
+	}
+	if mem.Key == "" || mem.Value == "" {
+		return false
+	}
+	if _, dup := seen[mem.Key]; dup {
+		return false
+	}
+	seen[mem.Key] = struct{}{}
+	return true
 }
 
 // memoryDialogBudgetRunes 送进提取 prompt 的对话预算（字符数）。
@@ -301,13 +439,18 @@ func resolveEvidenceIDs(seq []int, messages []*botmodel.Message) ([]string, bool
 	return ids, true
 }
 
-// BuildMemoryPrompt 构建 prompt 注入的记忆段（双档消费）：
+// BuildMemoryPrompt 构建 prompt 注入的记忆段（无对话上下文版本）。
+func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID string) string {
+	return m.BuildMemoryPromptFor(ctx, userID, botID, "")
+}
+
+// BuildMemoryPromptFor 按当前问题检索最相关的记忆后构建 prompt 段：
 //   - confidence < 0.5 的记忆不注入（agent 不会因为标注就不当真）；
 //   - 0.5 ≤ confidence < 0.65 注入但标注「⚠︎证据较少」（只排序不标注，
 //     0.55 与 0.9 的记忆在 agent 眼里长得一样）；
-//   - 每类按 confidence 降序（最可靠的先入眼），超限截断必须声明条数
-//     （静默截断会读成"这一类已经全了"）。
-func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID string) string {
+//   - 相关性 / 新鲜度 / 置信度三因子排序，手工记忆始终保留；
+//   - 每类按分数降序，超限截断必须声明条数（静默截断会读成「这一类已经全了」）。
+func (m *MemoryManager) BuildMemoryPromptFor(ctx context.Context, userID, botID, query string) string {
 	memories, err := m.repo.GetUserMemoriesByUser(ctx, userID, botID)
 	if err != nil || len(memories) == 0 {
 		return ""
@@ -317,6 +460,11 @@ func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID str
 	injectable := make([]*botmodel.UserMemory, 0, len(memories))
 	dropped := 0
 	for _, mem := range memories {
+		// 仓储层返回 nil 元素时（查询失败占位、批量组装漏洞）这里会直接解引用 panic，
+		// 而 panic 发生在对话链路里，表现为「这个用户一说话服务就重启」。
+		if mem == nil {
+			continue
+		}
 		if ShouldInjectMemory(mem) {
 			injectable = append(injectable, mem)
 		} else {
@@ -327,11 +475,14 @@ func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID str
 		return ""
 	}
 
+	selected := selectMemories(injectable, query, time.Now())
+	unselected := len(injectable) - len(selected)
+
 	var parts []string
 	parts = append(parts, "以下是你对用户的已知记忆，请在回复时参考这些信息：")
 
 	categories := map[string][]*botmodel.UserMemory{}
-	for _, mem := range injectable {
+	for _, mem := range selected {
 		cat := mem.Category
 		if cat == "" {
 			cat = "other"
@@ -356,9 +507,7 @@ func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID str
 		if !ok {
 			continue
 		}
-		sort.SliceStable(mems, func(i, j int) bool {
-			return mems[i].Confidence > mems[j].Confidence
-		})
+		sortMemories(mems)
 
 		catName := categoryNames[cat]
 		parts = append(parts, fmt.Sprintf("\n【%s】", catName))
@@ -378,8 +527,28 @@ func (m *MemoryManager) BuildMemoryPrompt(ctx context.Context, userID, botID str
 	if dropped > 0 {
 		parts = append(parts, fmt.Sprintf("（另有 %d 条低置信度记忆未注入，可在记忆管理页查看）", dropped))
 	}
+	if unselected > 0 {
+		parts = append(parts, fmt.Sprintf("（另有 %d 条与当前问题无关或较旧的记忆未列出）", unselected))
+	}
 
 	return strings.Join(parts, "\n")
+}
+
+// sortMemories 置信度降序，同分用 UpdatedAt 降序、ID 升序兜底。
+//
+// 只按 confidence 排会让同分记忆的顺序取决于数据库返回顺序（无 ORDER BY 时不稳定），
+// 同一用户两次刷新可能拿到不同 prompt：前缀缓存命中率下降，用户也会觉得
+// 「明明没改过设置，助手的说法却变了」。
+func sortMemories(mems []*botmodel.UserMemory) {
+	sort.SliceStable(mems, func(i, j int) bool {
+		if mems[i].Confidence != mems[j].Confidence {
+			return mems[i].Confidence > mems[j].Confidence
+		}
+		if !mems[i].UpdatedAt.Equal(mems[j].UpdatedAt) {
+			return mems[i].UpdatedAt.After(mems[j].UpdatedAt)
+		}
+		return mems[i].ID < mems[j].ID
+	})
 }
 
 func (m *MemoryManager) GetMemoriesByCategory(ctx context.Context, userID, botID, category string) ([]*botmodel.UserMemory, error) {
@@ -389,10 +558,11 @@ func (m *MemoryManager) GetMemoriesByCategory(ctx context.Context, userID, botID
 	}
 	var filtered []*botmodel.UserMemory
 	for _, mem := range all {
-		if mem.Category == category {
+		if mem != nil && mem.Category == category {
 			filtered = append(filtered, mem)
 		}
 	}
+	sortMemories(filtered)
 	return filtered, nil
 }
 
@@ -402,13 +572,27 @@ func (m *MemoryManager) CleanupOldMemories(ctx context.Context, userID, botID st
 		return err
 	}
 	cutoff := time.Now().Add(-maxAge)
+	var errs []error
+	removed := 0
 	for _, mem := range memories {
-		if mem.Source == "manual" {
+		if mem == nil || mem.Source == "manual" {
 			continue
 		}
 		if mem.UpdatedAt.Before(cutoff) && mem.Source == "auto_extract" && mem.Confidence < 0.6 {
-			_ = m.repo.DeleteUserMemoryByID(ctx, mem.ID)
+			if delErr := m.repo.DeleteUserMemoryByID(ctx, mem.ID); delErr != nil {
+				// 单条删除失败不中断整轮清理，但必须把错误带回去：
+				// 旧实现直接 `_ =` 吞掉，清理任务显示成功、记忆其实还在。
+				errs = append(errs, fmt.Errorf("删除记忆 %s 失败: %w", mem.ID, delErr))
+				continue
+			}
+			removed++
 		}
 	}
-	return nil
+	if removed > 0 {
+		logger.Info("清理过期记忆",
+			logger.StringField("user_id", userID),
+			logger.StringField("bot_id", botID),
+			logger.IntField("removed", removed))
+	}
+	return errors.Join(errs...)
 }

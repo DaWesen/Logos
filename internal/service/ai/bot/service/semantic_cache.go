@@ -12,17 +12,18 @@ import (
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 
 	"github.com/redis/go-redis/v9"
 )
 
 const (
 	semanticCacheKeyPrefix  = "logos:scache"
-	semanticCacheMaxEntries = 50                 // 每个 (用户, Bot) 保留的缓存条数
-	semanticCacheTTL        = 24 * time.Hour     // Redis key 整体过期
-	semanticCacheEntryTTL   = 12 * time.Hour     // 单条目有效期（查询时判断）
-	semanticCacheThreshold  = 0.90               // 余弦相似度命中阈值
-	semanticCacheDialSkip   = 24 * time.Hour     // 拨号失败后多久内不再重试
+	semanticCacheMaxEntries = 50             // 每个 (用户, Bot) 保留的缓存条数
+	semanticCacheTTL        = 24 * time.Hour // Redis key 整体过期
+	semanticCacheEntryTTL   = 12 * time.Hour // 单条目有效期（查询时判断）
+	semanticCacheThreshold  = 0.90           // 余弦相似度命中阈值
+	semanticCacheDialSkip   = 24 * time.Hour // 拨号失败后多久内不再重试
 )
 
 // SemanticCache 语义缓存：对「语义相似」的重复问题直接返回缓存答案，
@@ -60,7 +61,7 @@ type semanticEntry struct {
 
 func NewSemanticCache(addr, password string, db int, embed EmbedForBotFunc) *SemanticCache {
 	return &SemanticCache{
-		cfg: redisOptions{Addr: addr, Password: password, DB: db},
+		cfg:   redisOptions{Addr: addr, Password: password, DB: db},
 		embed: embed,
 	}
 }
@@ -103,16 +104,21 @@ func (c *SemanticCache) getClient(ctx context.Context) (*redis.Client, error) {
 // Lookup 查询语义缓存。任何失败都静默降级为未命中，保证不影响主流程。
 func (c *SemanticCache) Lookup(ctx context.Context, bot *botmodel.Bot, userID, query string) (string, bool) {
 	if c == nil || c.embed == nil || query == "" {
+		obs.RecordSemanticCache(ctx, "lookup", "disabled")
 		return "", false
 	}
 
 	vec, err := c.embed(ctx, bot, query)
 	if err != nil || len(vec) == 0 {
+		obs.RecordSemanticCache(ctx, "lookup", "error")
 		return "", false
 	}
 
 	client, err := c.getClient(ctx)
 	if err != nil {
+		// 拨号失败会进入冷却期，和 Redis 读错误分开：
+		// unavailable 持续升高说明缓存后端不可用，而不是单次抖动。
+		obs.RecordSemanticCache(ctx, "lookup", "unavailable")
 		return "", false
 	}
 
@@ -122,6 +128,7 @@ func (c *SemanticCache) Lookup(ctx context.Context, bot *botmodel.Bot, userID, q
 
 	raw, err := client.LRange(cacheCtx, semanticCacheKey(userID, botID(bot)), 0, semanticCacheMaxEntries-1).Result()
 	if err != nil {
+		obs.RecordSemanticCache(ctx, "lookup", "error")
 		return "", false
 	}
 
@@ -143,11 +150,13 @@ func (c *SemanticCache) Lookup(ctx context.Context, bot *botmodel.Bot, userID, q
 	}
 
 	if bestSim >= semanticCacheThreshold {
+		obs.RecordSemanticCache(ctx, "lookup", "hit")
 		logger.Info("语义缓存命中",
 			logger.StringField("user_id", userID),
 			logger.Float64Field("similarity", bestSim))
 		return best, true
 	}
+	obs.RecordSemanticCache(ctx, "lookup", "miss")
 	return "", false
 }
 
@@ -166,11 +175,13 @@ func (c *SemanticCache) Store(ctx context.Context, bot *botmodel.Bot, userID, qu
 
 	vec, err := c.embed(ctx, bot, query)
 	if err != nil || len(vec) == 0 {
+		obs.RecordSemanticCache(ctx, "store", "failed")
 		return
 	}
 
 	client, err := c.getClient(ctx)
 	if err != nil {
+		obs.RecordSemanticCache(ctx, "store", "failed")
 		return
 	}
 
@@ -182,18 +193,23 @@ func (c *SemanticCache) Store(ctx context.Context, bot *botmodel.Bot, userID, qu
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
+		obs.RecordSemanticCache(ctx, "store", "failed")
 		return
 	}
 
 	storeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	_ = semanticCacheStoreScript.Run(storeCtx, client,
+	if err := semanticCacheStoreScript.Run(storeCtx, client,
 		[]string{semanticCacheKey(userID, botID(bot))},
 		string(data),
 		semanticCacheMaxEntries-1,
 		int(semanticCacheTTL/time.Second),
-	).Err()
+	).Err(); err != nil {
+		obs.RecordSemanticCache(ctx, "store", "failed")
+		return
+	}
+	obs.RecordSemanticCache(ctx, "store", "ok")
 }
 
 // botID 从 Bot 对象提取缓存命名空间使用的 ID

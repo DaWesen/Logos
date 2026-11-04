@@ -128,8 +128,9 @@ func NewKnowledgeSearchTool(svc KnowledgeSearchService) (tool.InvokableTool, err
 				return "", err
 			}
 
-			// RRF 融合多路结果
+			// RRF 融合多路结果；再按文档限流，避免一个文档的多个片段挤满结果
 			merged := FuseSearchResults(lists, topK)
+			merged = limitPerDocument(merged, maxResultsPerDocument)
 
 			if len(merged) == 0 {
 				return "未找到与查询相关的知识库内容。请尝试换一种方式描述你的问题，或使用 grep_chunks 工具进行关键词搜索。", nil
@@ -207,6 +208,8 @@ func NewGrepChunksTool(svc KnowledgeSearchService) (tool.InvokableTool, error) {
 			}
 
 			allResults := mergeKeywordResults(lists, topK)
+			// 关键词命中常集中在同一文档：不限流会把 topK 名额花在单文档的不同段落上
+			allResults = limitPerDocument(allResults, maxResultsPerDocument)
 
 			if len(allResults) == 0 {
 				return "未找到包含指定关键词的文档片段。请尝试使用不同的关键词，或使用 knowledge_search 工具进行语义搜索。", nil
@@ -220,24 +223,43 @@ func NewGrepChunksTool(svc KnowledgeSearchService) (tool.InvokableTool, error) {
 	return t, nil
 }
 
+// knowledgeToolInvoker 供知识库工具共享的执行器。
+// 两个工具的模型可能在同一轮里重复调用同一查询，共享一个执行器才能让
+// 「同参合并」与「只读缓存」跨工具生效。
+var (
+	knowledgeToolInvokerOnce sync.Once
+	knowledgeToolInvoker     *Invoker
+)
+
+func getKnowledgeToolInvoker() *Invoker {
+	knowledgeToolInvokerOnce.Do(func() {
+		knowledgeToolInvoker = NewInvoker(0)
+	})
+	return knowledgeToolInvoker
+}
+
 func BuildKnowledgeTools(svc KnowledgeSearchService) []tool.BaseTool {
-	var tools []tool.BaseTool
+	var built []tool.BaseTool
+	inv := getKnowledgeToolInvoker()
+	// 知识检索是只读且幂等的：允许 30s 缓存、同参合并、瞬时错误重试与熔断。
+	// 重试只针对同一逻辑调用，不会让模型在熔断打开后继续打后端。
+	policy := ToolPolicy{Cacheable: true, Retryable: true, Breaker: true}
 
 	searchTool, err := NewKnowledgeSearchTool(svc)
 	if err != nil {
 		logger.Warn("创建知识库语义搜索工具失败", logger.ErrorField(err))
 	} else {
-		tools = append(tools, searchTool)
+		built = append(built, inv.Wrap(searchTool, policy))
 	}
 
 	grepTool, err := NewGrepChunksTool(svc)
 	if err != nil {
 		logger.Warn("创建知识库关键词搜索工具失败", logger.ErrorField(err))
 	} else {
-		tools = append(tools, grepTool)
+		built = append(built, inv.Wrap(grepTool, policy))
 	}
 
-	return tools
+	return built
 }
 
 // retrievalFailure 统一「检索故障 vs 没有内容」的判定。
@@ -250,6 +272,55 @@ func retrievalFailure(failed, succeeded int) error {
 		return nil
 	}
 	return fmt.Errorf("知识库检索全部失败（%d 路），请稍后重试", failed)
+}
+
+// maxResultsPerDocument 单个文档最多进入结果的片段数。
+//
+// 同一篇文档被切成几十个 chunk，混合检索常把其中若干条一起召回：
+// 前 10 条里 7 条来自同一文档，看起来"召回很高"，实际只覆盖了一个来源。
+// 工具结果最终要进 prompt，来源多样性比单文档内的排名更重要。
+const maxResultsPerDocument = 3
+
+// limitPerDocument 限制单文档片段数，保持原顺序。
+//
+// 文档键优先取 metadata 的 document_id / doc_id，其次取 Source；
+// 两者都没有时无法归属，保持原样——宁可不限制，也不要按 ID 胡乱合并。
+func limitPerDocument(results []*KnowledgeSearchResult, maxPerDocument int) []*KnowledgeSearchResult {
+	if maxPerDocument <= 0 || len(results) == 0 {
+		return results
+	}
+
+	kept := make([]*KnowledgeSearchResult, 0, len(results))
+	perDoc := make(map[string]int, len(results))
+
+	for _, r := range results {
+		if r == nil {
+			continue
+		}
+		key := documentKey(r)
+		if key == "" {
+			kept = append(kept, r)
+			continue
+		}
+		if perDoc[key] >= maxPerDocument {
+			continue
+		}
+		perDoc[key]++
+		kept = append(kept, r)
+	}
+	return kept
+}
+
+func documentKey(r *KnowledgeSearchResult) string {
+	if r.Metadata != nil {
+		if v := r.Metadata["document_id"]; v != "" {
+			return v
+		}
+		if v := r.Metadata["doc_id"]; v != "" {
+			return v
+		}
+	}
+	return r.Source
 }
 
 // mergeKeywordResults 确定性合并多路关键词检索结果。
