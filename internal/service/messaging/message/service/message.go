@@ -36,10 +36,10 @@ type MessageService interface {
 	AcknowledgeMessage(ctx context.Context, consumerGroup string, messageID string, topic int32) error
 	BatchAcknowledgeMessages(ctx context.Context, consumerGroup string, messageIDs []string, topic int32) error
 
-	GetMessageStats() ([]map[string]interface{}, error)
-	CreateTopic(topic int32) error
-	DeleteTopic(topic int32) error
-	ClearMessages(topic int32) error
+	GetMessageStats(ctx context.Context) ([]map[string]interface{}, error)
+	CreateTopic(ctx context.Context, topic int32) error
+	DeleteTopic(ctx context.Context, topic int32) error
+	ClearMessages(ctx context.Context, topic int32) error
 	StartKafkaConsumer(ctx context.Context) error
 }
 
@@ -90,12 +90,6 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 		return nil, err
 	}
 
-	if topic == 4 && s.questionService != nil {
-		go func() {
-			s.questionService.AskQuestion(context.Background(), content, nil)
-		}()
-	}
-
 	return msg, nil
 }
 
@@ -110,12 +104,36 @@ func (s *messageServiceImpl) saveMessageEventToOutbox(ctx context.Context, txDB 
 		"timestamp":      msg.Timestamp,
 	}
 
-	topicName := msg.Topic
-	if topicName == "" || topicName == "unknown" {
-		topicName = mq.TopicSystemEvent
-	}
-
+	topicName := kafkaTopicFor(msg.Topic)
 	return s.outboxRepo.SaveWithTx(ctx, txDB, topicName, msg.ID, event)
+}
+
+// kafkaTopicFor 把内部 topic 名映射为 Kafka 实际 topic。
+//
+// 内部名是大写下划线（DAO、gRPC enum、监控统计都在用），Kafka 常量是小写。
+// outbox relay 直接把 Topic 字段当 Kafka topic 发送：不映射时 "QA_REQUEST"
+// 会被投到一个没有任何消费者订阅的 topic，消息显示发送成功却永远不会被处理。
+func kafkaTopicFor(internal string) string {
+	switch internal {
+	case "DATA_COLLECTION":
+		return mq.TopicDataCollection
+	case "KNOWLEDGE_EXTRACTION":
+		return mq.TopicKnowledgeExtraction
+	case "VECTOR_PROCESSING":
+		return mq.TopicVectorProcessing
+	case "QA_REQUEST":
+		return mq.TopicQARequest
+	case "RECOMMENDATION":
+		return mq.TopicRecommendation
+	case "USER_ACTIVITY":
+		return mq.TopicUserActivity
+	case "SYSTEM_EVENT":
+		return mq.TopicSystemEvent
+	}
+	if internal == "" || internal == "unknown" {
+		return mq.TopicSystemEvent
+	}
+	return internal
 }
 
 func (s *messageServiceImpl) BatchSendMessage(ctx context.Context, msgs []struct {
@@ -212,8 +230,8 @@ func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consu
 	return nil
 }
 
-func (s *messageServiceImpl) GetMessageStats() ([]map[string]interface{}, error) {
-	total, pending, processed, failed, err := s.repo.GetMessageStats(context.Background(), "")
+func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]interface{}, error) {
+	total, pending, processed, failed, err := s.repo.GetMessageStats(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed: %w", err)
 	}
@@ -231,7 +249,7 @@ func (s *messageServiceImpl) GetMessageStats() ([]map[string]interface{}, error)
 	stats = append(stats, globalStat)
 
 	for _, t := range topics {
-		tTotal, tPending, tProcessed, tFailed, tErr := s.repo.GetMessageStats(context.Background(), dao.TopicString(int(t)))
+		tTotal, tPending, tProcessed, tFailed, tErr := s.repo.GetMessageStats(ctx, dao.TopicString(int(t)))
 		if tErr != nil {
 			continue
 		}
@@ -248,11 +266,10 @@ func (s *messageServiceImpl) GetMessageStats() ([]map[string]interface{}, error)
 	return stats, nil
 }
 
-func (s *messageServiceImpl) CreateTopic(topic int32) error {
+func (s *messageServiceImpl) CreateTopic(ctx context.Context, topic int32) error {
 	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))))
 
-	ctx := context.Background()
 	topicName := dao.TopicString(int(topic))
 
 	return s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
@@ -265,12 +282,10 @@ func (s *messageServiceImpl) CreateTopic(topic int32) error {
 	})
 }
 
-func (s *messageServiceImpl) DeleteTopic(topic int32) error {
+func (s *messageServiceImpl) DeleteTopic(ctx context.Context, topic int32) error {
 	topicStr := dao.TopicString(int(topic))
 	logger.Info("删除消息主题",
 		logger.StringField("topic", topicStr))
-
-	ctx := context.Background()
 
 	err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
 		if err := txRepo.DeleteMessagesByTopic(ctx, topicStr); err != nil {
@@ -297,12 +312,10 @@ func (s *messageServiceImpl) DeleteTopic(topic int32) error {
 	return nil
 }
 
-func (s *messageServiceImpl) ClearMessages(topic int32) error {
+func (s *messageServiceImpl) ClearMessages(ctx context.Context, topic int32) error {
 	topicStr := dao.TopicString(int(topic))
 	logger.Info("清除消息",
 		logger.StringField("topic", topicStr))
-
-	ctx := context.Background()
 
 	if err := s.repo.ClearMessagesByTopic(ctx, topicStr); err != nil {
 		logger.Error("清除主题消息失败", logger.ErrorField(err))
@@ -354,9 +367,16 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	switch msg.Topic {
 	case mq.TopicQARequest:
 		if content != "" && s.questionService != nil {
-			go func() {
-				s.questionService.AskQuestion(context.Background(), content, nil)
-			}()
+			// 必须同步等待结果：handler 返回 nil 后 offset 就会被提交，
+			// 裸 goroutine 失败时无法重试，进程崩溃时这条问答请求直接丢失。
+			// 串行消费下会牺牲吞吐，但换来 at-least-once；要提升吞吐应把
+			// 任务先持久化再异步处理，而不是吞掉错误。
+			answerCtx, cancel := context.WithTimeout(messageContext(msg), qaAnswerTimeout)
+			_, err := s.questionService.AskQuestion(answerCtx, content, nil)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("问答处理失败: %w", err)
+			}
 		}
 	case mq.TopicRecommendation:
 		logger.Info("operation")
@@ -365,9 +385,20 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	}
 
 	if messageID != "" {
-		ctx := context.Background()
-		s.repo.UpdateMessageStatus(ctx, messageID, "PROCESSED_FROM_KAFKA")
+		s.repo.UpdateMessageStatus(messageContext(msg), messageID, "PROCESSED_FROM_KAFKA")
 	}
 
 	return nil
+}
+
+// qaAnswerTimeout 是单条问答的处理上限。没有上限时，一次卡住的 LLM 调用
+// 会让整个分区永远停在这条消息上。
+const qaAnswerTimeout = 120 * time.Second
+
+// messageContext 返回消费循环注入的生命周期 ctx；测试或直接调用时兜底 Background。
+func messageContext(msg *mq.Message) context.Context {
+	if msg == nil || msg.Context == nil {
+		return context.Background()
+	}
+	return msg.Context
 }

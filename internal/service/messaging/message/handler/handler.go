@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 
 	"Logos/internal/service/messaging/message/service"
-	pb "Logos/proto_gen/message"
 	pbCommon "Logos/proto_gen/common"
+	pb "Logos/proto_gen/message"
 )
 
 type MessageServiceImpl struct {
@@ -205,7 +205,7 @@ func (s *MessageServiceImpl) GetMessageStats(ctx context.Context, req *pb.EmptyR
 		BaseResp: &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 	}
 
-	stats, statsErr := s.MessageService.GetMessageStats()
+	stats, statsErr := s.MessageService.GetMessageStats(ctx)
 	if statsErr != nil {
 		resp.BaseResp.StatusCode = 500
 		resp.BaseResp.StatusMessage = statsErr.Error()
@@ -253,7 +253,7 @@ func (s *MessageServiceImpl) GetMessageStats(ctx context.Context, req *pb.EmptyR
 // CreateTopic implements the MessageServiceImpl interface.
 func (s *MessageServiceImpl) CreateTopic(ctx context.Context, req *pb.GetByTopicReq) (*pbCommon.BaseResp, error) {
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
-	if createErr := s.MessageService.CreateTopic(int32(req.Topic)); createErr != nil {
+	if createErr := s.MessageService.CreateTopic(ctx, int32(req.Topic)); createErr != nil {
 		resp.StatusCode = 500
 		resp.StatusMessage = createErr.Error()
 	}
@@ -263,7 +263,7 @@ func (s *MessageServiceImpl) CreateTopic(ctx context.Context, req *pb.GetByTopic
 // DeleteTopic implements the MessageServiceImpl interface.
 func (s *MessageServiceImpl) DeleteTopic(ctx context.Context, req *pb.GetByTopicReq) (*pbCommon.BaseResp, error) {
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
-	if delErr := s.MessageService.DeleteTopic(int32(req.Topic)); delErr != nil {
+	if delErr := s.MessageService.DeleteTopic(ctx, int32(req.Topic)); delErr != nil {
 		resp.StatusCode = 500
 		resp.StatusMessage = delErr.Error()
 	}
@@ -273,7 +273,7 @@ func (s *MessageServiceImpl) DeleteTopic(ctx context.Context, req *pb.GetByTopic
 // ClearMessages implements the MessageServiceImpl interface.
 func (s *MessageServiceImpl) ClearMessages(ctx context.Context, req *pb.GetByTopicReq) (*pbCommon.BaseResp, error) {
 	resp := &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"}
-	if clearErr := s.MessageService.ClearMessages(int32(req.Topic)); clearErr != nil {
+	if clearErr := s.MessageService.ClearMessages(ctx, int32(req.Topic)); clearErr != nil {
 		resp.StatusCode = 500
 		resp.StatusMessage = clearErr.Error()
 	}
