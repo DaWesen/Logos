@@ -3,11 +3,16 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"Logos/internal/service/messaging/message/dao"
+	"Logos/internal/service/messaging/message/model"
 	"Logos/pkg/mq"
+	"Logos/pkg/outbox"
+
+	"gorm.io/gorm"
 )
 
 type fakeAnswer struct{}
@@ -72,6 +77,212 @@ func TestKafkaTopicFor_MapsInternalNames(t *testing.T) {
 		if got := kafkaTopicFor(internal); got != want {
 			t.Fatalf("kafkaTopicFor(%q) = %q, want %q", internal, got, want)
 		}
+	}
+}
+
+// proto Topic 枚举从 0 开始，DAO 若按 1 开始解析会整体错位：
+// DATA_COLLECTION 变成 UNKNOWN(0)，SYSTEM_EVENT 永远不可达。
+func TestTopicString_MatchesProtoEnum(t *testing.T) {
+	cases := map[int]string{
+		0: "DATA_COLLECTION",
+		1: "KNOWLEDGE_EXTRACTION",
+		2: "VECTOR_PROCESSING",
+		3: "QA_REQUEST",
+		4: "RECOMMENDATION",
+		5: "USER_ACTIVITY",
+		6: "SYSTEM_EVENT",
+	}
+	for value, want := range cases {
+		if got := dao.TopicString(value); got != want {
+			t.Fatalf("TopicString(%d) = %q, want %q", value, got, want)
+		}
+		if !dao.ValidTopic(value) {
+			t.Fatalf("ValidTopic(%d) = false, want true", value)
+		}
+	}
+	if got := dao.TopicString(7); got != "UNKNOWN(7)" {
+		t.Fatalf("越界枚举应显式成为 UNKNOWN, got %q", got)
+	}
+	if dao.ValidTopic(-1) || dao.ValidTopic(7) {
+		t.Fatal("越界枚举不应通过校验")
+	}
+}
+
+func TestNewMessage_RejectsInvalidTopicAndPriority(t *testing.T) {
+	if _, err := newMessage(7, "x", nil, nil, nil); err == nil {
+		t.Fatal("越界 topic 应被拒绝，不能静默写成 UNKNOWN(7)")
+	}
+	low := int32(0)
+	if _, err := newMessage(3, "x", &low, nil, nil); err == nil {
+		t.Fatal("越界优先级应被拒绝")
+	}
+	msg, err := newMessage(3, "x", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("合法消息不应报错: %v", err)
+	}
+	if msg.Topic != "QA_REQUEST" {
+		t.Fatalf("topic = %q, want QA_REQUEST", msg.Topic)
+	}
+	if msg.Priority != 2 {
+		t.Fatalf("默认优先级 = %d, want 2(NORMAL)", msg.Priority)
+	}
+}
+
+type recordingOutbox struct {
+	outbox.OutboxRepository
+	topics []string
+	keys   []string
+	err    error
+}
+
+func (o *recordingOutbox) SaveWithTx(_ context.Context, _ *gorm.DB, topic, key string, _ interface{}) error {
+	o.topics = append(o.topics, topic)
+	o.keys = append(o.keys, key)
+	return o.err
+}
+
+type batchRepo struct {
+	dao.MessageRepository
+	txCalls        int
+	committed      bool
+	rolledBack     bool
+	saveBatchCalls int
+	saved          []*model.Message
+	saveErr        error
+}
+
+func (r *batchRepo) WithTransaction(_ context.Context, fn func(dao.MessageRepository) error) error {
+	r.txCalls++
+	if err := fn(r); err != nil {
+		r.rolledBack = true
+		return err
+	}
+	r.committed = true
+	return nil
+}
+
+func (r *batchRepo) SaveMessage(_ context.Context, msg *model.Message) error {
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	r.saved = append(r.saved, msg)
+	return nil
+}
+
+func (r *batchRepo) SaveMessages(_ context.Context, msgs []*model.Message) error {
+	r.saveBatchCalls++
+	if r.saveErr != nil {
+		return r.saveErr
+	}
+	r.saved = append(r.saved, msgs...)
+	return nil
+}
+
+func (r *batchRepo) DB() *gorm.DB { return nil }
+
+// 批量发送必须一次事务、一次多值 INSERT、N 条 outbox 事件：
+// 否则中途失败会留下已提交的子集，调用方重试又产生重复消息。
+func TestBatchSendMessage_SingleTransaction(t *testing.T) {
+	repo := &batchRepo{}
+	ob := &recordingOutbox{}
+	svc := &messageServiceImpl{repo: repo, outboxRepo: ob}
+
+	inputs := []struct {
+		Topic         int32
+		Content       string
+		Priority      *int32
+		Headers       map[string]string
+		CorrelationID *string
+	}{
+		{Topic: 3, Content: "q1"},
+		{Topic: 6, Content: "e1"},
+	}
+	msgs, err := svc.BatchSendMessage(context.Background(), inputs)
+	if err != nil {
+		t.Fatalf("批量发送不应报错: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("返回条数 = %d, want 2", len(msgs))
+	}
+	if repo.txCalls != 1 {
+		t.Fatalf("事务次数 = %d, want 1", repo.txCalls)
+	}
+	if repo.saveBatchCalls != 1 {
+		t.Fatalf("批量 INSERT 次数 = %d, want 1", repo.saveBatchCalls)
+	}
+	if !repo.committed || repo.rolledBack {
+		t.Fatalf("事务应提交: committed=%v rolledBack=%v", repo.committed, repo.rolledBack)
+	}
+	if msgs[0].Topic != "QA_REQUEST" || msgs[1].Topic != "SYSTEM_EVENT" {
+		t.Fatalf("topic 映射错误: %q, %q", msgs[0].Topic, msgs[1].Topic)
+	}
+	if len(ob.topics) != 2 || ob.topics[0] != mq.TopicQARequest || ob.topics[1] != mq.TopicSystemEvent {
+		t.Fatalf("outbox topic 错误: %v", ob.topics)
+	}
+}
+
+func TestBatchSendMessage_ErrorRollsBackWholeBatch(t *testing.T) {
+	repo := &batchRepo{saveErr: errors.New("db down")}
+	ob := &recordingOutbox{}
+	svc := &messageServiceImpl{repo: repo, outboxRepo: ob}
+
+	_, err := svc.BatchSendMessage(context.Background(), []struct {
+		Topic         int32
+		Content       string
+		Priority      *int32
+		Headers       map[string]string
+		CorrelationID *string
+	}{
+		{Topic: 3, Content: "q1"},
+	})
+	if err == nil {
+		t.Fatal("写库失败必须返回错误，不能把部分成功当全部成功")
+	}
+	if !repo.rolledBack || repo.committed {
+		t.Fatalf("失败应回滚整批: committed=%v rolledBack=%v", repo.committed, repo.rolledBack)
+	}
+	if len(ob.topics) != 0 {
+		t.Fatalf("事务失败不应留下 outbox 事件: %v", ob.topics)
+	}
+}
+
+func TestBatchSendMessage_RejectsInvalidItemBeforeAnyWrite(t *testing.T) {
+	repo := &batchRepo{}
+	ob := &recordingOutbox{}
+	svc := &messageServiceImpl{repo: repo, outboxRepo: ob}
+
+	_, err := svc.BatchSendMessage(context.Background(), []struct {
+		Topic         int32
+		Content       string
+		Priority      *int32
+		Headers       map[string]string
+		CorrelationID *string
+	}{
+		{Topic: 3, Content: "ok"},
+		{Topic: 99, Content: "bad"},
+	})
+	if err == nil {
+		t.Fatal("含非法条目时应拒绝整批")
+	}
+	if !strings.Contains(err.Error(), "第 2 条") {
+		t.Fatalf("错误信息应定位到具体条目: %v", err)
+	}
+	if repo.txCalls != 0 {
+		t.Fatalf("校验失败不应开启事务, calls = %d", repo.txCalls)
+	}
+}
+
+func TestBatchSendMessage_RejectsOversizedBatch(t *testing.T) {
+	svc := &messageServiceImpl{repo: &batchRepo{}, outboxRepo: &recordingOutbox{}}
+	inputs := make([]struct {
+		Topic         int32
+		Content       string
+		Priority      *int32
+		Headers       map[string]string
+		CorrelationID *string
+	}, maxBatchSize+1)
+	if _, err := svc.BatchSendMessage(context.Background(), inputs); err == nil {
+		t.Fatal("超过批量上限应直接拒绝，避免长事务")
 	}
 }
 

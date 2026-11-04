@@ -17,6 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// maxBatchSize 限制单次批量发送的消息数。
+// 整批在一个事务里写入，必须给事务一个确定上界，避免调用方传入超大切片
+// 造成长事务、锁表与内存放大。
+const maxBatchSize = 100
+
 type QuestionService interface {
 	AskQuestion(ctx context.Context, question string, userID *string) (interface{ GetID() string }, error)
 }
@@ -62,9 +67,35 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 		logger.IntField("topic", int(topic)),
 		logger.IntField("content_len", len(content)))
 
+	msg, err := newMessage(topic, content, priority, headers, correlationID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
+		if err := txRepo.SaveMessage(ctx, msg); err != nil {
+			return fmt.Errorf("保存消息失败: %w", err)
+		}
+
+		return s.saveMessageEventToOutbox(ctx, txRepo.DB(), msg)
+	}); err != nil {
+		return nil, err
+	}
+
+	return msg, nil
+}
+
+func newMessage(topic int32, content string, priority *int32, headers map[string]string, correlationID *string) (*model.Message, error) {
+	if !dao.ValidTopic(int(topic)) {
+		return nil, fmt.Errorf("无效的消息主题: %d", topic)
+	}
+
 	priorityVal := int32(2)
 	if priority != nil {
 		priorityVal = *priority
+	}
+	if priorityVal < 1 || priorityVal > 4 {
+		return nil, fmt.Errorf("无效的消息优先级: %d", priorityVal)
 	}
 
 	msg := &model.Message{
@@ -78,18 +109,6 @@ func (s *messageServiceImpl) SendMessage(ctx context.Context, topic int32, conte
 		Status:        "PENDING",
 		CreatedAt:     time.Now(),
 	}
-
-	err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
-		if err := txRepo.SaveMessage(ctx, msg); err != nil {
-			return fmt.Errorf("failed: %w", err)
-		}
-
-		return s.saveMessageEventToOutbox(ctx, txRepo.DB(), msg)
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	return msg, nil
 }
 
@@ -143,22 +162,46 @@ func (s *messageServiceImpl) BatchSendMessage(ctx context.Context, msgs []struct
 	Headers       map[string]string
 	CorrelationID *string
 }) ([]*model.Message, error) {
-	var results []*model.Message
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+	if len(msgs) > maxBatchSize {
+		return nil, fmt.Errorf("批量发送消息数超过上限 %d: %d", maxBatchSize, len(msgs))
+	}
 
-	for _, m := range msgs {
-		msg, err := s.SendMessage(ctx, m.Topic, m.Content, m.Priority, m.Headers, m.CorrelationID)
+	// 先整体校验再写库：任何一条非法都不应该产生副作用。
+	results := make([]*model.Message, 0, len(msgs))
+	for i, m := range msgs {
+		msg, err := newMessage(m.Topic, m.Content, m.Priority, m.Headers, m.CorrelationID)
 		if err != nil {
-			logger.Warn("operation",
-				logger.ErrorField(err))
-			continue
+			return nil, fmt.Errorf("第 %d 条消息无效: %w", i+1, err)
 		}
 		results = append(results, msg)
+	}
+
+	// 整批消息与对应 outbox 事件在同一事务提交：要么全部入队，要么全部回滚。
+	// 逐条 SendMessage 会中途留下已提交的子集，调用方拿到错误重试还会重复入队。
+	if err := s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
+		if err := txRepo.SaveMessages(ctx, results); err != nil {
+			return fmt.Errorf("批量保存消息失败: %w", err)
+		}
+		for _, msg := range results {
+			if err := s.saveMessageEventToOutbox(ctx, txRepo.DB(), msg); err != nil {
+				return fmt.Errorf("保存消息事件失败: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return results, nil
 }
 
 func (s *messageServiceImpl) Subscribe(ctx context.Context, topic int32, consumerGroup string, config map[string]string) error {
+	if !dao.ValidTopic(int(topic)) {
+		return fmt.Errorf("无效的消息主题: %d", topic)
+	}
 	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))),
 		logger.StringField("consumer_group", consumerGroup))
@@ -178,6 +221,9 @@ func (s *messageServiceImpl) Subscribe(ctx context.Context, topic int32, consume
 
 func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup string, topic int32, maxMessages int32, timeoutMs int32) ([]*model.Message, error) {
 	topicStr := dao.TopicString(int(topic))
+	if !dao.ValidTopic(int(topic)) {
+		return nil, fmt.Errorf("无效的消息主题: %d", topic)
+	}
 
 	logger.Info("operation",
 		logger.StringField("consumer_group", consumerGroup),
@@ -189,14 +235,7 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 		limit = 10
 	}
 
-	var msgs []*model.Message
-	var err error
-
-	if topicStr != "" && topicStr != "UNKNOWN(0)" {
-		msgs, err = s.repo.ListPendingMessagesByTopic(ctx, topicStr, limit)
-	} else {
-		msgs, err = s.repo.ListPendingMessages(ctx, limit)
-	}
+	msgs, err := s.repo.ListPendingMessagesByTopic(ctx, topicStr, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查询待处理消息失败: %w", err)
 	}
@@ -255,7 +294,7 @@ func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]
 		return nil, fmt.Errorf("failed: %w", err)
 	}
 
-	topics := []int32{1, 2, 3, 4, 5, 6, 7}
+	topics := []int32{0, 1, 2, 3, 4, 5, 6}
 	var stats []map[string]interface{}
 
 	globalStat := map[string]interface{}{
@@ -289,6 +328,9 @@ func (s *messageServiceImpl) CreateTopic(ctx context.Context, topic int32) error
 	logger.Info("operation",
 		logger.StringField("topic", dao.TopicString(int(topic))))
 
+	if !dao.ValidTopic(int(topic)) {
+		return fmt.Errorf("无效的消息主题: %d", topic)
+	}
 	topicName := dao.TopicString(int(topic))
 
 	return s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
@@ -297,11 +339,16 @@ func (s *messageServiceImpl) CreateTopic(ctx context.Context, topic int32) error
 			"topic":     topicName,
 			"timestamp": time.Now().Format(time.RFC3339),
 		}
-		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), topicName, "system-topic-create", event)
+		// topic 生命周期事件统一进 system_event；直接拿内部大写名当 Kafka topic
+		// 会再次触发「投递成功但无人消费」的命名漂移。
+		return s.outboxRepo.SaveWithTx(ctx, txRepo.DB(), mq.TopicSystemEvent, "system-topic-create", event)
 	})
 }
 
 func (s *messageServiceImpl) DeleteTopic(ctx context.Context, topic int32) error {
+	if !dao.ValidTopic(int(topic)) {
+		return fmt.Errorf("无效的消息主题: %d", topic)
+	}
 	topicStr := dao.TopicString(int(topic))
 	logger.Info("删除消息主题",
 		logger.StringField("topic", topicStr))
@@ -332,6 +379,9 @@ func (s *messageServiceImpl) DeleteTopic(ctx context.Context, topic int32) error
 }
 
 func (s *messageServiceImpl) ClearMessages(ctx context.Context, topic int32) error {
+	if !dao.ValidTopic(int(topic)) {
+		return fmt.Errorf("无效的消息主题: %d", topic)
+	}
 	topicStr := dao.TopicString(int(topic))
 	logger.Info("清除消息",
 		logger.StringField("topic", topicStr))

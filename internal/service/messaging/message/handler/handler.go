@@ -18,8 +18,32 @@ func priorityToInt32(p *pb.Priority) *int32 {
 	if p == nil {
 		return nil
 	}
-	v := int32(*p)
+	// proto Priority 从 0 开始（LOW=0），内部模型约定是 1..4。
+	// 直接透传会把 LOW 存成 0、URGENT 存成 HIGH，消费端读回来整体偏移一格。
+	v := int32(*p) + 1
 	return &v
+}
+
+// topicFromInternal 把存储层的内部 topic 名映射回 proto 枚举。
+func topicFromInternal(topic string) (pb.Topic, bool) {
+	switch topic {
+	case "DATA_COLLECTION":
+		return pb.Topic_DATA_COLLECTION, true
+	case "KNOWLEDGE_EXTRACTION":
+		return pb.Topic_KNOWLEDGE_EXTRACTION, true
+	case "VECTOR_PROCESSING":
+		return pb.Topic_VECTOR_PROCESSING, true
+	case "QA_REQUEST":
+		return pb.Topic_QA_REQUEST, true
+	case "RECOMMENDATION":
+		return pb.Topic_RECOMMENDATION, true
+	case "USER_ACTIVITY":
+		return pb.Topic_USER_ACTIVITY, true
+	case "SYSTEM_EVENT":
+		return pb.Topic_SYSTEM_EVENT, true
+	default:
+		return pb.Topic_DATA_COLLECTION, false
+	}
 }
 
 // SendMessage implements the MessageServiceImpl interface.
@@ -85,10 +109,11 @@ func (s *MessageServiceImpl) BatchSendMessage(ctx context.Context, req *pb.Batch
 	}
 
 	for _, m := range msgs {
+		topicVal, _ := topicFromInternal(m.GetTopic())
 		resp.Responses = append(resp.Responses, &pb.MessageResp{
 			BaseResp:  &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 			MessageId: m.GetID(),
-			Topic:     pb.Topic(1),
+			Topic:     topicVal,
 			Timestamp: m.GetTimestamp(),
 		})
 	}
@@ -132,23 +157,7 @@ func (s *MessageServiceImpl) ConsumeMessages(ctx context.Context, req *pb.Consum
 		headers := make(map[string]string)
 		json.Unmarshal([]byte(m.GetHeaders()), &headers)
 
-		var topicVal pb.Topic
-		switch m.GetTopic() {
-		case "DATA_COLLECTION":
-			topicVal = pb.Topic_DATA_COLLECTION
-		case "KNOWLEDGE_EXTRACTION":
-			topicVal = pb.Topic_KNOWLEDGE_EXTRACTION
-		case "VECTOR_PROCESSING":
-			topicVal = pb.Topic_VECTOR_PROCESSING
-		case "QA_REQUEST":
-			topicVal = pb.Topic_QA_REQUEST
-		case "RECOMMENDATION":
-			topicVal = pb.Topic_RECOMMENDATION
-		case "USER_ACTIVITY":
-			topicVal = pb.Topic_USER_ACTIVITY
-		case "SYSTEM_EVENT":
-			topicVal = pb.Topic_SYSTEM_EVENT
-		}
+		topicVal, _ := topicFromInternal(m.GetTopic())
 
 		var priorityVal pb.Priority
 		switch m.GetPriority() {
@@ -219,23 +228,8 @@ func (s *MessageServiceImpl) GetMessageStats(ctx context.Context, req *pb.EmptyR
 		processed, _ := stat["processed_messages"].(int64)
 		failed, _ := stat["error_messages"].(int64)
 
-		var topicVal pb.Topic
-		switch topicStr {
-		case "DATA_COLLECTION":
-			topicVal = pb.Topic_DATA_COLLECTION
-		case "KNOWLEDGE_EXTRACTION":
-			topicVal = pb.Topic_KNOWLEDGE_EXTRACTION
-		case "VECTOR_PROCESSING":
-			topicVal = pb.Topic_VECTOR_PROCESSING
-		case "QA_REQUEST":
-			topicVal = pb.Topic_QA_REQUEST
-		case "RECOMMENDATION":
-			topicVal = pb.Topic_RECOMMENDATION
-		case "USER_ACTIVITY":
-			topicVal = pb.Topic_USER_ACTIVITY
-		case "SYSTEM_EVENT":
-			topicVal = pb.Topic_SYSTEM_EVENT
-		default:
+		topicVal, ok := topicFromInternal(topicStr)
+		if !ok {
 			continue
 		}
 

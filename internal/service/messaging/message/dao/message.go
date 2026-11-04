@@ -12,6 +12,7 @@ import (
 
 type MessageRepository interface {
 	SaveMessage(ctx context.Context, msg *model.Message) error
+	SaveMessages(ctx context.Context, msgs []*model.Message) error
 	GetMessage(ctx context.Context, id string) (*model.Message, error)
 	UpdateMessageStatus(ctx context.Context, id string, status string) error
 	UpdateMessagesStatus(ctx context.Context, ids []string, status string) error
@@ -42,6 +43,15 @@ func NewMessageRepository(db *gorm.DB) MessageRepository {
 
 func (r *messageRepository) SaveMessage(ctx context.Context, msg *model.Message) error {
 	return r.db.WithContext(ctx).Create(msg).Error
+}
+
+// SaveMessages 用一条多值 INSERT 写入整批消息。
+// 批量发送若逐条 Create，既多 N 次往返，也无法和 outbox 事件放进同一个事务。
+func (r *messageRepository) SaveMessages(ctx context.Context, msgs []*model.Message) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).CreateInBatches(msgs, 100).Error
 }
 
 func (r *messageRepository) GetMessage(ctx context.Context, id string) (*model.Message, error) {
@@ -196,23 +206,33 @@ func UnmarshalHeaders(s string) map[string]string {
 	return m
 }
 
+// TopicString 把 gRPC 的 Topic 枚举值映射为内部 topic 名。
+//
+// proto 枚举从 0 开始（DATA_COLLECTION = 0），历史 DAO 实现却从 1 开始，
+// 于是所有 topic 整体错位一格：DATA_COLLECTION 变成 UNKNOWN(0)，
+// SYSTEM_EVENT 永远不可达，消息被投到相邻业务 topic。枚举边界只保留这一份映射。
 func TopicString(t int) string {
 	switch t {
-	case 1:
+	case 0:
 		return "DATA_COLLECTION"
-	case 2:
+	case 1:
 		return "KNOWLEDGE_EXTRACTION"
-	case 3:
+	case 2:
 		return "VECTOR_PROCESSING"
-	case 4:
+	case 3:
 		return "QA_REQUEST"
-	case 5:
+	case 4:
 		return "RECOMMENDATION"
-	case 6:
+	case 5:
 		return "USER_ACTIVITY"
-	case 7:
+	case 6:
 		return "SYSTEM_EVENT"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", t)
 	}
+}
+
+// ValidTopic 判断 topic 枚举是否落在已定义范围内。
+func ValidTopic(t int) bool {
+	return t >= 0 && t <= 6
 }
