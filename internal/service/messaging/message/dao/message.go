@@ -14,6 +14,7 @@ type MessageRepository interface {
 	SaveMessage(ctx context.Context, msg *model.Message) error
 	GetMessage(ctx context.Context, id string) (*model.Message, error)
 	UpdateMessageStatus(ctx context.Context, id string, status string) error
+	UpdateMessagesStatus(ctx context.Context, ids []string, status string) error
 	ListMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
 	ListPendingMessages(ctx context.Context, limit int) ([]*model.Message, error)
 	ListPendingMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error)
@@ -57,6 +58,21 @@ func (r *messageRepository) GetMessage(ctx context.Context, id string) (*model.M
 
 func (r *messageRepository) UpdateMessageStatus(ctx context.Context, id string, status string) error {
 	return r.db.WithContext(ctx).Model(&model.Message{}).Where("id = ?", id).Update("status", status).Error
+}
+
+// UpdateMessagesStatus 用一条 UPDATE 完成批量确认。
+//
+// 逐条 UpdateMessageStatus 是 N 次数据库往返；调用方还容易「失败 continue、
+// 最后返回 nil」，让客户端把部分失败当成全部成功。单条语句要么全部生效，
+// 要么返回错误由上游重试。
+func (r *messageRepository) UpdateMessagesStatus(ctx context.Context, ids []string, status string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id IN ?", ids).
+		Update("status", status).Error
 }
 
 func (r *messageRepository) ListMessagesByTopic(ctx context.Context, topic string, limit int) ([]*model.Message, error) {

@@ -201,8 +201,12 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 		return nil, fmt.Errorf("查询待处理消息失败: %w", err)
 	}
 
+	ids := make([]string, 0, len(msgs))
 	for _, msg := range msgs {
-		s.repo.UpdateMessageStatus(ctx, msg.ID, "PROCESSED")
+		ids = append(ids, msg.ID)
+	}
+	if err := s.repo.UpdateMessagesStatus(ctx, ids, "PROCESSED"); err != nil {
+		return nil, fmt.Errorf("标记消息已处理失败: %w", err)
 	}
 
 	return msgs, nil
@@ -219,15 +223,30 @@ func (s *messageServiceImpl) BatchAcknowledgeMessages(ctx context.Context, consu
 	logger.Info("operation",
 		logger.IntField("count", len(messageIDs)))
 
-	for _, id := range messageIDs {
-		if err := s.repo.UpdateMessageStatus(ctx, id, "ACKED"); err != nil {
-			logger.Warn("operation",
-				logger.StringField("id", id),
-				logger.ErrorField(err))
-			continue
-		}
+	ids := dedupeNonEmpty(messageIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.repo.UpdateMessagesStatus(ctx, ids, "ACKED"); err != nil {
+		return fmt.Errorf("批量确认消息失败: %w", err)
 	}
 	return nil
+}
+
+func dedupeNonEmpty(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]interface{}, error) {
@@ -385,7 +404,9 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	}
 
 	if messageID != "" {
-		s.repo.UpdateMessageStatus(messageContext(msg), messageID, "PROCESSED_FROM_KAFKA")
+		if err := s.repo.UpdateMessageStatus(messageContext(msg), messageID, "PROCESSED_FROM_KAFKA"); err != nil {
+			return fmt.Errorf("更新消息状态失败: %w", err)
+		}
 	}
 
 	return nil
