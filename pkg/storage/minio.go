@@ -16,49 +16,89 @@ import (
 
 var (
 	minioClient *minio.Client
-	minioOnce   sync.Once
+	minioMu     sync.Mutex
+
+	// 初始化失败不能永久缓存成 sync.Once 的「已完成」：那样第二次调用会返回
+	// (nil, nil)，调用方以为成功，随后在 nil client 上 panic。
+	// 这里只缓存失败结果一小段时间，避免每个请求都去探测一个还没起来的 MinIO，
+	// 同时保留自愈能力——依赖恢复后下一次调用可以真正初始化成功。
+	minioLastErr  error
+	minioRetryAt  time.Time
+	minioInitFunc = initMinioClient
+	minioNow      = time.Now
+)
+
+const (
+	// minioInitTimeout 限制启动探测（BucketExists/MakeBucket）的耗时。
+	// 没有上限时，MinIO 地址不可达会让服务启动流程一直挂住。
+	minioInitTimeout = 10 * time.Second
+	// minioInitRetryInterval 是失败后的负缓存窗口。
+	minioInitRetryInterval = 5 * time.Second
 )
 
 type MinioManager struct {
 	client *minio.Client
 }
 
+// InitMinio 懒初始化 MinIO 客户端并确保桶存在。
+//
+// 并发调用被串行化；成功结果永久复用，失败结果只缓存 minioInitRetryInterval，
+// 之后重新尝试。这样 compose 里 MinIO 晚于网关启动时，存储能力可以自愈，
+// 而不是「第一次失败就永久不可用」。
 func InitMinio() (*minio.Client, error) {
-	var err error
-	minioOnce.Do(func() {
-		cfg := config.GetConfig()
-		minioConfig := cfg.Minio
+	minioMu.Lock()
+	defer minioMu.Unlock()
 
-		minioClient, err = minio.New(minioConfig.Endpoint, &minio.Options{
-			Creds:  credentials.NewStaticV4(minioConfig.AccessKey, minioConfig.SecretKey, ""),
-			Secure: minioConfig.Secure,
-		})
-		if err != nil {
-			err = fmt.Errorf("failed to create minio client: %w", err)
-			return
-		}
+	if minioClient != nil {
+		return minioClient, nil
+	}
+	if minioLastErr != nil && minioNow().Before(minioRetryAt) {
+		return nil, minioLastErr
+	}
 
-		// 检查连接
-		ok, err := minioClient.BucketExists(context.Background(), minioConfig.Bucket)
-		if err != nil {
-			err = fmt.Errorf("failed to check bucket: %w", err)
-			return
-		}
-		if !ok {
-			// 创建 bucket
-			err = minioClient.MakeBucket(context.Background(), minioConfig.Bucket, minio.MakeBucketOptions{})
-			if err != nil {
-				// 检查是否是因为 bucket 已存在
-				exists, existsErr := minioClient.BucketExists(context.Background(), minioConfig.Bucket)
-				if existsErr != nil || !exists {
-					err = fmt.Errorf("failed to create bucket: %w", err)
-					return
-				}
-				err = nil
-			}
-		}
+	client, err := minioInitFunc()
+	if err != nil {
+		minioLastErr = err
+		minioRetryAt = minioNow().Add(minioInitRetryInterval)
+		return nil, err
+	}
+
+	minioClient = client
+	minioLastErr = nil
+	return minioClient, nil
+}
+
+func initMinioClient() (*minio.Client, error) {
+	cfg := config.GetConfig()
+	minioConfig := cfg.Minio
+
+	client, err := minio.New(minioConfig.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(minioConfig.AccessKey, minioConfig.SecretKey, ""),
+		Secure: minioConfig.Secure,
 	})
-	return minioClient, err
+	if err != nil {
+		return nil, fmt.Errorf("failed to create minio client: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), minioInitTimeout)
+	defer cancel()
+
+	ok, err := client.BucketExists(ctx, minioConfig.Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check bucket: %w", err)
+	}
+	if ok {
+		return client, nil
+	}
+
+	if err := client.MakeBucket(ctx, minioConfig.Bucket, minio.MakeBucketOptions{}); err != nil {
+		// 并发初始化时另一个实例可能刚创建了同一个桶：再查一次，存在即视为成功。
+		exists, existsErr := client.BucketExists(ctx, minioConfig.Bucket)
+		if existsErr != nil || !exists {
+			return nil, fmt.Errorf("failed to create bucket: %w", err)
+		}
+	}
+	return client, nil
 }
 
 func NewMinioManager(client *minio.Client) *MinioManager {
@@ -96,7 +136,18 @@ func (m *MinioManager) UploadFileContext(
 }
 
 func (m *MinioManager) DownloadFile(bucketName, objectName string) (io.Reader, error) {
-	obj, err := m.client.GetObject(context.Background(), bucketName, objectName, minio.GetObjectOptions{})
+	return m.DownloadFileContext(context.Background(), bucketName, objectName)
+}
+
+// DownloadFileContext 带调用方 ctx 的下载。
+//
+// 返回的 reader 与 ctx 绑定：调用方必须读完并 Close 后再 cancel，
+// 提前 cancel 会让后续 Read 失败。
+func (m *MinioManager) DownloadFileContext(ctx context.Context, bucketName, objectName string) (io.Reader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	obj, err := m.client.GetObject(ctx, bucketName, objectName, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
@@ -104,7 +155,14 @@ func (m *MinioManager) DownloadFile(bucketName, objectName string) (io.Reader, e
 }
 
 func (m *MinioManager) DeleteFile(bucketName, objectName string) error {
-	err := m.client.RemoveObject(context.Background(), bucketName, objectName, minio.RemoveObjectOptions{})
+	return m.DeleteFileContext(context.Background(), bucketName, objectName)
+}
+
+func (m *MinioManager) DeleteFileContext(ctx context.Context, bucketName, objectName string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := m.client.RemoveObject(ctx, bucketName, objectName, minio.RemoveObjectOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
@@ -112,8 +170,15 @@ func (m *MinioManager) DeleteFile(bucketName, objectName string) error {
 }
 
 func (m *MinioManager) GetFileURL(bucketName, objectName string, expiresIn int) (string, error) {
+	return m.GetFileURLContext(context.Background(), bucketName, objectName, expiresIn)
+}
+
+func (m *MinioManager) GetFileURLContext(ctx context.Context, bucketName, objectName string, expiresIn int) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	reqParams := make(url.Values)
-	url, err := m.client.PresignedGetObject(context.Background(), bucketName, objectName, time.Duration(expiresIn)*time.Second, reqParams)
+	url, err := m.client.PresignedGetObject(ctx, bucketName, objectName, time.Duration(expiresIn)*time.Second, reqParams)
 	if err != nil {
 		return "", fmt.Errorf("failed to get presigned url: %w", err)
 	}
@@ -121,7 +186,14 @@ func (m *MinioManager) GetFileURL(bucketName, objectName string, expiresIn int) 
 }
 
 func (m *MinioManager) FileExists(bucketName, objectName string) (bool, error) {
-	_, err := m.client.StatObject(context.Background(), bucketName, objectName, minio.StatObjectOptions{})
+	return m.FileExistsContext(context.Background(), bucketName, objectName)
+}
+
+func (m *MinioManager) FileExistsContext(ctx context.Context, bucketName, objectName string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	_, err := m.client.StatObject(ctx, bucketName, objectName, minio.StatObjectOptions{})
 	if err != nil {
 		errResp := minio.ToErrorResponse(err)
 		if errResp.Code == "NoSuchKey" {
