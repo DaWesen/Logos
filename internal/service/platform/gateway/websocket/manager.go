@@ -258,34 +258,35 @@ func (m *ConnectionManager) GetUserConnections(userID string) []*Connection {
 }
 
 func (m *ConnectionManager) SendMessageToUser(userID string, message []byte) {
-	connections := m.GetUserConnections(userID)
-	for _, conn := range connections {
-		select {
-		case conn.Send <- message:
-		default:
-		}
+	for _, conn := range m.GetUserConnections(userID) {
+		// 必须走 pushToConn：直接 select 会绕过 IsClosed 判断、丢弃计数、
+		// 慢客户端驱逐和丢弃指标，同一次拥塞在两条路径上表现完全不同。
+		pushToConn(conn, message)
 	}
 }
 
 func (m *ConnectionManager) SendMessageToSession(sessionID string, message []byte) {
 	if conn, exists := m.GetConnection(sessionID); exists {
-		select {
-		case conn.Send <- message:
-		default:
-		}
+		pushToConn(conn, message)
 	}
 }
 
+// BroadcastMessageExcept 广播给除 exceptUserID 之外的全部连接。
+//
+// 先拍快照再释放读锁：pushToConn 在缓冲满时会取 conn.mu、打指标、写日志，
+// 这些都可能阻塞；持锁做整轮扇出会让 AddConnection/RemoveConnection 的
+// 写锁一直排队，表现为「广播高峰时新连接建不进来、断开的连接回收不掉」。
 func (m *ConnectionManager) BroadcastMessageExcept(message []byte, exceptUserID string) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
+	conns := make([]*Connection, 0, len(m.connections))
 	for _, conn := range m.connections {
 		if conn.UserID != exceptUserID {
-			select {
-			case conn.Send <- message:
-			default:
-			}
+			conns = append(conns, conn)
 		}
+	}
+	m.mu.RUnlock()
+
+	for _, conn := range conns {
+		pushToConn(conn, message)
 	}
 }

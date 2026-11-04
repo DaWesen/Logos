@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +14,7 @@ import (
 	"Logos/internal/service/platform/gateway"
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/uploadguard"
 
 	pb "Logos/proto_gen/chat"
 	pbModeration "Logos/proto_gen/moderation"
@@ -61,26 +60,31 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 		return
 	}
 
+	if !uploadguard.LimitBody(c.Writer, c.Request, uploadguard.MaxChatMediaBytes+uploadguard.RequestOverhead) {
+		c.JSON(http.StatusRequestEntityTooLarge, model.BadRequest("file too large (max 500MB)"))
+		return
+	}
+
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
+		if uploadguard.IsTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, model.BadRequest("file too large (max 500MB)"))
+			return
+		}
 		logger.Error("UploadChatMedia: FormFile解析失败", logger.ErrorField(err), logger.StringField("content_type", c.GetHeader("Content-Type")))
 		c.JSON(http.StatusBadRequest, model.BadRequest("file required: "+err.Error()))
 		return
 	}
 	defer file.Close()
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, model.InternalError("read file failed"))
-		return
-	}
-
-	if len(fileData) > 500*1024*1024 {
+	// 先看 multipart 解析出的大小，再决定是否上传；不能先 ReadAll 再判断，
+	// 否则一个超大文件会先把进程内存打满。
+	if header.Size > uploadguard.MaxChatMediaBytes {
 		c.JSON(http.StatusBadRequest, model.BadRequest("file too large (max 500MB)"))
 		return
 	}
 
-	ext := strings.ToLower(filepath.Ext(header.Filename))
+	ext := uploadguard.SanitizeExt(header.Filename)
 	msgType := detectMediaType(ext)
 	objectKey := fmt.Sprintf("chat-media/%s/%s%s", time.Now().Format("2006/01/02"), uuid.New().String(), ext)
 
@@ -90,7 +94,12 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 		bucket = "logos"
 	}
 
-	err = h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), header.Header.Get("Content-Type"))
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	// 流式上传：file 是 multipart 的临时文件/内存段，大小已确认，不需要再整份读一遍。
+	err = h.MinioManager.UploadFile(bucket, objectKey, file, header.Size, contentType)
 	if err != nil {
 		logger.Error("上传聊天媒体失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("upload failed"))
@@ -99,7 +108,7 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 
 	proxyURL := "/api/v1/file/minio/" + objectKey
 
-	mediaMeta := buildMediaMeta(msgType, ext, int64(len(fileData)), header.Filename)
+	mediaMeta := buildMediaMeta(msgType, ext, header.Size, header.Filename)
 	metaBytes, _ := json.Marshal(mediaMeta)
 
 	c.JSON(http.StatusOK, model.Response{
@@ -617,10 +626,13 @@ func (h *Handler) GetConversationList(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	// cursor 可选：非空时服务端走 keyset 分页，page 被忽略。
+	cursor := c.Query("cursor")
 
 	resp, err := h.ChatClient.GetConversationList(c.Request.Context(), &pb.GetConversationListRequest{
 		Page:     int32(page),
 		PageSize: int32(pageSize),
+		Cursor:   cursor,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
@@ -835,6 +847,13 @@ func (h *Handler) UpdateGroupAvatar(c *gin.Context) {
 		return
 	}
 
+	// 先限流请求体，再解析表单：PostForm 会触发 multipart 解析，
+	// 如果在它之后才包 MaxBytesReader，限制就形同虚设。
+	fileData, ext, contentType, ok := readImageUpload(c, "avatar")
+	if !ok {
+		return
+	}
+
 	groupID := c.PostForm("group_id")
 	if groupID == "" {
 		groupID = c.Query("group_id")
@@ -842,30 +861,6 @@ func (h *Handler) UpdateGroupAvatar(c *gin.Context) {
 	if groupID == "" {
 		c.JSON(http.StatusBadRequest, model.BadRequest("请提供群组ID"))
 		return
-	}
-
-	header, err := c.FormFile("avatar")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, model.BadRequest("请上传头像文件"))
-		return
-	}
-
-	file, err := header.Open()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, model.InternalError("打开文件失败"))
-		return
-	}
-	defer file.Close()
-
-	fileData := make([]byte, header.Size)
-	if _, err := file.Read(fileData); err != nil {
-		c.JSON(http.StatusInternalServerError, model.InternalError("读取文件失败"))
-		return
-	}
-
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
-		ext = ".jpg"
 	}
 	objectKey := fmt.Sprintf("group-avatars/%s/%s%s", time.Now().Format("2006/01/02"), uuid.New().String(), ext)
 
@@ -875,7 +870,7 @@ func (h *Handler) UpdateGroupAvatar(c *gin.Context) {
 		bucket = "logos"
 	}
 
-	if err := h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), header.Size, header.Header.Get("Content-Type")); err != nil {
+	if err := h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType); err != nil {
 		logger.Error("上传群头像失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("上传失败"))
 		return

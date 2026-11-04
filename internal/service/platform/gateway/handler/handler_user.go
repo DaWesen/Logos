@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"Logos/config"
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 
 	pb "Logos/proto_gen/user"
 
@@ -309,32 +309,9 @@ func (h *Handler) UpdateAvatar(c *gin.Context) {
 		return
 	}
 
-	header, err := c.FormFile("avatar")
-	if err != nil {
-		logger.Error("Failed to get avatar file", logger.ErrorField(err))
-		c.JSON(http.StatusBadRequest, model.BadRequest("请上传头像文件"))
+	fileData, ext, contentType, ok := readImageUpload(c, "avatar")
+	if !ok {
 		return
-	}
-
-	file, err := header.Open()
-	if err != nil {
-		logger.Error("Failed to open avatar file", logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, model.InternalError("打开文件失败"))
-		return
-	}
-	defer file.Close()
-
-	fileData := make([]byte, header.Size)
-	_, err = file.Read(fileData)
-	if err != nil {
-		logger.Error("Failed to read avatar file", logger.ErrorField(err))
-		c.JSON(http.StatusInternalServerError, model.InternalError("读取文件失败"))
-		return
-	}
-
-	ext := strings.ToLower(filepath.Ext(header.Filename))
-	if ext == "" {
-		ext = ".jpg"
 	}
 	objectKey := fmt.Sprintf("avatars/%s/%s%s", time.Now().Format("2006/01/02"), uuid.New().String(), ext)
 
@@ -344,7 +321,7 @@ func (h *Handler) UpdateAvatar(c *gin.Context) {
 		bucket = "logos"
 	}
 
-	err = h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), header.Size, header.Header.Get("Content-Type"))
+	err := h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType)
 	if err != nil {
 		logger.Error("上传头像失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("上传失败"))
@@ -459,13 +436,9 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 				req.PageSize = int32(pageSize)
 			}
 		}
-		// 默认值
-		if req.Page <= 0 {
-			req.Page = 1
-		}
-		if req.PageSize <= 0 {
-			req.PageSize = 20
-		}
+		// 默认值与上限统一走 pkg/pagination，避免网关和服务端各写一套。
+		page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
+		req.Page, req.PageSize = int32(page), int32(pageSize)
 	}
 
 	logger.Info("Searching users", logger.StringField("keyword", req.Keyword))

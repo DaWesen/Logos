@@ -10,10 +10,15 @@ import (
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/cache"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	"Logos/pkg/ratelimit"
 
 	"github.com/gin-gonic/gin"
 )
+
+// localFallback 是 Redis 不可用时的单机兜底。
+// 全局一份即可：它的状态本来就只代表本进程，不需要按接口再拆。
+var localFallback = ratelimit.NewLocalLimiter()
 
 // 限流阈值：各层职责不同，阈值必须分层设置。
 // 若所有层使用同一个巨大阈值，实际生效的只有最宽松的那一层，其余形同虚设。
@@ -56,11 +61,17 @@ func checkGlobalRateLimit(c *gin.Context, ip, path, method string, _ string, cac
 		time.Minute,
 	)
 
-	allowed, err := limiter.Allow(context.Background(), globalKey)
+	allowed, err := limiter.Allow(c.Request.Context(), globalKey)
 	if err != nil {
+		obs.RecordRateLimitDegraded(c.Request.Context(), "global")
 		logger.Warn("global rate limit check failed",
 			logger.ErrorField(err))
-		return true
+		// Redis 不可用时不能直接放行：退化为单机固定窗口，
+		// 仍按原来的全站配额拦截，避免依赖故障变成无限流状态。
+		allowed = localFallback.Allow(globalKey, globalRatePerMinute, time.Minute)
+		if allowed {
+			return true
+		}
 	}
 
 	if !allowed {
@@ -121,16 +132,24 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 		window,
 	)
 
-	allowed, err := limiter.Allow(context.Background(), userKey)
+	allowed, err := limiter.Allow(c.Request.Context(), userKey)
 	if err != nil {
+		obs.RecordRateLimitDegraded(c.Request.Context(), "user")
 		logger.Warn("operation",
 			logger.StringField("user_id", userID),
 			logger.ErrorField(err))
-		return true
+		if localFallback.Allow(userKey, rate, window) {
+			return true
+		}
+		// 本地兜底也超限：沿用 429 语义，让客户端退避。
+		c.Header("Retry-After", strconv.FormatInt(int64(window.Seconds()), 10))
+		c.JSON(http.StatusTooManyRequests, model.Error(429, "operation"))
+		c.Abort()
+		return false
 	}
 
 	if !allowed {
-		remaining, _ := limiter.GetRemaining(context.Background(), userKey)
+		remaining, _ := limiter.GetRemaining(c.Request.Context(), userKey)
 
 		logger.Warn("operation",
 			logger.StringField("user_id", userID),
@@ -146,7 +165,7 @@ func checkUserRateLimit(c *gin.Context, userID, path string, cache cache.Cache) 
 		return false
 	}
 
-	remaining, _ := limiter.GetRemaining(context.Background(), userKey)
+	remaining, _ := limiter.GetRemaining(c.Request.Context(), userKey)
 	c.Header("X-RateLimit-Remaining", strconv.FormatInt(remaining, 10))
 
 	return true
@@ -164,13 +183,17 @@ func IPBasedRateLimit(cache cache.Cache, requests int, window time.Duration) gin
 
 		limiter := ratelimit.NewFixedWindowLimiter(cache, requests, window)
 
-		allowed, err := limiter.Allow(context.Background(), key)
+		allowed, err := limiter.Allow(c.Request.Context(), key)
 		if err != nil {
+			obs.RecordRateLimitDegraded(c.Request.Context(), "ip")
 			logger.Warn("IP rate limit",
 				logger.StringField("ip", ip),
 				logger.ErrorField(err))
-			c.Next()
-			return
+			if localFallback.Allow(key, requests, window) {
+				c.Next()
+				return
+			}
+			allowed = false
 		}
 
 		if !allowed {
@@ -214,13 +237,24 @@ func BurstProtection(cache cache.Cache, threshold int, cooldown time.Duration) g
 
 		burstKey := fmt.Sprintf("burst:%s", ip)
 
-		current, err := cache.IncrBy(context.Background(), burstKey, 1)
+		current, err := cache.IncrBy(c.Request.Context(), burstKey, 1)
 		if err != nil {
-			c.Next()
+			obs.RecordRateLimitDegraded(c.Request.Context(), "burst")
+			logger.Warn("burst protection degraded to local limiter",
+				logger.StringField("ip", ip),
+				logger.ErrorField(err))
+			if localFallback.Allow(burstKey, threshold, cooldown) {
+				c.Next()
+				return
+			}
+			c.JSON(http.StatusForbidden, model.Error(403, "operation"))
+			c.Abort()
 			return
 		}
 
 		if current == 1 {
+			// 封禁状态必须独立于请求生命周期：请求取消后仍要落盘，
+			// 否则攻击者可以用「发起即断开」绕过封禁。
 			cache.Expire(context.Background(), burstKey, cooldown)
 		}
 
@@ -230,6 +264,7 @@ func BurstProtection(cache cache.Cache, threshold int, cooldown time.Duration) g
 				logger.Int64Field("count", current))
 
 			blockedKey := fmt.Sprintf("blocked:%s", ip)
+			// 同上：封禁写入不随请求取消而回滚。
 			cache.Set(context.Background(), blockedKey, "1", cooldown*2)
 
 			c.JSON(http.StatusForbidden, model.Error(403, "operation"))

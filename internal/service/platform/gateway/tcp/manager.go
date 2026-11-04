@@ -126,14 +126,10 @@ func (m *ConnectionManager) GetUserConnections(userID string) []*TCPConnection {
 }
 
 func (m *ConnectionManager) SendMessageToUser(userID string, message []byte) {
-	conns := m.GetUserConnections(userID)
-	for _, conn := range conns {
-		select {
-		case conn.Send <- message:
-		default:
-			logger.Warn("TCP: 用户发送通道已满，跳过",
-				logger.StringField("user_id", userID))
-		}
+	for _, conn := range m.GetUserConnections(userID) {
+		// 走 pushToTCP 而不是直接 select：只有统一入口才会统计连续丢弃、
+		// 触发慢客户端驱逐并打指标；否则同一次拥塞在 TCP 侧完全不可观测。
+		pushToTCP(conn, message)
 	}
 }
 
@@ -142,27 +138,29 @@ func (m *ConnectionManager) SendMessageToSession(sessionID string, message []byt
 	conn, ok := m.connections[sessionID]
 	m.mu.RUnlock()
 
-	if !ok || conn.IsClosed {
+	if !ok {
 		return
 	}
-
-	select {
-	case conn.Send <- message:
-	default:
-	}
+	// IsClosed 判断与计数逻辑都收敛到 pushToTCP，避免两处判断时机不一致
+	// （旧实现先判后发，中间连接被关闭时仍会写入 Send）。
+	pushToTCP(conn, message)
 }
 
+// BroadcastMessageExcept 广播给除 exceptUserID 之外的全部连接。
+// 快照在锁内完成、投递在锁外进行：pushToTCP 可能阻塞在日志/指标上，
+// 持读锁做整轮扇出会拖住 Add/RemoveConnection 的写锁。
 func (m *ConnectionManager) BroadcastMessageExcept(message []byte, exceptUserID string) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
+	conns := make([]*TCPConnection, 0, len(m.connections))
 	for _, conn := range m.connections {
-		if conn.IsClosed || conn.UserID == "" || conn.UserID == exceptUserID {
+		if conn.UserID == "" || conn.UserID == exceptUserID {
 			continue
 		}
-		select {
-		case conn.Send <- message:
-		default:
-		}
+		conns = append(conns, conn)
+	}
+	m.mu.RUnlock()
+
+	for _, conn := range conns {
+		pushToTCP(conn, message)
 	}
 }

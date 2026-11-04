@@ -50,9 +50,17 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
+	// 必须在任何读取 ClientIP 的中间件之前完成：默认不信任代理，
+	// 否则客户端可以伪造 X-Forwarded-For 绕过按 IP 的限流。
+	if err := applyTrustedProxies(r); err != nil {
+		logger.Warn("TRUSTED_PROXIES 配置无效，已拒绝所有代理", logger.ErrorField(err))
+		_ = r.SetTrustedProxies(nil)
+	}
+
 	r.Use(middleware.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logger())
+	// CORS 头放在最前面：即使后面被限流返回 429，浏览器也能读到真实状态码。
 	r.Use(middleware.CORS())
 	r.Use(promMiddleware())
 	r.Use(middleware.MetricsReporterMiddleware())
@@ -62,6 +70,11 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	// IP 层：单 IP 全接口合计 600 次/分钟；突发保护：单 IP 1000 次/5 分钟
 	r.Use(middleware.IPBasedRateLimit(redisCache, 600, time.Minute))
 	r.Use(middleware.BurstProtection(redisCache, 1000, 5*time.Minute))
+	// 放在限流之后：被限流挡掉的请求不应该再产生「超大请求」日志。
+	r.Use(middleware.BodyLimit(middleware.DefaultJSONBodyLimit))
+	// 预检短路放在限流之后：否则攻击者可以无限发 OPTIONS 绕过所有配额。
+	// 鉴权不受影响（预检本来就不带凭据，且会在路由前返回）。
+	r.Use(middleware.Preflight())
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok", "service": "logos-gateway"})
@@ -84,16 +97,20 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		logger.Info("MinIO initialized successfully")
 	}
 	minioManager := storage.NewMinioManager(minioClient)
-	uploadHandler := ai.NewFileUploadHandler(minioManager, cfg.Minio.Bucket)
+	// 桶名必须与 qqbridge 的默认值一致：两边各自写默认值时最容易漂移，
+	// 表现是「上传成功、访问 404」。
+	bucket := cfg.Minio.Bucket
+	if bucket == "" {
+		bucket = "logos-documents"
+	}
+	uploadHandler := ai.NewFileUploadHandler(minioManager, bucket)
 
 	api := r.Group("/api/v1")
 
 	file := api.Group("/file")
 	{
-		file.POST("/upload", uploadHandler.UploadFile)
-		file.POST("/upload/multiple", uploadHandler.UploadMultipleFiles)
-		file.DELETE("", uploadHandler.DeleteFile)
-		file.GET("/url", uploadHandler.GetFileURL)
+		// 媒体代理必须公开：<img>/<video> 标签无法携带 Authorization 头，
+		// 安全性依赖对象键不可猜测（UUID）与代理层的类型白名单。
 		file.GET("/minio/*path", uploadHandler.ProxyMinioFile)
 	}
 
@@ -113,7 +130,7 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 		logger.Error("Failed to init monitoring client", logger.ErrorField(err))
 	} else {
 		logger.Info("MonitoringClient initialized successfully")
-		middleware.MonitoringClient = monitoringClient
+		middleware.InitLogDispatcher(monitoringClient)
 		// 初始化指标上报器（使用包装客户端）
 		monitoringWrapper, wrapErr := client.NewMonitoringClientFromConfig(cfg)
 		if wrapErr != nil {
@@ -298,6 +315,13 @@ func SetupRouter(wsHandler *websocket.Handler) *gin.Engine {
 	authApi := api.Group("")
 	authApi.Use(middleware.Auth(auth.NewRevoker(redisCache)))
 	{
+		// 通用文件写接口必须鉴权：否则任何人都能往对象存储写文件（磁盘耗尽），
+		// 或凭一个已知 storage_path 删除对象、换取长期预签名 URL。
+		authApi.POST("/file/upload", uploadHandler.UploadFile)
+		authApi.POST("/file/upload/multiple", uploadHandler.UploadMultipleFiles)
+		authApi.DELETE("/file", uploadHandler.DeleteFile)
+		authApi.GET("/file/url", uploadHandler.GetFileURL)
+
 		// 登出：需要认证（白名单已改为精确匹配，不会被 /api/v1/auth 前缀放行）
 		authApi.POST("/auth/logout", h.Logout)
 		// 用户相关

@@ -1,19 +1,13 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"time"
-
-	pb "Logos/proto_gen/monitoring"
 
 	"Logos/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
-
-// MonitoringClient 用于日志上报，由 SetupRouter 注入
-var MonitoringClient pb.MonitoringServiceClient
 
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -43,34 +37,30 @@ func Logger() gin.HandlerFunc {
 			logger.StringField("path", path),
 		)
 
-		// 异步上报日志到 monitoring 服务
-		if MonitoringClient != nil {
-			go func() {
-				level := "INFO"
-				if statusCode >= 500 {
-					level = "ERROR"
-				} else if statusCode >= 400 {
-					level = "WARN"
-				}
-				msg := fmt.Sprintf("%s %s %d %s", method, path, statusCode, latency)
-				fields := map[string]string{
-					"request_id":  requestID,
-					"method":      method,
-					"path":        path,
-					"query":       query,
-					"status_code": fmt.Sprintf("%d", statusCode),
-					"latency":     latency.String(),
-					"client_ip":   c.ClientIP(),
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				_, _ = MonitoringClient.RecordLog(ctx, &pb.RecordLogReq{
-					ServiceName: "logos.gateway",
-					Level:       level,
-					Message:     msg,
-					Fields:      fields,
-				})
-			}()
+		// 异步上报日志到 monitoring 服务。
+		//
+		// 这里不再为每个请求起一个 goroutine：请求量由外部决定，监控服务一慢，
+		// 每个请求都会留下一个阻塞在 RPC 上的 goroutine，最终把网关自己拖垮。
+		// 改为投递到有界队列，队列满时丢日志并计数，主链路永不等待观测系统。
+		level := "INFO"
+		if statusCode >= 500 {
+			level = "ERROR"
+		} else if statusCode >= 400 {
+			level = "WARN"
 		}
+		getLogDispatcher().enqueue(logRecord{
+			serviceName: "logos.gateway",
+			level:       level,
+			message:     fmt.Sprintf("%s %s %d %s", method, path, statusCode, latency),
+			fields: map[string]string{
+				"request_id":  requestID,
+				"method":      method,
+				"path":        path,
+				"query":       query,
+				"status_code": fmt.Sprintf("%d", statusCode),
+				"latency":     latency.String(),
+				"client_ip":   c.ClientIP(),
+			},
+		})
 	}
 }

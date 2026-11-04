@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -75,11 +76,82 @@ func (b *Broadcaster) Channel() string {
 	return b.channel
 }
 
+// broadcastPayloadLimit 单条跨节点消息的字节上限（1 MiB）。
+// PubSub 消息属于外部输入（其他节点或误接入的客户端）：不设上限时，
+// 一条异常大消息会先被 Redis 客户端整条读进内存，再整体 json.Unmarshal。
+const broadcastPayloadLimit = 1 << 20
+
+var errBroadcastPayloadTooLarge = errors.New("broadcast payload 超过上限")
+
+// decodeBroadcastPayload 校验长度后反序列化。
+// 长度检查必须在 Unmarshal 之前，否则上限就失去意义。
+func decodeBroadcastPayload(payload []byte) (*BroadcastMessage, error) {
+	if len(payload) > broadcastPayloadLimit {
+		return nil, errBroadcastPayloadTooLarge
+	}
+	var bm BroadcastMessage
+	if err := json.Unmarshal(payload, &bm); err != nil {
+		return nil, err
+	}
+	return &bm, nil
+}
+
+// validateTarget 在发布侧校验目标模式与必填字段。
+//
+// 非法 target_mode 在接收侧只会「匹配不到任何分支」，消息被静默丢弃：
+// 调用方看到 Publish 成功，用户永远收不到。宁可在这里报错。
+func validateTarget(msg *BroadcastMessage) error {
+	if msg == nil {
+		return errors.New("broadcast: 消息为空")
+	}
+	if len(msg.Payload) == 0 {
+		return errors.New("broadcast: payload 为空")
+	}
+	switch msg.TargetMode {
+	case TargetModeUser:
+		if msg.TargetUserID == "" {
+			return fmt.Errorf("broadcast: target_mode=user 缺少 target_user_id")
+		}
+	case TargetModeSession:
+		if msg.TargetUserID == "" || msg.TargetSessionID == "" {
+			return fmt.Errorf("broadcast: target_mode=session 缺少 target_user_id 或 target_session_id")
+		}
+	case TargetModeUsers:
+		if len(msg.TargetUserIDs) == 0 {
+			return fmt.Errorf("broadcast: target_mode=users 的 target_user_ids 为空")
+		}
+	case TargetModeBroadcast:
+		// 合法：可选 except_user_id
+	default:
+		return fmt.Errorf("broadcast: 未知 target_mode %q", msg.TargetMode)
+	}
+	return nil
+}
+
+// safeHandle 隔离 handler 的 panic。
+//
+// handler 在订阅 goroutine 内同步执行，未 recover 的 panic 会直接终止进程——
+// 一条格式异常的远端消息就能把整个网关打挂，且没有任何「消息内容导致崩溃」的线索。
+func (b *Broadcaster) safeHandle(handler MessageHandler, msg *BroadcastMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("broadcaster handler panic",
+				logger.StringField("channel", b.channel),
+				logger.StringField("target_mode", msg.TargetMode),
+				logger.StringField("panic", fmt.Sprint(r)))
+		}
+	}()
+	handler(msg)
+}
+
 // Publish 发布消息到 PubSub channel
 // 仅序列化 + Publish，不做本地投递（本地投递由 UnifiedConnectionManager 负责）
 func (b *Broadcaster) Publish(ctx context.Context, msg *BroadcastMessage) error {
 	if b == nil || b.rdb == nil {
 		return nil
+	}
+	if err := validateTarget(msg); err != nil {
+		return err
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -174,9 +246,9 @@ func (b *Broadcaster) subscribeOnce(ctx context.Context, handler MessageHandler)
 			if !ok {
 				return nil
 			}
-			var bm BroadcastMessage
-			if err := json.Unmarshal([]byte(msg.Payload), &bm); err != nil {
-				logger.Warn("broadcaster unmarshal failed",
+			bm, err := decodeBroadcastPayload([]byte(msg.Payload))
+			if err != nil {
+				logger.Warn("broadcaster 消息无法解析，已跳过",
 					logger.ErrorField(err),
 					logger.StringField("channel", b.channel))
 				continue
@@ -185,7 +257,7 @@ func (b *Broadcaster) subscribeOnce(ctx context.Context, handler MessageHandler)
 			if bm.SourceNodeID == b.nodeID {
 				continue
 			}
-			handler(&bm)
+			b.safeHandle(handler, bm)
 		}
 	}
 }

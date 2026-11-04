@@ -327,6 +327,7 @@ func (h *Handler) ProxyProcessService(c *gin.Context) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = processAPIClient.Transport
 	proxy.Director = func(req *http.Request) {
 		req.URL.Scheme = target.Scheme
 		req.URL.Host = target.Host

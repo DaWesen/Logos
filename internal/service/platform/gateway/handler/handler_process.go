@@ -7,13 +7,28 @@ import (
 	"mime/multipart"
 	"net/http"
 
+	"Logos/pkg/uploadguard"
+
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) ProcessProcessFile(c *gin.Context) {
+	if !uploadguard.LimitBody(c.Writer, c.Request, uploadguard.MaxDocumentBytes+uploadguard.RequestOverhead) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+		return
+	}
+
 	file, err := c.FormFile("file")
 	if err != nil {
+		if uploadguard.IsTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请上传文件"})
+		return
+	}
+	if file.Size > uploadguard.MaxDocumentBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
 		return
 	}
 
@@ -24,8 +39,12 @@ func (h *Handler) ProcessProcessFile(c *gin.Context) {
 	}
 	defer src.Close()
 
-	fileData, err := io.ReadAll(src)
+	fileData, err := uploadguard.ReadAll(src, file.Size, uploadguard.MaxDocumentBytes)
 	if err != nil {
+		if uploadguard.IsTooLarge(err) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（最大 100MB）"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
 		return
 	}
@@ -52,7 +71,7 @@ func (h *Handler) ProcessProcessFile(c *gin.Context) {
 
 	writer.Close()
 
-	req, err := http.NewRequest("POST", h.ProcessServiceURL+"/api/ai/process/file", body)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, h.ProcessServiceURL+"/api/ai/process/file", body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -61,8 +80,7 @@ func (h *Handler) ProcessProcessFile(c *gin.Context) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processUploadClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理文件请求失败"})
 		return
@@ -91,7 +109,7 @@ func (h *Handler) ProcessProcessURL(c *gin.Context) {
 		return
 	}
 
-	req, err := http.NewRequest("POST", h.ProcessServiceURL+"/api/ai/process/url", bytes.NewReader(reqJSON))
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, h.ProcessServiceURL+"/api/ai/process/url", bytes.NewReader(reqJSON))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -100,8 +118,7 @@ func (h *Handler) ProcessProcessURL(c *gin.Context) {
 	req.Header.Set("Content-Type", "application/json")
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "处理URL请求失败"})
 		return
@@ -127,7 +144,7 @@ func (h *Handler) ProcessListDocuments(c *gin.Context) {
 		url += "&status=" + statusStr
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -135,8 +152,7 @@ func (h *Handler) ProcessListDocuments(c *gin.Context) {
 
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取文档列表失败"})
 		return
@@ -155,7 +171,7 @@ func (h *Handler) ProcessListDocuments(c *gin.Context) {
 func (h *Handler) ProcessGetDocument(c *gin.Context) {
 	id := c.Param("id")
 
-	req, err := http.NewRequest("GET", h.ProcessServiceURL+"/api/ai/process/documents/"+id, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, h.ProcessServiceURL+"/api/ai/process/documents/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -163,8 +179,7 @@ func (h *Handler) ProcessGetDocument(c *gin.Context) {
 
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取文档失败"})
 		return
@@ -183,7 +198,7 @@ func (h *Handler) ProcessGetDocument(c *gin.Context) {
 func (h *Handler) ProcessDeleteDocument(c *gin.Context) {
 	id := c.Param("id")
 
-	req, err := http.NewRequest("DELETE", h.ProcessServiceURL+"/api/ai/process/documents/"+id, nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodDelete, h.ProcessServiceURL+"/api/ai/process/documents/"+id, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -191,8 +206,7 @@ func (h *Handler) ProcessDeleteDocument(c *gin.Context) {
 
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除文档失败"})
 		return
@@ -211,7 +225,7 @@ func (h *Handler) ProcessDeleteDocument(c *gin.Context) {
 func (h *Handler) ProcessReprocessDocument(c *gin.Context) {
 	id := c.Param("id")
 
-	req, err := http.NewRequest("POST", h.ProcessServiceURL+"/api/ai/process/documents/"+id+"/reprocess", nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, h.ProcessServiceURL+"/api/ai/process/documents/"+id+"/reprocess", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -219,8 +233,7 @@ func (h *Handler) ProcessReprocessDocument(c *gin.Context) {
 
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新处理文档失败"})
 		return
@@ -239,7 +252,7 @@ func (h *Handler) ProcessReprocessDocument(c *gin.Context) {
 func (h *Handler) ProcessGetDocumentChunks(c *gin.Context) {
 	id := c.Param("id")
 
-	req, err := http.NewRequest("GET", h.ProcessServiceURL+"/api/ai/process/documents/"+id+"/chunks", nil)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, h.ProcessServiceURL+"/api/ai/process/documents/"+id+"/chunks", nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return
@@ -247,8 +260,7 @@ func (h *Handler) ProcessGetDocumentChunks(c *gin.Context) {
 
 	h.forwardAuthHeaders(c, req)
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := processAPIClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取文档块失败"})
 		return

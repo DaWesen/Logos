@@ -158,6 +158,7 @@ func main() {
 	log.Printf("连接排空完成: websocket remaining=%d tcp remaining=%d", wsRemaining, tcpRemaining)
 
 	middleware.StopMetricsReporter()
+	middleware.StopLogDispatcher()
 	if monitoringClient != nil {
 		shutdownCtx, shutdownCancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = monitoringClient.UpdateServiceStatus(shutdownCtx, "logos.gateway", "DOWN", nil, nil)
