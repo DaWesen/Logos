@@ -6,14 +6,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
 var (
-	cfg     *Config
-	cfgOnce sync.Once
+	cfg      *Config
+	cfgOnce  sync.Once
+	cfgReady atomic.Bool
 )
 
 // Config 应用配置结构体
@@ -61,6 +63,10 @@ type GatewayCfg struct {
 	PubSubChannel   string   `mapstructure:"pubsub_channel"`
 	EnableBroadcast bool     `mapstructure:"enable_broadcast"`
 	AllowedOrigins  []string `mapstructure:"allowed_origins"`
+	// PublicBaseURL 是外部系统（如 QQ Bridge / LLOneBot）访问本服务的绝对地址，
+	// 例如 https://chat.example.com。媒体代理返回的是 /api/v1/... 相对路径，
+	// 只对浏览器同源有效；出站到外部系统前必须拼成绝对 URL。
+	PublicBaseURL string `mapstructure:"public_base_url"`
 }
 
 // Ports 服务端口配置
@@ -229,6 +235,10 @@ type GRPCClient struct {
 	ConnTimeout    string `mapstructure:"conn_timeout"`
 	MaxRecvMsgSize int    `mapstructure:"max_recv_msg_size"`
 	MaxSendMsgSize int    `mapstructure:"max_send_msg_size"`
+	// RetrySafeMethods 追加允许自动重试的只读/幂等 RPC（完整路径或方法名）。
+	// 重试默认走白名单（见 pkg/governance/retry_policy.go）：新增的写接口
+	// 天然不重试，避免「忘了排除」变成重复扣费。
+	RetrySafeMethods []string `mapstructure:"retry_safe_methods"`
 }
 
 // GRPCServer gRPC服务器配置
@@ -262,6 +272,16 @@ type QQBridge struct {
 	AutoRegisterUser bool   `mapstructure:"auto_register_user"`
 	AutoCreateGroup  bool   `mapstructure:"auto_create_group"`
 	TempDir          string `mapstructure:"temp_dir"`
+	// FastConcurrency 快速路径（直接调 Bot）的并发上限。
+	// 每条消息都会触发一次 LLM 调用，必须可配：机器规格和模型配额不同，
+	// 写死 4 要么浪费容量，要么在低配机器上把 Bot 服务打满。
+	FastConcurrency int `mapstructure:"fast_concurrency"`
+	// MediaConcurrency 媒体中转（下载+上传）的并发上限。
+	MediaConcurrency int `mapstructure:"media_concurrency"`
+	// MediaMaxBytesMB 单个 QQ 媒体文件大小上限（MB）。
+	MediaMaxBytesMB int `mapstructure:"media_max_bytes_mb"`
+	// MediaTimeoutSeconds 单条消息媒体中转的总预算（秒）。
+	MediaTimeoutSeconds int `mapstructure:"media_timeout_seconds"`
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -316,6 +336,7 @@ func bindEnvVars() {
 		{"MINIO_ENDPOINT", "minio.endpoint"},
 		{"MINIO_ACCESS_KEY", "minio.access_key"},
 		{"MINIO_SECRET_KEY", "minio.secret_key"},
+		{"MINIO_BUCKET", "minio.bucket"},
 		{"ARK_API_KEY", "eino.api_key"},
 		{"ARK_MODEL", "eino.model"},
 		{"ARK_BASE_URL", "eino.base_url"},
@@ -324,8 +345,10 @@ func bindEnvVars() {
 		{"QQBRIDGE_WS_HOST", "qqbridge.ws_host"},
 		{"QQBRIDGE_WS_PORT", "qqbridge.ws_port"},
 		{"QQBRIDGE_WS_FORWARD_URL", "qqbridge.ws_forward_url"},
+		{"QQBRIDGE_TEMP_DIR", "qqbridge.temp_dir"},
 		{"LOGOS_USE_ETCD_RESOLVER", "service_discovery.use_etcd_resolver"},
 		{"LOGOS_NODE_ID", "gateway.node_id"},
+		{"LOGOS_PUBLIC_BASE_URL", "gateway.public_base_url"},
 		{"LOGOS_WS_PUBSUB_CHANNEL", "gateway.pubsub_channel"},
 		{"LOGOS_WS_BROADCAST_ENABLED", "gateway.enable_broadcast"},
 		{"PAYMENT_CALLBACK_SECRET", "payment.callback_secret"},
@@ -418,6 +441,9 @@ func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("MINIO_SECRET_KEY"); v != "" {
 		cfg.Minio.SecretKey = v
 	}
+	if v := os.Getenv("MINIO_BUCKET"); v != "" {
+		cfg.Minio.Bucket = v
+	}
 	if v := os.Getenv("ARK_API_KEY"); v != "" {
 		cfg.Eino.APIKey = v
 	}
@@ -452,11 +478,37 @@ func overrideFromEnv(cfg *Config) {
 	if v := os.Getenv("QQBRIDGE_WS_FORWARD_URL"); v != "" {
 		cfg.QQBridge.WSForwardURL = v
 	}
+	if v := os.Getenv("QQBRIDGE_TEMP_DIR"); v != "" {
+		cfg.QQBridge.TempDir = v
+	}
+	if v := os.Getenv("QQBRIDGE_FAST_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QQBridge.FastConcurrency = n
+		}
+	}
+	if v := os.Getenv("QQBRIDGE_MEDIA_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QQBridge.MediaConcurrency = n
+		}
+	}
+	if v := os.Getenv("QQBRIDGE_MEDIA_MAX_MB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QQBridge.MediaMaxBytesMB = n
+		}
+	}
+	if v := os.Getenv("QQBRIDGE_MEDIA_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QQBridge.MediaTimeoutSeconds = n
+		}
+	}
 	if v := os.Getenv("LOGOS_USE_ETCD_RESOLVER"); v != "" {
 		cfg.ServiceDiscovery.UseEtcdResolver = v == "true" || v == "1"
 	}
 	if v := os.Getenv("LOGOS_NODE_ID"); v != "" {
 		cfg.Gateway.NodeID = v
+	}
+	if v := os.Getenv("LOGOS_PUBLIC_BASE_URL"); v != "" {
+		cfg.Gateway.PublicBaseURL = v
 	}
 	if v := os.Getenv("LOGOS_WS_PUBSUB_CHANNEL"); v != "" {
 		cfg.Gateway.PubSubChannel = v
@@ -630,7 +682,19 @@ func GetConfig() *Config {
 		if err != nil {
 			panic(fmt.Sprintf("Failed to load config: %v", err))
 		}
+		cfgReady.Store(true)
 	})
+	return cfg
+}
+
+// TryGetConfig 返回已加载的配置；尚未加载时返回 nil，不会触发加载、也不会 panic。
+//
+// 给基础设施库（如 grpcserver）用：这些库在单测或独立使用时可能没有配置文件，
+// 应该退回安全默认值，而不是让「读一个可选的调优参数」把进程打挂。
+func TryGetConfig() *Config {
+	if !cfgReady.Load() {
+		return nil
+	}
 	return cfg
 }
 
