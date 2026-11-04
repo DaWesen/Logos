@@ -99,7 +99,7 @@ func (h *Handler) UploadChatMedia(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 	// 流式上传：file 是 multipart 的临时文件/内存段，大小已确认，不需要再整份读一遍。
-	err = h.MinioManager.UploadFile(bucket, objectKey, file, header.Size, contentType)
+	err = h.MinioManager.UploadFileContext(c.Request.Context(), bucket, objectKey, file, header.Size, contentType)
 	if err != nil {
 		logger.Error("上传聊天媒体失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("upload failed"))
@@ -870,7 +870,7 @@ func (h *Handler) UpdateGroupAvatar(c *gin.Context) {
 		bucket = "logos"
 	}
 
-	if err := h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType); err != nil {
+	if err := h.MinioManager.UploadFileContext(c.Request.Context(), bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType); err != nil {
 		logger.Error("上传群头像失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("上传失败"))
 		return

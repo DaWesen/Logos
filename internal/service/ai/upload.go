@@ -76,7 +76,8 @@ func (h *FileUploadHandler) UploadFile(c *gin.Context) {
 	}
 
 	// 直接流式上传：文件大小已由 multipart 解析确认，不需要先整份读进内存再写一遍。
-	if err := h.minioManager.UploadFile(h.bucket, storagePath, file, header.Size, mimeType); err != nil {
+	// ctx 必须透传：调用方断开或网关超时后，MinIO 上传不应继续占着连接与临时文件。
+	if err := h.minioManager.UploadFileContext(c.Request.Context(), h.bucket, storagePath, file, header.Size, mimeType); err != nil {
 		logger.Error("Failed to upload file", logger.ErrorField(err))
 		c.JSON(500, gin.H{
 			"code":    500,
@@ -85,7 +86,7 @@ func (h *FileUploadHandler) UploadFile(c *gin.Context) {
 		return
 	}
 
-	url, err := h.minioManager.GetFileURL(h.bucket, storagePath, oneDayInSeconds*oneYearInDays)
+	url, err := h.minioManager.GetFileURLContext(c.Request.Context(), h.bucket, storagePath, oneDayInSeconds*oneYearInDays)
 	if err != nil {
 		url = ""
 		logger.Warn("Failed to get file URL", logger.ErrorField(err))
@@ -171,13 +172,13 @@ func (h *FileUploadHandler) UploadMultipleFiles(c *gin.Context) {
 			mimeType = getMimeType(fileType)
 		}
 
-		if err := h.minioManager.UploadFile(h.bucket, storagePath, file, fileHeader.Size, mimeType); err != nil {
+		if err := h.minioManager.UploadFileContext(c.Request.Context(), h.bucket, storagePath, file, fileHeader.Size, mimeType); err != nil {
 			file.Close()
 			continue
 		}
 		file.Close()
 
-		url, _ := h.minioManager.GetFileURL(h.bucket, storagePath, oneDayInSeconds*oneYearInDays)
+		url, _ := h.minioManager.GetFileURLContext(c.Request.Context(), h.bucket, storagePath, oneDayInSeconds*oneYearInDays)
 
 		results = append(results, gin.H{
 			"file_name":    fileHeader.Filename,
@@ -214,7 +215,7 @@ func (h *FileUploadHandler) DeleteFile(c *gin.Context) {
 		return
 	}
 
-	if err := h.minioManager.DeleteFile(h.bucket, storagePath); err != nil {
+	if err := h.minioManager.DeleteFileContext(c.Request.Context(), h.bucket, storagePath); err != nil {
 		logger.Error("Failed to delete file", logger.ErrorField(err))
 		c.JSON(500, gin.H{
 			"code":    500,
@@ -244,7 +245,7 @@ func (h *FileUploadHandler) GetFileURL(c *gin.Context) {
 		return
 	}
 
-	url, err := h.minioManager.GetFileURL(h.bucket, storagePath, oneDayInSeconds*thirtyDaysInDays)
+	url, err := h.minioManager.GetFileURLContext(c.Request.Context(), h.bucket, storagePath, oneDayInSeconds*thirtyDaysInDays)
 	if err != nil {
 		logger.Error("Failed to get file URL", logger.ErrorField(err))
 		c.JSON(500, gin.H{
@@ -328,7 +329,7 @@ func (h *FileUploadHandler) ProxyMinioFile(c *gin.Context) {
 		return
 	}
 
-	fileURL, err := h.minioManager.GetFileURL(h.bucket, objectKey, oneDayInSeconds)
+	fileURL, err := h.minioManager.GetFileURLContext(c.Request.Context(), h.bucket, objectKey, oneDayInSeconds)
 	if err != nil {
 		logger.Error("Failed to get file URL for proxy", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to get file"})

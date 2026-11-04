@@ -321,7 +321,7 @@ func (h *Handler) UpdateAvatar(c *gin.Context) {
 		bucket = "logos"
 	}
 
-	err := h.MinioManager.UploadFile(bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType)
+	err := h.MinioManager.UploadFileContext(c.Request.Context(), bucket, objectKey, bytes.NewReader(fileData), int64(len(fileData)), contentType)
 	if err != nil {
 		logger.Error("上传头像失败", logger.ErrorField(err))
 		c.JSON(http.StatusInternalServerError, model.InternalError("上传失败"))
