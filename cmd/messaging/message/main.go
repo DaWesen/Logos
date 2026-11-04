@@ -17,6 +17,8 @@ import (
 	pb "Logos/proto_gen/message"
 	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 )
@@ -58,7 +60,11 @@ func main() {
 	relay.Start()
 	defer relay.Stop()
 
-	if err := messageService.StartKafkaConsumer(context.Background()); err != nil {
+	// 消费循环必须跟随进程生命周期：否则 SIGTERM 后 consumer 仍在拉取，
+	// handler 里的 msg.Context 也永远不会取消。
+	consumerCtx, stopConsumers := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopConsumers()
+	if err := messageService.StartKafkaConsumer(consumerCtx); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
 	}
 
