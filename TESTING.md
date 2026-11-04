@@ -83,6 +83,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **可靠性链路**：`pkg/outbox` 退避序列与 `FetchPending` 生成 SQL（`FOR UPDATE SKIP LOCKED`、状态与退避过滤、先进先出）；`pkg/mq` 死信信封构造（合法 JSON 原样保留、非法负载包装）、毒丸消息连续失败计数
 - **越权防护**：`internal/service/ai/bot/service` 用内存 stub repo 验证 Bot / 对话 / 提示词的归属校验（非所有者按“不存在”处理、公开与预设提示词的可见性规则），并验证删除 Bot 时同步清理 `qq:bot_bind:` 路由缓存
 - **限流分档**：`gateway/middleware` 验证各接口阈值互不相同（登录 5 / 问答 30 / 消息 50 / 默认 600），避免四层同值导致限流失效
+- **突发封禁**：已封禁 IP 在自增计数前直接拒绝；超限后写入 `blocked` 键且 TTL 为窗口 2 倍；模拟 burst 计数窗口过期后仍继续拒绝（回归「只写不读」缺陷）；Redis 故障时退化为单机窗口且超限仍拒绝；首次自增设置 burst TTL
 - **令牌桶补充**：高频请求（100ms 一次、rate=1/s）20s 内至少放行 20 次，证明分数令牌没有被丢弃；补充量不超过容量上限；时钟回拨既不补充也不扣减；Lua 脚本中不得出现 `math.floor` 作用于补充量；`rate/capacity <= 0` 归一化为 1；桶键 TTL 不短于补满耗时；Lua `tostring` 产生的科学计数法时间戳可被解析，缺少时间时不会按 `now-0` 把桶补满
 - **群禁言**：`chat/service` 验证永久禁言、临时禁言未到期、已到期、缺少截止时间四种状态的发送拦截
 - **AI 链路**：记忆合并、RRF 混合检索、提示词守卫、语义缓存、上下文压缩、planner、分块、熔断与重试
