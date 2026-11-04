@@ -13,6 +13,7 @@ import (
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -25,6 +26,14 @@ import (
 )
 
 func main() {
+	// 启动失败统一从 run 返回：让 defer 的清理逻辑（OTel flush、连接关闭）
+	// 在失败路径上也真正执行，而不是被 goroutine 里的 log.Fatalf 直接跳过。
+	if err := run(); err != nil {
+		log.Fatalf("Gateway failed: %v", err)
+	}
+}
+
+func run() error {
 	cfg := config.GetConfig()
 
 	logger.InitLogger()
@@ -78,21 +87,23 @@ func main() {
 	tcpAddr := fmt.Sprintf("0.0.0.0:%d", tcpPort)
 	tcpListener, err := net.Listen("tcp", tcpAddr)
 	if err != nil {
-		log.Fatalf("TCP listen failed: %v", err)
+		return fmt.Errorf("TCP listen on %s: %w", tcpAddr, err)
 	}
+	defer func() { _ = tcpListener.Close() }()
 
 	// 创建一个用于退出的context和channel
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan struct{})
 
 	go func() {
+		defer close(done)
 		log.Printf("TCP server starting on :%d", tcpPort)
 		var acceptBackoff time.Duration
 		for {
 			select {
 			case <-ctx.Done():
 				log.Println("TCP server stopped")
-				close(done)
 				return
 			default:
 				conn, err := tcpListener.Accept()
@@ -120,8 +131,16 @@ func main() {
 		}
 	}()
 
+	// 先绑定端口再启动 Serve：端口被占用属于启动失败，应立即返回错误，
+	// 而不是先跑起 TCP/广播器、再在 goroutine 里 Fatalf 把进程带走。
+	httpAddr := cfg.GetGatewayAddr()
+	httpListener, err := net.Listen("tcp", httpAddr)
+	if err != nil {
+		return fmt.Errorf("HTTP listen on %s: %w", httpAddr, err)
+	}
+
 	httpServer := &http.Server{
-		Addr:    cfg.GetGatewayAddr(),
+		Addr:    httpAddr,
 		Handler: r,
 		// 抗 Slowloris：不读完请求头就永远占着连接是最廉价的 DoS。
 		// 网关同时承载 WebSocket，升级后连接已被 hijack，下面的超时不再作用于长连接，
@@ -131,16 +150,26 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 
+	httpErr := make(chan error, 1)
 	go func() {
 		log.Printf("HTTP/WebSocket server starting on :%d", cfg.Ports.Gateway)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server failed: %v", err)
+		if err := httpServer.Serve(httpListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			httpErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+
+	// Serve 失败（例如 listener 被外部关闭）与收到信号走同一条停机路径，
+	// 保证 WS/TCP/广播器仍然有序关闭；错误在清理完成后返回给 main。
+	var runErr error
+	select {
+	case <-quit:
+	case err := <-httpErr:
+		runErr = fmt.Errorf("HTTP server: %w", err)
+		log.Printf("HTTP server failed, shutting down: %v", err)
+	}
 
 	log.Println("Shutting down gateway...")
 	// 1. 先停止接受新连接：SIGTERM 之后到达的 WS 升级 / TCP 建连不应再进入
@@ -237,6 +266,8 @@ func main() {
 	}
 
 	log.Println("Gateway stopped")
+
+	return runErr
 }
 
 // initBroadcaster 初始化跨节点广播器并注入到 UnifiedConnectionManager
