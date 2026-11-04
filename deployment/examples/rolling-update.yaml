@@ -19,7 +19,10 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1        # 最多同时创建 1 个新 Pod
-      maxUnavailable: 1  # 最多同时不可用 1 个 Pod
+      # 新副本必须通过就绪探针才会接流量。若允许 maxUnavailable=1，
+      # 滚动期间会有 1 个旧副本先下线，而新副本可能仍在探测依赖；
+      # 把不可用数压到 0，用 maxSurge 换容量，避免更新窗口出现容量缺口。
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: gateway
@@ -39,27 +42,27 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /app/config
-          # 存活探针 - 检查 Pod 是否还活着
+          # 存活探针 - 只检查进程是否还活着，不查依赖
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8888
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 3
-          # 就绪探针 - 检查 Pod 是否可以接收流量
+          # 就绪探针 - 依赖不可用时摘流量
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8888
             initialDelaySeconds: 10
             periodSeconds: 5
             successThreshold: 1
             failureThreshold: 3
-          # 启动探针 - 给应用启动时间
+          # 启动探针 - 给应用启动时间；启动阶段只要求进程起来
           startupProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: 8888
             initialDelaySeconds: 10
             periodSeconds: 5

@@ -27,12 +27,23 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /app/config
+          # 存活探针只证明进程还在：依赖挂了不该重启进程，
+          # 否则数据库抖动会让所有副本一起重启，把故障放大成雪崩。
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8888
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          # 就绪探针检查 MinIO 等依赖：不可用时摘流量，而不是继续接请求后超时。
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8888
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: 100m

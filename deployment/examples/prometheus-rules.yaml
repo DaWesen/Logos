@@ -494,6 +494,24 @@ spec:
         summary: "支付回调失败率过高（result={{ $labels.result }}）"
         description: "近 10 分钟每秒 {{ $value }} 次支付回调未成功入账，请检查 PAYMENT_CALLBACK_SECRET 与渠道配置；若 invalid_signature 突增需排查伪造回调"
 
+  # 就绪状态告警。
+  #
+  # 与 PodNotReady 不同：PodNotReady 看的是 K8s 视角的探针结果，
+  # 这里看的是应用自己上报的依赖判定，能直接指出是哪个服务、哪类依赖。
+  # 只看 not_ready 计数，不与 ready 混算成功率——正常探测会把故障率稀释掉。
+  - name: logos.readiness
+    interval: 30s
+    rules:
+    - alert: ServiceNotReady
+      expr: |
+        sum by (service) (increase(logos_health_readiness_count_total{result="not_ready"}[10m])) > 3
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "服务 {{ $labels.service }} 持续未就绪"
+        description: "近 10 分钟 {{ $labels.service }} 有 {{ $value }} 次就绪探测失败，实例正在被摘流量；请检查其数据库/缓存/下游依赖"
+
   - name: logos.resources
     interval: 30s
     rules:

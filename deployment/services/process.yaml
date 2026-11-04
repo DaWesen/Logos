@@ -27,11 +27,21 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /app/config
+          # process 是 HTTP 服务（Gin），不能套用 gRPC 探针。
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 9016
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /readyz
               port: 9016
             initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: 100m

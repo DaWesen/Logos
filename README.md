@@ -144,6 +144,12 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **内网服务身份校验**：process 服务不信任 `X-User-ID`，入口独立校验 JWT 后再写入 metadata；service 层拒绝空身份，避免空 userID 被 DAO 解释成「查所有用户」；文档块读取先校验 owner。compose 中 process 仅 `expose` 到服务网络，不发布宿主机端口
 - **下游超时与连接池**：网关到 process 的普通转发统一 30s、上传 10min，所有请求透传 `c.Request.Context()`；Transport 设置拨号超时、响应头 30s、空闲连接回收与单 host 上限，避免下游卡死时网关 goroutine/fd 被拖满
 - **HTTP 入口默认值**：`pkg/httpserver` 统一 `ReadHeaderTimeout=10s`、`IdleTimeout=120s`、`MaxHeaderBytes=1MB`；process 监听 SIGTERM 后先停止接收连接，再以 15s 窗口排空在途请求
+- **存活/就绪分离**：`/livez` 只回答「进程还在不在」，永不查依赖；`/readyz` 检查依赖，不可用返回 503 并列出失败项。两者混用会造成真实事故——拿就绪探针当存活探针，数据库抖动会让编排系统把所有副本一起重启；拿存活探针当就绪探针，依赖挂了仍然接流量，用户看到的全是超时
+- **gRPC 依赖感知健康**：`pkg/health` 注册中心支持硬依赖与可选依赖；探测并发执行、共享 3s 总预算、2s 结果缓存，并发探针合并成一次回源（失败结果也缓存，避免探针自己把过载的下游打死）。依赖状态变化时同步更新 `grpc_health_v1` 的具名服务与空 service 名（`grpc_health_probe` 默认查后者），状态变化才打日志，正常探测不会刷满日志
+- **依赖分级而不是一刀切**：PostgreSQL 是 Chat/User/Billing 等服务的硬依赖，不可用即摘流量；Redis 只是缓存/限流加速器，降级为 `degraded` 但不摘流量（网关限流有单机兜底、用户查询会回源）。把可选依赖也当硬依赖，一次缓存抖动会摘掉整个网关，故障反而被放大
+- **探针不制造新连接**：复用已初始化的 `*sql.DB` / `redis.Client` / MinIO client 做 `Ping`/`BucketExists`，不在健康检查里另建连接池；Milvus/ES 用轻量 `ListCollections`/`Ping`，且不打印 INFO 日志，避免每 10s 一次的探针把日志刷满
+- **就绪指标与告警**：`logos.health.readiness.count{service,result=ready|not_ready}` 只统计判定结果、不与正常探测混算成功率；`ServiceNotReady` 告警按 service 分组，实例被摘流量时能直接定位是哪个服务、哪类依赖
+- **部署探针同步**：K8s 中 gRPC 服务由 `tcpSocket` 改为 `grpc_health_probe`（只连端口无法发现「进程活着但依赖挂了」），并补齐 liveness/readiness 配对；process 是 HTTP 服务，单独使用 `/livez` 与 `/readyz`；滚动更新示例把 `maxUnavailable` 压到 0，新副本通过就绪探针后才下线旧副本
 - **对象级授权**：collection 的公开方法统一要求 user_id，单资源读写全部带 owner 条件；跨用户更新、删除、执行任务与读取结果均返回 404，不泄露资源是否存在
 - **连接池安全默认值**：`sql.DB` 的零值语义容易踩坑（`MaxOpen=0` 不限、`MaxIdle=0` 不保留空闲连接），初始化时统一归一化并补 `ConnMaxIdleTime`，启动日志打印实际生效值
 

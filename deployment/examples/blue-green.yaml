@@ -38,9 +38,15 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /app/config
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8888
+            initialDelaySeconds: 15
+            periodSeconds: 10
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: 8888
             initialDelaySeconds: 10
             periodSeconds: 5
@@ -89,9 +95,15 @@ spec:
 #           volumeMounts:
 #             - name: config
 #               mountPath: /app/config
+#           livenessProbe:
+#             httpGet:
+#               path: /livez
+#               port: 8888
+#             initialDelaySeconds: 15
+#             periodSeconds: 10
 #           readinessProbe:
 #             httpGet:
-#               path: /health
+#               path: /readyz
 #               port: 8888
 #             initialDelaySeconds: 10
 #             periodSeconds: 5

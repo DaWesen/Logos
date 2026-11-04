@@ -27,11 +27,22 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /app/config
+          livenessProbe:
+            exec:
+              command:
+                - grpc_health_probe
+                - -addr=:9012
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
           readinessProbe:
-            tcpSocket:
-              port: 9012
+            exec:
+              command:
+                - grpc_health_probe
+                - -addr=:9012
             initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               cpu: 50m
