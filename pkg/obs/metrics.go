@@ -174,12 +174,14 @@ func RecordOutboxDispatchAbort(ctx context.Context, topic string) {
 //   - event=evict/slow/auth/shutdown 能定位「用户为什么掉线」，
 //     否则所有断开在监控上都是同一个 close，无法归因。
 var (
-	gatewayConnOnce    sync.Once
-	gatewayConnCounter metric.Int64Counter
-	gatewayAuthFailNum metric.Int64Counter
-	gatewayDropNum     metric.Int64Counter
-	gatewayPruneNum    metric.Int64Counter
-	gatewayRevokeNum   metric.Int64Counter
+	gatewayConnOnce     sync.Once
+	gatewayConnCounter  metric.Int64Counter
+	gatewayAuthFailNum  metric.Int64Counter
+	gatewayDropNum      metric.Int64Counter
+	gatewayPruneNum     metric.Int64Counter
+	gatewayRevokeNum    metric.Int64Counter
+	gatewayLogReportNum metric.Int64Counter
+	gatewayLogReportDur metric.Float64Histogram
 )
 
 func initGatewayMetrics() {
@@ -206,6 +208,15 @@ func initGatewayMetrics() {
 	gatewayRevokeNum, _ = meter.Int64Counter(
 		"logos.gateway.revocation.check.count",
 		metric.WithDescription("网关撤销查询结果计数（protocol, result=clear/revoked/unknown）"),
+	)
+	gatewayLogReportNum, _ = meter.Int64Counter(
+		"logos.gateway.log_report.count",
+		metric.WithDescription("网关访问日志上报计数（result=enqueued/dropped/ok/error）"),
+	)
+	gatewayLogReportDur, _ = meter.Float64Histogram(
+		"logos.gateway.log_report.duration",
+		metric.WithDescription("网关访问日志单条上报耗时"),
+		metric.WithUnit("s"),
 	)
 }
 
@@ -266,6 +277,20 @@ func RecordGatewayRevocationCheck(ctx context.Context, protocol, result string) 
 			attribute.String("protocol", protocol),
 			attribute.String("result", result),
 		))
+	}
+}
+
+// RecordGatewayLogReport 记录一次访问日志上报结果。
+//
+// result=dropped 是这套旁路设计的关键信号：日志可以丢，但必须知道丢了多少。
+// 没有这个计数，队列满时的行为在监控上和「一切正常」完全一样。
+func RecordGatewayLogReport(ctx context.Context, result string, durationSeconds float64) {
+	gatewayConnOnce.Do(initGatewayMetrics)
+	if gatewayLogReportNum != nil {
+		gatewayLogReportNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+	if gatewayLogReportDur != nil && durationSeconds > 0 {
+		gatewayLogReportDur.Record(ctx, durationSeconds, metric.WithAttributes(attribute.String("result", result)))
 	}
 }
 
@@ -346,6 +371,607 @@ func RecordLLMParse(ctx context.Context, module, result string) {
 		llmParseCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("module", module),
 			attribute.String("result", result),
+		))
+	}
+}
+
+// LLM 结构化输出修复指标：解析失败后的一次定向修复是否奏效。
+// 只看 parse failed 无法区分「模型偶尔抽风」和「prompt/schema 真的有问题」；
+// 修复成功率高说明是随机波动，修复也失败说明该改 prompt 或校验逻辑。
+var (
+	llmRepairOnce    sync.Once
+	llmRepairCounter metric.Int64Counter
+)
+
+func initLLMRepairMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	llmRepairCounter, _ = meter.Int64Counter(
+		"logos.llm.repair.count",
+		metric.WithDescription("LLM 结构化输出修复结果计数（result=fixed/failed）"),
+	)
+}
+
+// RecordLLMRepair 记录一次解析失败后的修复结果。
+func RecordLLMRepair(ctx context.Context, module, result string) {
+	llmRepairOnce.Do(initLLMRepairMetrics)
+	if llmRepairCounter != nil {
+		llmRepairCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("module", module),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// 数据库访问指标：GORM 初始化时统一挂回调，所有服务、所有 DAO 自动生效。
+// 指标名用 statement 而不是 query：写操作（create/update/delete）也走这里。
+var (
+	dbMetricsOnce      sync.Once
+	dbStatementDur     metric.Float64Histogram
+	dbSlowQueryCounter metric.Int64Counter
+)
+
+func initDBMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	dbStatementDur, _ = meter.Float64Histogram(
+		"logos.db.statement.duration",
+		metric.WithDescription("数据库语句耗时（按 operation/table/result 拆分）"),
+		metric.WithUnit("s"),
+	)
+	dbSlowQueryCounter, _ = meter.Int64Counter(
+		"logos.db.slow_query.count",
+		metric.WithDescription("超过慢查询阈值的数据库语句数"),
+	)
+}
+
+// RecordDBQuery 记录一次数据库语句。
+// operation 取 query/create/update/delete/row；result 取 ok/failed。
+func RecordDBQuery(ctx context.Context, operation, table, result string, durationSeconds float64) {
+	dbMetricsOnce.Do(initDBMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("operation", operation),
+		attribute.String("table", table),
+		attribute.String("result", result),
+	)
+	if dbStatementDur != nil {
+		dbStatementDur.Record(ctx, durationSeconds, attrs)
+	}
+}
+
+// RecordDBSlowQuery 记录一次慢查询。
+// 单独计数而不是只依赖直方图：告警按「每分钟慢查询条数」比按分位数更直观。
+func RecordDBSlowQuery(ctx context.Context, operation, table string) {
+	dbMetricsOnce.Do(initDBMetrics)
+	if dbSlowQueryCounter != nil {
+		dbSlowQueryCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("operation", operation),
+			attribute.String("table", table),
+		))
+	}
+}
+
+// DBPoolStats 是 database/sql 连接池的一次快照。
+//
+// 单条 SQL 耗时只能回答「这条语句慢不慢」，回答不了「请求是不是在等连接」。
+// 连接池打满时，SQL 甚至还没开始执行，业务侧看到的却只是整体延迟上升。
+type DBPoolStats struct {
+	OpenConnections     int64
+	InUse               int64
+	Idle                int64
+	WaitCount           int64
+	WaitDurationSeconds float64
+}
+
+var (
+	dbPoolStatsOnce sync.Once
+)
+
+// RegisterDBPoolStats 注册连接池异步观测。
+//
+// 使用 OTel ObservableGauge / ObservableCounter，由采集器在 scrape 时回调，
+// 不额外启动采样 goroutine，也不会在连接池空闲时产生空转。
+// WaitCount / WaitDuration 是 database/sql 的累计值，因此用 ObservableCounter
+// 表达，Prometheus 侧可以直接 rate()，而不是把它伪装成瞬时 gauge。
+func RegisterDBPoolStats(stats func() DBPoolStats) {
+	if stats == nil {
+		return
+	}
+
+	dbPoolStatsOnce.Do(func() {
+		meter := otel.GetMeterProvider().Meter(
+			meterName,
+			metric.WithInstrumentationVersion("1.0.0"),
+		)
+
+		connections, _ := meter.Int64ObservableGauge(
+			"logos.db.pool.connections",
+			metric.WithDescription("数据库连接池连接数（state=open/in_use/idle）"),
+		)
+		waitCount, _ := meter.Int64ObservableCounter(
+			"logos.db.pool.wait.count",
+			metric.WithDescription("等待获取数据库连接的累计次数"),
+		)
+		waitDuration, _ := meter.Float64ObservableCounter(
+			"logos.db.pool.wait.duration",
+			metric.WithDescription("等待获取数据库连接的累计耗时"),
+			metric.WithUnit("s"),
+		)
+
+		_, _ = meter.RegisterCallback(
+			func(_ context.Context, observer metric.Observer) error {
+				snapshot := stats()
+				observer.ObserveInt64(connections, snapshot.OpenConnections,
+					metric.WithAttributes(attribute.String("state", "open")))
+				observer.ObserveInt64(connections, snapshot.InUse,
+					metric.WithAttributes(attribute.String("state", "in_use")))
+				observer.ObserveInt64(connections, snapshot.Idle,
+					metric.WithAttributes(attribute.String("state", "idle")))
+				observer.ObserveInt64(waitCount, snapshot.WaitCount)
+				observer.ObserveFloat64(waitDuration, snapshot.WaitDurationSeconds)
+				return nil
+			},
+			connections,
+			waitCount,
+			waitDuration,
+		)
+	})
+}
+
+// 保留期清理指标：清理任务本身也要可观测。
+// 只写日志会导致「表在增长，但没人知道清理有没有成功」；
+// result=failed 且 rows=0 可以作为持续失败告警的依据。
+var (
+	retentionCleanupOnce     sync.Once
+	retentionCleanupRows     metric.Int64Counter
+	retentionCleanupFailures metric.Int64Counter
+)
+
+func initRetentionCleanupMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	retentionCleanupRows, _ = meter.Int64Counter(
+		"logos.retention.cleanup.rows",
+		metric.WithDescription("按保留期成功清理的行数（table/result）"),
+	)
+	retentionCleanupFailures, _ = meter.Int64Counter(
+		"logos.retention.cleanup.failures",
+		metric.WithDescription("保留期清理失败次数（table/result）"),
+	)
+}
+
+// RecordRetentionCleanup 记录一次保留期清理结果。
+// table 使用固定表名，不使用会话 ID / 主键，避免指标基数失控。
+func RecordRetentionCleanup(ctx context.Context, table, result string, rows int64) {
+	retentionCleanupOnce.Do(initRetentionCleanupMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("table", table),
+		attribute.String("result", result),
+	)
+	if result != "ok" {
+		if retentionCleanupFailures != nil {
+			retentionCleanupFailures.Add(ctx, 1, attrs)
+		}
+		return
+	}
+	if retentionCleanupRows == nil {
+		return
+	}
+	if rows < 0 {
+		rows = 0
+	}
+	retentionCleanupRows.Add(ctx, rows, attrs)
+}
+
+// Elasticsearch 访问指标：检索链路的耗时与失败原因。
+// 只统计「调用成功/失败」不够：ctx 透传之后，客户端断连会产生大量 canceled，
+// 如果不单独打标签，这些请求会被算进 failed，把真实的 ES 故障率掩盖掉。
+// index 用索引名而不是文档 ID，避免高基数。
+var (
+	esRequestOnce     sync.Once
+	esRequestCounter  metric.Int64Counter
+	esRequestDuration metric.Float64Histogram
+)
+
+func initESMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	esRequestCounter, _ = meter.Int64Counter(
+		"logos.es.request.count",
+		metric.WithDescription("Elasticsearch 请求结果计数（result=ok/failed/canceled）"),
+	)
+	esRequestDuration, _ = meter.Float64Histogram(
+		"logos.es.request.duration",
+		metric.WithDescription("Elasticsearch 请求耗时（按 index/operation/result 拆分）"),
+		metric.WithUnit("s"),
+	)
+}
+
+// RecordESRequest 记录一次 ES 访问。operation 取 search/add/update/delete/get/
+// create_index/delete_index/refresh/stats；result 取 ok/failed/canceled。
+//
+// 耗时直方图也带 result 标签：canceled 请求通常在几毫秒内返回，
+// 混进整体分位数会把 P99 拉低，看起来像「变快了」，实际是失败得更早。
+func RecordESRequest(ctx context.Context, index, operation, result string, durationSeconds float64) {
+	esRequestOnce.Do(initESMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("index", index),
+		attribute.String("operation", operation),
+		attribute.String("result", result),
+	)
+	if esRequestCounter != nil {
+		esRequestCounter.Add(ctx, 1, attrs)
+	}
+	if esRequestDuration != nil {
+		esRequestDuration.Record(ctx, durationSeconds, attrs)
+	}
+}
+
+// Outbox 积压指标：只看投递成功率会漏掉「全部成功但在持续堆积」。
+// 成功率高 + backlog 持续上涨，通常意味着生产速度已经超过投递吞吐，
+// 这时候需要扩容 relay 或提高批量，而不是继续看 failed 计数。
+var (
+	outboxBacklogOnce  sync.Once
+	outboxPendingGauge metric.Int64Gauge
+	outboxOldestGauge  metric.Float64Gauge
+)
+
+func initOutboxBacklogMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	outboxPendingGauge, _ = meter.Int64Gauge(
+		"logos.outbox.pending.count",
+		metric.WithDescription("当前 pending 状态的 Outbox 消息数（含退避等待中的消息）"),
+	)
+	outboxOldestGauge, _ = meter.Float64Gauge(
+		"logos.outbox.oldest.pending.seconds",
+		metric.WithDescription("最老一条 pending 消息的等待时长，直接反映投递延迟"),
+		metric.WithUnit("s"),
+	)
+}
+
+// RecordOutboxBacklog 记录一次积压快照。
+// pending 为可投递 + 退避中的消息总数；oldestSeconds 为最老一条的等待秒数。
+func RecordOutboxBacklog(ctx context.Context, pending int64, oldestSeconds float64) {
+	outboxBacklogOnce.Do(initOutboxBacklogMetrics)
+	if outboxPendingGauge != nil {
+		outboxPendingGauge.Record(ctx, pending)
+	}
+	if outboxOldestGauge != nil {
+		outboxOldestGauge.Record(ctx, oldestSeconds)
+	}
+}
+
+// 限流降级指标：Redis 不可用时是否切换到单机兜底。
+// 没有这个计数，限流静默 fail-open 和「流量过低没触发」在监控上无法区分。
+var (
+	rateLimitDegradedOnce    sync.Once
+	rateLimitDegradedCounter metric.Int64Counter
+)
+
+func initRateLimitDegradedMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	rateLimitDegradedCounter, _ = meter.Int64Counter(
+		"logos.ratelimit.degraded.count",
+		metric.WithDescription("Redis 限流不可用、切换单机兜底的次数（layer=global/user/ip/burst）"),
+	)
+}
+
+// RecordRateLimitDegraded 记录一次限流降级。
+func RecordRateLimitDegraded(ctx context.Context, layer string) {
+	rateLimitDegradedOnce.Do(initRateLimitDegradedMetrics)
+	if rateLimitDegradedCounter != nil {
+		rateLimitDegradedCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("layer", layer)))
+	}
+}
+
+// 语义缓存指标：命中率直接对应「省了多少次 LLM 调用」。
+// 只看平均耗时看不出收益：miss 也要先做一次 embedding，命中才省掉生成。
+var (
+	semanticCacheOnce    sync.Once
+	semanticCacheCounter metric.Int64Counter
+)
+
+func initSemanticCacheMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	semanticCacheCounter, _ = meter.Int64Counter(
+		"logos.ai.semantic_cache.count",
+		metric.WithDescription("语义缓存操作结果（op=lookup/store, result=hit/miss/error/...）"),
+	)
+}
+
+// RecordSemanticCache 记录一次语义缓存操作。
+// op 取 lookup/store；lookup 的 result 取 hit/miss/error/disabled/unavailable，
+// store 取 ok/failed。
+func RecordSemanticCache(ctx context.Context, op, result string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if semanticCacheCounter != nil {
+		semanticCacheCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("op", op),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// 缓存回源合并指标：result=fill 表示真正查了库/模型，result=shared 表示
+// 搭了别人回源的便车。只看缓存命中率无法回答「缓存失效瞬间有多少请求
+// 同时打到了后端」，shared 与 fill 的比值才是击穿防护的实际效果。
+var (
+	cacheFillOnce    sync.Once
+	cacheFillCounter metric.Int64Counter
+)
+
+func initCacheFillMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	cacheFillCounter, _ = meter.Int64Counter(
+		"logos.cache.fill.count",
+		metric.WithDescription("缓存回源请求计数（result=fill/shared/error）"),
+	)
+}
+
+// RecordCacheFill 记录一次缓存回源。
+// result 取 fill（真正执行回源）/shared（合并到别人的回源）/error（回源失败）。
+func RecordCacheFill(ctx context.Context, cache, result string) {
+	cacheFillOnce.Do(initCacheFillMetrics)
+	if cacheFillCounter != nil {
+		cacheFillCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("cache", cache),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// 消息幂等指标：replayed 占总量的比例就是客户端重试率。
+// 只看「消息条数」看不出重试风暴：重试被幂等挡住了，业务上一切正常，
+// 但网关/客户端可能正在成倍放大请求。replayed 突增是排查网络抖动的入口。
+var (
+	messageIdempotencyOnce    sync.Once
+	messageIdempotencyCounter metric.Int64Counter
+)
+
+func initMessageIdempotencyMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	messageIdempotencyCounter, _ = meter.Int64Counter(
+		"logos.message.idempotency.count",
+		metric.WithDescription("消息发送幂等结果计数（result=created/replayed）"),
+	)
+}
+
+// RecordMessageIdempotency 记录一次幂等写入结果。
+func RecordMessageIdempotency(ctx context.Context, result string) {
+	messageIdempotencyOnce.Do(initMessageIdempotencyMetrics)
+	if messageIdempotencyCounter != nil {
+		messageIdempotencyCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// Redis 调用指标：缓存是加速器，不能变成故障放大器。
+// 只有「接口慢」时无法判断是 Redis 抖动还是下游 DB/检索慢，
+// 所以缓存客户端自己带 op/result 标签和耗时直方图。
+var (
+	redisOpOnce     sync.Once
+	redisOpCounter  metric.Int64Counter
+	redisOpDuration metric.Float64Histogram
+)
+
+func initRedisOpMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	redisOpCounter, _ = meter.Int64Counter(
+		"logos.cache.redis.count",
+		metric.WithDescription("Redis 操作结果计数（op=get/set/delete/...，result=hit/miss/ok/error/timeout/canceled）"),
+	)
+	redisOpDuration, _ = meter.Float64Histogram(
+		"logos.cache.redis.duration",
+		metric.WithDescription("Redis 单次操作耗时"),
+		metric.WithUnit("s"),
+	)
+}
+
+// RecordCacheOp 记录一次 Redis 操作。
+func RecordCacheOp(ctx context.Context, op, result string, durationSeconds float64) {
+	redisOpOnce.Do(initRedisOpMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("op", op),
+		attribute.String("result", result),
+	)
+	if redisOpCounter != nil {
+		redisOpCounter.Add(ctx, 1, attrs)
+	}
+	if redisOpDuration != nil {
+		redisOpDuration.Record(ctx, durationSeconds, attrs)
+	}
+}
+
+// 工具执行指标：工具是模型与外部系统之间的故障边界。
+// 只看「工具调用成功/失败」无法回答两个关键问题：失败后有没有重试、
+// 重试是否被熔断器挡住。拆成 call/retry/breaker 三个计数后，
+// retry 上升但 rejected 稳定说明只是抖动；rejected 上升说明后端持续不可用。
+var (
+	toolCallOnce       sync.Once
+	toolCallCounter    metric.Int64Counter
+	toolRetryCounter   metric.Int64Counter
+	toolBreakerCounter metric.Int64Counter
+)
+
+func initToolMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	toolCallCounter, _ = meter.Int64Counter(
+		"logos.tool.call.count",
+		metric.WithDescription("工具单次尝试结果计数（result=ok/error/timeout/canceled/rejected）"),
+	)
+	toolRetryCounter, _ = meter.Int64Counter(
+		"logos.tool.retry.count",
+		metric.WithDescription("工具因可重试错误发起的重试次数"),
+	)
+	toolBreakerCounter, _ = meter.Int64Counter(
+		"logos.tool.breaker.count",
+		metric.WithDescription("工具熔断器状态事件（event=open/half_open/closed/open_rejected/half_open_rejected）"),
+	)
+}
+
+// RecordToolCall 记录一次工具尝试结果。
+func RecordToolCall(ctx context.Context, tool, result string) {
+	toolCallOnce.Do(initToolMetrics)
+	if toolCallCounter != nil {
+		toolCallCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("tool", tool),
+			attribute.String("result", result),
+		))
+	}
+}
+
+// QQ Bridge 媒体中转指标。
+//
+// 媒体链路是「尽力而为」：失败会降级成文本占位，不会让消息发送失败，
+// 因此只看消息成功率永远发现不了 QQ CDN 或 MinIO 已经在持续失败。
+// 用 stage 区分 download/upload/queue，result 区分 ok/failed/canceled/too_large。
+// queue 单独统计「等槽位等到预算耗尽」：它不是下载/上传故障，
+// 处理动作是扩容，而不是去查 QQ CDN。
+var (
+	qqMediaOnce    sync.Once
+	qqMediaCounter metric.Int64Counter
+	qqMediaBytes   metric.Int64Histogram
+)
+
+func initQQMediaMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	qqMediaCounter, _ = meter.Int64Counter(
+		"logos.qqbridge.media.count",
+		metric.WithDescription("QQ 媒体中转结果计数（stage=download/upload/queue，result=ok/failed/canceled/too_large）"),
+	)
+	qqMediaBytes, _ = meter.Int64Histogram(
+		"logos.qqbridge.media.bytes",
+		metric.WithDescription("QQ 媒体中转文件大小分布"),
+		metric.WithUnit("By"),
+	)
+}
+
+// RecordQQMediaRelay 记录一次 QQ 媒体中转阶段结果。
+func RecordQQMediaRelay(ctx context.Context, stage, result string, size int64) {
+	qqMediaOnce.Do(initQQMediaMetrics)
+	if qqMediaCounter != nil {
+		qqMediaCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("stage", stage),
+			attribute.String("result", result),
+		))
+	}
+	if size > 0 && qqMediaBytes != nil {
+		qqMediaBytes.Record(ctx, size)
+	}
+}
+
+// QQ 出站消息指标。
+//
+// result=ok/failed/skipped；failed 表示可重试的发送失败（会触发 Kafka 重投），
+// skipped 表示消息本身不可恢复（缺字段/不支持的会话类型），不重试。
+// 两者混在一起会把「数据问题」误判成「QQ 不可用」。
+var (
+	qqOutboundOnce    sync.Once
+	qqOutboundCounter metric.Int64Counter
+)
+
+func initQQOutboundMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	qqOutboundCounter, _ = meter.Int64Counter(
+		"logos.qqbridge.outbound.count",
+		metric.WithDescription("QQ 出站消息结果计数（result=ok/failed/skipped）"),
+	)
+}
+
+// RecordQQOutbound 记录一次 QQ 出站结果。reason 区分具体失败原因。
+func RecordQQOutbound(ctx context.Context, result, reason string) {
+	qqOutboundOnce.Do(initQQOutboundMetrics)
+	if qqOutboundCounter != nil {
+		qqOutboundCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("result", result),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// QQ 快速路径指标。
+//
+// 快速路径直连 Bot，失败后靠补偿事件交回慢路径。只看消息成功率看不出
+// 「快速路径在持续失败、每次都退回 Kafka 往返」，必须单独统计补偿次数。
+// result=recovered 表示补偿事件已成功发布；failed 表示连补偿都没发出去，
+// 用户这条消息不会再有任何回复；busy 表示并发槽位打满、快速路径根本没跑，
+// 消息退回慢路径（容量信号，不是故障）。
+var (
+	qqFastPathOnce    sync.Once
+	qqFastPathCounter metric.Int64Counter
+)
+
+func initQQFastPathMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	qqFastPathCounter, _ = meter.Int64Counter(
+		"logos.qqbridge.fastpath.count",
+		metric.WithDescription("QQ 快速路径补偿结果计数（result=recovered/failed）"),
+	)
+}
+
+// RecordQQFastPath 记录一次快速路径失败后的补偿结果。
+func RecordQQFastPath(ctx context.Context, result, reason string) {
+	qqFastPathOnce.Do(initQQFastPathMetrics)
+	if qqFastPathCounter != nil {
+		qqFastPathCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("result", result),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordToolRetry 记录一次工具重试。
+func RecordToolRetry(ctx context.Context, tool string) {
+	toolCallOnce.Do(initToolMetrics)
+	if toolRetryCounter != nil {
+		toolRetryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("tool", tool)))
+	}
+}
+
+// RecordToolBreaker 记录一次熔断器状态事件。
+func RecordToolBreaker(ctx context.Context, tool, event string) {
+	toolCallOnce.Do(initToolMetrics)
+	if toolBreakerCounter != nil {
+		toolBreakerCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("tool", tool),
+			attribute.String("event", event),
 		))
 	}
 }
@@ -641,5 +1267,46 @@ func (m *ServiceMeters) RecordKafkaProduced(ctx context.Context, topic string) {
 func (m *ServiceMeters) RecordKafkaConsumed(ctx context.Context, topic string) {
 	if m.KafkaMessagesConsumed != nil {
 		m.KafkaMessagesConsumed.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// 文档孤儿回收指标。
+// 文档处理是进程内异步任务，进程重启/OOM 会让 Pending/Processing 永久卡住；
+// reaped 表示本轮救回了多少条，failures 表示回收器本身是否健康。
+var (
+	documentReapOnce sync.Once
+	documentReapNum  metric.Int64Counter
+	documentReapFail metric.Int64Counter
+)
+
+func initDocumentReapMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	documentReapNum, _ = meter.Int64Counter(
+		"logos.document.reap.count",
+		metric.WithDescription("回收的孤儿文档数（长时间停留在 Pending/Processing）"),
+	)
+	documentReapFail, _ = meter.Int64Counter(
+		"logos.document.reap.failure.count",
+		metric.WithDescription("文档孤儿回收失败次数"),
+	)
+}
+
+func RecordDocumentReaped(ctx context.Context, count int64) {
+	if count <= 0 {
+		return
+	}
+	documentReapOnce.Do(initDocumentReapMetrics)
+	if documentReapNum != nil {
+		documentReapNum.Add(ctx, count)
+	}
+}
+
+func RecordDocumentReapFailure(ctx context.Context) {
+	documentReapOnce.Do(initDocumentReapMetrics)
+	if documentReapFail != nil {
+		documentReapFail.Add(ctx, 1)
 	}
 }

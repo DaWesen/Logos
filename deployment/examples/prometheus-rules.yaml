@@ -118,6 +118,40 @@ spec:
         summary: "Outbox 投递失败率高（topic={{ $labels.topic }}）"
         description: "{{ $labels.topic }} 近 5 分钟投递失败率 {{ $value | humanizePercentage }}，域事件投递延迟将持续增大"
 
+    # 积压持续偏高：成功率可能仍是 100%，但生产速度已经超过投递吞吐
+    - alert: OutboxBacklogHigh
+      expr: |
+        logos_outbox_pending_count > 1000
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Outbox 积压持续偏高（{{ $value }} 条）"
+        description: "pending 消息已连续 10 分钟超过 1000 条。即使失败率为 0，也说明投递吞吐跟不上生产速度，需扩容 relay 或提高批量"
+
+    # 最老 pending 消息等待过久：投递延迟已经影响业务时效
+    - alert: OutboxDeliveryLagHigh
+      expr: |
+        logos_outbox_oldest_pending_seconds > 300
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Outbox 投递延迟过高（最老消息 {{ $value }}s）"
+        description: "最老一条 pending 消息已等待超过 5 分钟，域事件（计费/知识库/向量化）会出现明显延迟，请检查 Kafka 与 relay 实例"
+
+    # 限流降级：Redis 不可用，正在用单机兜底
+    # 这条告警不是「流量异常」，而是「限流精度已经下降」，需要尽快恢复 Redis。
+    - alert: RateLimiterDegraded
+      expr: |
+        sum by (layer) (increase(logos_ratelimit_degraded_count_total[5m])) > 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "限流已降级到单机兜底（layer={{ $labels.layer }}）"
+        description: "近 5 分钟 {{ $labels.layer }} 层限流因 Redis 不可用切换到单机固定窗口，全局配额已不准确，请检查 Redis 与网关日志"
+
     # LLM 结构化输出解析失败率过高：模型输出格式漂移，业务已降级为空结果（静默失败）
     - alert: LLMParseFailureRateHigh
       expr: |
@@ -131,6 +165,33 @@ spec:
         summary: "LLM 结构化输出解析失败率高（module={{ $labels.module }}）"
         description: "{{ $labels.module }} 近 10 分钟解析失败率 {{ $value | humanizePercentage }}，业务已降级为空结果，请检查 prompt 或模型输出格式"
 
+    # 修复重试无效：解析失败后的一次定向修复仍然失败，
+    # 说明不是模型偶发抽风，而是 prompt / schema / 校验逻辑需要改。
+    - alert: LLMRepairIneffective
+      expr: |
+        sum by (module) (rate(logos_llm_repair_count_total{result="failed"}[15m]))
+          /
+        sum by (module) (rate(logos_llm_repair_count_total[15m])) > 0.5
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "LLM 输出修复重试基本无效（module={{ $labels.module }}）"
+        description: "{{ $labels.module }} 近 15 分钟修复失败率 {{ $value | humanizePercentage }}，说明问题不是偶发格式漂移，请调整 prompt 或输出校验"
+
+    # 语义缓存不可用：命中率会掉到 0，所有请求直接打到 LLM，成本与延迟同时上升
+    - alert: SemanticCacheUnavailable
+      expr: |
+        sum(rate(logos_ai_semantic_cache_count_total{op="lookup",result=~"error|unavailable"}[10m]))
+          /
+        sum(rate(logos_ai_semantic_cache_count_total{op="lookup"}[10m])) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "语义缓存不可用比例过高"
+        description: "近 10 分钟 {{ $value | humanizePercentage }} 的缓存查询失败或不可用，命中率下降会让 LLM 调用量与响应延迟同时上升，请检查 Redis 与 embedding 服务"
+
     # Token 用量退化为本地估算的比例过高：上游未返回 usage，计费精度下降
     - alert: LLMTokenUsageEstimateRateHigh
       expr: |
@@ -143,6 +204,269 @@ spec:
       annotations:
         summary: "Token 用量估算占比过高"
         description: "近 15 分钟 {{ $value | humanizePercentage }} 的计费使用本地估算而非供应商真实 usage，请检查上游模型是否返回 usage（流式需 stream_options.include_usage）"
+
+    # ES 真实失败率过高：必须排除 canceled 再算分母。
+    # ctx 透传后客户端断连会稳定产生 canceled，如果把它们算进失败或算进分母，
+    # 告警要么误报要么被稀释；这里只统计 ok/failed 两种终态。
+    - alert: ElasticsearchFailureRateHigh
+      expr: |
+        sum by (index, operation) (rate(logos_es_request_count_total{result="failed"}[5m]))
+          /
+        sum by (index, operation) (
+          rate(logos_es_request_count_total{result=~"ok|failed"}[5m])
+        ) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ES 请求失败率高（index={{ $labels.index }}, op={{ $labels.operation }}）"
+        description: "{{ $labels.index }}/{{ $labels.operation }} 近 5 分钟真实失败率 {{ $value | humanizePercentage }}（已排除 canceled），请检查 ES 集群状态与索引健康度"
+
+    # ES 检索 P95 过高：索引膨胀、分片不均或查询过重
+    - alert: ElasticsearchSearchLatencyHigh
+      expr: |
+        histogram_quantile(
+          0.95,
+          sum by (le, index) (
+            rate(logos_es_request_duration_bucket{operation="search",result="ok"}[5m])
+          )
+        ) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "ES 检索 P95 过高（index={{ $labels.index }}）"
+        description: "{{ $labels.index }} 检索 P95 已超过 500ms，请检查索引大小、分片分布与查询条件"
+
+    # 慢 SQL 突增：不要只看平均耗时，慢查询条数更容易发现查询计划退化
+    - alert: DBSlowQuerySurge
+      expr: |
+        sum by (operation, table) (rate(logos_db_slow_query_count_total[5m])) > 1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "数据库慢查询突增（{{ $labels.operation }}/{{ $labels.table }}）"
+        description: "{{ $labels.operation }} {{ $labels.table }} 近 5 分钟慢查询速率超过 1 条/秒（阈值 200ms），请检查执行计划、索引和表数据量"
+
+    # 连接池打满：SQL 可能还没开始执行，业务侧只会看到整体变慢
+    - alert: DBPoolSaturation
+      expr: |
+        sum(logos_db_pool_connections{state="in_use"})
+          /
+        clamp_min(sum(logos_db_pool_connections{state="open"}), 1) > 0.9
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "数据库连接池使用率过高"
+        description: "连接池 in_use/open 已超过 90% 持续 10 分钟，请求可能正在排队；请检查慢 SQL、连接泄漏和 MaxOpenConns 配置"
+
+    # 连接等待时长持续增长：比“当前使用率”更能说明请求真的被阻塞了
+    - alert: DBPoolWaitHigh
+      expr: |
+        rate(logos_db_pool_wait_duration_seconds_total[5m]) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "数据库连接等待时长持续增长"
+        description: "近 5 分钟每秒累计等待连接超过 0.5 秒，说明请求在获取连接阶段被阻塞；优先检查慢查询与连接池容量"
+
+    # 保留期清理失败：过期变更日志/幂等键会持续堆积，最终拖慢查询与写入
+    - alert: RetentionCleanupFailing
+      expr: |
+        sum by (table) (increase(logos_retention_cleanup_failures_total[1h])) > 0
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "保留期清理失败（table={{ $labels.table }}）"
+        description: "{{ $labels.table }} 近 1 小时出现清理失败，过期数据会持续堆积；请检查数据库连接、锁等待和清理任务日志"
+
+    # 文档孤儿回收持续失败：进程重启留下的 Pending/Processing 会永久卡住
+    - alert: DocumentReapFailing
+      expr: |
+        sum(rate(logos_document_reap_failure_count_total[15m])) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "文档孤儿回收持续失败"
+        description: "近 15 分钟回收器一直失败（数据库异常或 SQL 超时），重启后残留的 Pending/Processing 文档不会自愈，用户会一直看到「处理中」"
+
+    # 缓存回源失败率过高：缓存不可用时回源失败会直接放大成接口错误
+    - alert: CacheFillFailureHigh
+      expr: |
+        sum by (cache) (rate(logos_cache_fill_count_total{result="error"}[5m]))
+          /
+        sum by (cache) (rate(logos_cache_fill_count_total[5m])) > 0.2
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "缓存回源失败率高（cache={{ $labels.cache }}）"
+        description: "{{ $labels.cache }} 近 5 分钟回源失败率 {{ $value | humanizePercentage }}，请检查下游数据库/检索服务与超时配置"
+
+    # 幂等回放占比过高：消息本身没重复，但客户端/网关在成倍重试
+    - alert: MessageIdempotencyReplaySurge
+      expr: |
+        sum(rate(logos_message_idempotency_count_total{result="replayed"}[10m]))
+          /
+        sum(rate(logos_message_idempotency_count_total[10m])) > 0.3
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "消息幂等回放占比过高"
+        description: "近 10 分钟 {{ $value | humanizePercentage }} 的幂等写入是重试回放，业务未重复落库，但客户端或网关可能正在放大请求；请检查网络抖动与客户端重试策略"
+
+    # Redis 超时/错误率过高：缓存已经无法加速，主流程正在靠回源硬扛
+    - alert: RedisCacheErrorRateHigh
+      expr: |
+        sum by (op) (rate(logos_cache_redis_count_total{result=~"timeout|error"}[5m]))
+          /
+        sum by (op) (rate(logos_cache_redis_count_total[5m])) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Redis 缓存操作失败率高（op={{ $labels.op }}）"
+        description: "{{ $labels.op }} 近 5 分钟超时/错误占比 {{ $value | humanizePercentage }}，缓存已降级为回源；请检查 Redis 连接池、网络与慢命令"
+
+    # Redis P95 逼近单次预算：再抖一点就会触发超时降级
+    - alert: RedisCacheLatencyHigh
+      expr: |
+        histogram_quantile(0.95,
+          sum by (le, op) (rate(logos_cache_redis_duration_seconds_bucket[5m]))
+        ) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Redis 缓存操作 P95 高（op={{ $labels.op }}）"
+        description: "{{ $labels.op }} 的 P95 已超过 100ms，接近 200ms 的读预算；继续恶化会触发超时降级并放大数据库压力"
+
+    # 访问日志开始丢弃：监控链路已经跟不上请求量，接下来会丢失排障证据
+    - alert: GatewayLogReportDropping
+      expr: |
+        sum(rate(logos_gateway_log_report_count_total{result="dropped"}[5m])) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "网关访问日志开始丢弃"
+        description: "有界队列已满，每秒丢弃 {{ $value }} 条访问日志；说明 monitoring 服务变慢或流量超出队列容量，请检查 logos_gateway_log_report_duration_seconds 与 monitoring 服务延迟"
+
+    # 日志上报持续失败：观测链路自身故障，不能等到日志彻底丢失才发现
+    - alert: GatewayLogReportFailing
+      expr: |
+        sum(rate(logos_gateway_log_report_count_total{result="error"}[5m]))
+          /
+        sum(rate(logos_gateway_log_report_count_total[5m])) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "网关访问日志上报失败率高"
+        description: "近 5 分钟 {{ $value | humanizePercentage }} 的日志上报失败，请检查 monitoring 服务可用性与 gRPC 连接"
+
+    # 工具熔断器打开：模型工具链路已主动停止打后端，避免一次故障被多轮 ReAct 放大
+    - alert: ToolCircuitOpen
+      expr: |
+        sum by (tool) (increase(logos_tool_breaker_count_total{event="open"}[5m])) > 0
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: "工具 {{ $labels.tool }} 熔断器已打开"
+        description: "近 5 分钟工具 {{ $labels.tool }} 连续失败达到阈值，执行器已停止调用后端；请检查知识库/图谱检索服务。冷却后会放一个半开探针自动恢复"
+
+    # 熔断拒绝率高：调用量并没有消失，只是被快速失败挡住，需要区分「正常保护」与「后端持续不可用」
+    - alert: ToolCallRejectedRateHigh
+      expr: |
+        sum by (tool) (rate(logos_tool_call_count_total{result="rejected"}[5m]))
+          /
+        clamp_min(sum by (tool) (rate(logos_tool_call_count_total[5m])), 1e-9) > 0.2
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "工具 {{ $labels.tool }} 熔断拒绝率过高"
+        description: "近 5 分钟 {{ $value | humanizePercentage }} 的工具调用被熔断器直接拒绝，说明后端仍未恢复；请检查检索服务与下游连接池"
+
+    # QQ 媒体中转失败：失败会被降级成文本占位，不影响消息成功率，必须单独告警
+    - alert: QQMediaRelayFailing
+      expr: |
+        sum by (stage) (rate(logos_qqbridge_media_count_total{result="failed"}[5m]))
+          /
+        clamp_min(sum by (stage) (rate(logos_qqbridge_media_count_total[5m])), 1e-9) > 0.2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "QQ 媒体中转失败率过高（stage={{ $labels.stage }}）"
+        description: "近 5 分钟 {{ $value | humanizePercentage }} 的 QQ 媒体下载/上传失败，消息仍会以文本占位发送，但用户看不到图片/语音；请检查 QQ CDN 可达性与 MinIO 状态"
+
+    # 媒体单文件过大：不是故障，但持续出现说明上游在绕过大小限制，需人工确认
+    - alert: QQMediaRelayTooLarge
+      expr: |
+        sum by (stage) (increase(logos_qqbridge_media_count_total{result="too_large"}[1h])) > 3
+      for: 5m
+      labels:
+        severity: info
+      annotations:
+        summary: "QQ 媒体中转频繁触发大小上限"
+        description: "近 1 小时有 {{ $value }} 个 QQ 媒体超过 100MB 上限；Bridge 会保留文本占位，请确认是否为异常/恶意文件"
+
+    # 快速路径补偿失败：这是最严重的一类 QQ 故障。
+    # 快速路径接管后 Chat Service 已经跳过，补偿事件再发不出去，用户这条消息
+    # 就永远不会有回复；消息成功率看不出来，必须单独告警。
+    - alert: QQFastPathRecoveryFailing
+      expr: |
+        sum by (reason) (rate(logos_qqbridge_fastpath_count_total{result="failed"}[10m])) > 0.02
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "QQ 快速路径补偿事件持续发布失败（reason={{ $labels.reason }}）"
+        description: "快速路径已失败且补偿事件也发不进 Kafka，用户消息不会再有任何回复；请检查 Kafka 可用性与 Bridge 到 Broker 的网络"
+
+    # 补偿频繁发生：说明快速路径本身在持续失败（Bot 超时/空响应），
+    # 系统虽然靠慢路径兜底没丢消息，但每条消息都要多一次 Kafka 往返。
+    - alert: QQFastPathRecoveryRateHigh
+      expr: |
+        sum by (reason) (rate(logos_qqbridge_fastpath_count_total{result="recovered"}[10m])) > 0.2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "QQ 快速路径补偿率过高（reason={{ $labels.reason }}）"
+        description: "近 10 分钟快速路径持续失败并退回慢路径（{{ $value | humanize }}/s）；请检查 Bot 服务延迟、模型配额与快速路径并发槽位是否长期打满"
+
+    # 快速路径槽位打满：消息没丢，但每条都要走 Kafka 往返，用户明显感知变慢。
+    # 单独告警而不是混进 failed，因为处理动作不同：这里要扩容/调大并发，不是修 Bug。
+    - alert: QQFastPathSaturated
+      expr: |
+        sum(rate(logos_qqbridge_fastpath_count_total{result="busy"}[10m])) > 0.5
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "QQ 快速路径并发槽位长期打满"
+        description: "近 10 分钟有 {{ $value | humanize }}/s 的消息因槽位满退回慢路径；请调大 QQBRIDGE_FAST_CONCURRENCY 或扩容 Bridge 实例"
+
+    # 媒体排队超时：不是下载/上传失败，而是容量不足导致消息预算耗尽。
+    # stage=queue 与 stage=download/upload 分开，避免把「扩容」误判成「QQ CDN 故障」。
+    - alert: QQMediaQueueSaturated
+      expr: |
+        sum(rate(logos_qqbridge_media_count_total{stage="queue",result!="ok"}[10m])) > 0.2
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "QQ 媒体中转排队超时"
+        description: "近 10 分钟有 {{ $value | humanize }}/s 的媒体在等待并发槽位时预算耗尽；请调大 QQBRIDGE_MEDIA_CONCURRENCY 或检查是否有大文件长期占用"
 
   # 支付链路：回调结果指标
   - name: logos.payment
