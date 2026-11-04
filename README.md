@@ -508,6 +508,8 @@ Logos/
 - **规范化**：消息按 `chat_id` 等 Key 哈希分区，同一会话有序；消费端通过数据库主键/唯一约束实现幂等
 - **幂等键保留期**：`message_idempotency` 只覆盖客户端重试窗口，默认保留 7 天；每小时分批回收，每批 1000 行、单轮最多 10 批，并补 `created_at` 索引，避免表随消息量无限增长和一次删除锁表
 - **内部 topic 名不能直接当 Kafka topic**：DAO/gRPC enum/统计使用 `QA_REQUEST` 这类大写下划线内部名，而 Kafka 常量是 `qa_request`。outbox relay 原样把 Topic 字段当 Kafka topic 发，导致 QA 事件被投进一个没人订阅的 topic——`dispatch=sent`，业务却永远不执行。现在由 `kafkaTopicFor` 做唯一映射，避免两套命名再次漂移
+- **枚举基数不一致会整体错位一格**：proto 的 `Topic` 从 0 开始（`DATA_COLLECTION = 0`），DAO 旧实现却按 1 开始解析，结果 `DATA_COLLECTION` 写成 `UNKNOWN(0)`、`SYSTEM_EVENT` 永远不可达，每条消息都被投到相邻业务 topic；`Priority` 同样是 0 基 vs 1..4，导致 `NORMAL` 读回来变 `LOW`。现在映射只保留在 DAO/转换函数两处，越界枚举在写库前直接拒绝，`BatchSendMessage` 的响应也回显消息真实 topic，而不是硬编码 `pb.Topic(1)`
+- **批量发送要么全入队要么全回滚**：`BatchSendMessage` 原先逐条调用 `SendMessage`，某条失败只打日志后 `continue`，最终仍返回 nil 错误，调用方把部分成功当全部成功；已提交的子集还会在重试时重复入队。现在先整体校验（topic/优先级/批量上限 100），再在**单个事务**里用一条多值 INSERT 写入全部消息与对应 outbox 事件，任一步失败整批回滚，重试不会产生半批数据
 - **问答执行不能裸起 goroutine**：handler 里 `go AskQuestion(Background)` 后立即返回 nil，offset 会被提交；LLM 失败或进程崩溃时请求永久丢失，突发流量还会堆出无界 goroutine。现在消费端同步执行并返回错误，复用既有的就地重试/死信路径；单条问答应带 120s 上限，且使用 `Message.Context`，停机时可取消
 - **批量确认不能吞错**：`BatchAcknowledgeMessages` 原先逐条 UPDATE，失败只打日志后 `continue`，最后仍返回成功——客户端以为整批确认完成，实际部分消息会重投。现在过滤空/重复 id 后一条 `WHERE id IN (...)` 更新，失败整批返回错误交由上游重试；消费后状态更新失败同样上抛，避免 offset 已提交但消息状态永远停在旧值
 
