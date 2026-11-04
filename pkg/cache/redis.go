@@ -336,12 +336,16 @@ func (c *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
 
 // 批量设置
 func (c *RedisCache) MSet(ctx context.Context, values map[string]interface{}) error {
-	return c.client.MSet(ctx, values).Err()
+	return runErr(ctx, "mset", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.MSet(ctx, values).Err()
+	})
 }
 
 // 批量获取
 func (c *RedisCache) MGet(ctx context.Context, keys []string) (map[string]string, error) {
-	result, err := c.client.MGet(ctx, keys...).Result()
+	result, err := runOp(ctx, "mget", cacheReadTimeout, func(ctx context.Context) ([]interface{}, error) {
+		return c.client.MGet(ctx, keys...).Result()
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -371,12 +375,16 @@ func (c *RedisCache) MGet(ctx context.Context, keys []string) (map[string]string
 
 // 批量删除
 func (c *RedisCache) MDelete(ctx context.Context, keys []string) error {
-	return c.client.Del(ctx, keys...).Err()
+	return runErr(ctx, "mdelete", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.Del(ctx, keys...).Err()
+	})
 }
 
 // 设置哈希字段
 func (c *RedisCache) HSet(ctx context.Context, key, field string, value interface{}) error {
-	return c.client.HSet(ctx, key, field, value).Err()
+	return runErr(ctx, "hset", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.HSet(ctx, key, field, value).Err()
+	})
 }
 
 // 获取哈希字段
@@ -388,72 +396,100 @@ func (c *RedisCache) HGet(ctx context.Context, key, field string) (string, error
 
 // 批量设置哈希字段
 func (c *RedisCache) HMSet(ctx context.Context, key string, values map[string]interface{}) error {
-	return c.client.HMSet(ctx, key, values).Err()
+	return runErr(ctx, "hmset", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.HMSet(ctx, key, values).Err()
+	})
 }
 
 // 获取哈希所有字段
 func (c *RedisCache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	return c.client.HGetAll(ctx, key).Result()
+	return runOp(ctx, "hgetall", cacheReadTimeout, func(ctx context.Context) (map[string]string, error) {
+		return c.client.HGetAll(ctx, key).Result()
+	})
 }
 
 // 删除哈希字段
 func (c *RedisCache) HDel(ctx context.Context, key string, fields []string) error {
-	return c.client.HDel(ctx, key, fields...).Err()
+	return runErr(ctx, "hdel", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.HDel(ctx, key, fields...).Err()
+	})
 }
 
 // 左侧推入列表
 func (c *RedisCache) LPush(ctx context.Context, key string, values ...interface{}) error {
-	return c.client.LPush(ctx, key, values...).Err()
+	return runErr(ctx, "lpush", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.LPush(ctx, key, values...).Err()
+	})
 }
 
 // 右侧推入列表
 func (c *RedisCache) RPush(ctx context.Context, key string, values ...interface{}) error {
-	return c.client.RPush(ctx, key, values...).Err()
+	return runErr(ctx, "rpush", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.RPush(ctx, key, values...).Err()
+	})
 }
 
 // 获取列表范围
 func (c *RedisCache) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return c.client.LRange(ctx, key, start, stop).Result()
+	return runOp(ctx, "lrange", cacheReadTimeout, func(ctx context.Context) ([]string, error) {
+		return c.client.LRange(ctx, key, start, stop).Result()
+	})
 }
 
 // 获取列表长度
 func (c *RedisCache) LLen(ctx context.Context, key string) (int64, error) {
-	return c.client.LLen(ctx, key).Result()
+	return runOp(ctx, "llen", cacheReadTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.LLen(ctx, key).Result()
+	})
 }
 
 // 添加集合成员
 func (c *RedisCache) SAdd(ctx context.Context, key string, members ...interface{}) error {
-	return c.client.SAdd(ctx, key, members...).Err()
+	return runErr(ctx, "sadd", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.SAdd(ctx, key, members...).Err()
+	})
 }
 
 // 删除集合成员
 func (c *RedisCache) SRem(ctx context.Context, key string, members ...interface{}) error {
-	return c.client.SRem(ctx, key, members...).Err()
+	return runErr(ctx, "srem", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.SRem(ctx, key, members...).Err()
+	})
 }
 
 // 获取集合所有成员
 func (c *RedisCache) SMembers(ctx context.Context, key string) ([]string, error) {
-	return c.client.SMembers(ctx, key).Result()
+	return runOp(ctx, "smembers", cacheReadTimeout, func(ctx context.Context) ([]string, error) {
+		return c.client.SMembers(ctx, key).Result()
+	})
 }
 
 // 检查是否为集合成员
 func (c *RedisCache) SIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
-	return c.client.SIsMember(ctx, key, member).Result()
+	return runOp(ctx, "sismember", cacheReadTimeout, func(ctx context.Context) (bool, error) {
+		return c.client.SIsMember(ctx, key, member).Result()
+	})
 }
 
 // 添加有序集合成员
 func (c *RedisCache) ZAdd(ctx context.Context, key string, score float64, member interface{}) error {
-	return c.client.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err()
+	return runErr(ctx, "zadd", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err()
+	})
 }
 
 // 删除有序集合成员
 func (c *RedisCache) ZRem(ctx context.Context, key string, members ...interface{}) error {
-	return c.client.ZRem(ctx, key, members...).Err()
+	return runErr(ctx, "zrem", cacheWriteTimeout, func(ctx context.Context) error {
+		return c.client.ZRem(ctx, key, members...).Err()
+	})
 }
 
 // 获取有序集合范围
 func (c *RedisCache) ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	return c.client.ZRange(ctx, key, start, stop).Result()
+	return runOp(ctx, "zrange", cacheReadTimeout, func(ctx context.Context) ([]string, error) {
+		return c.client.ZRange(ctx, key, start, stop).Result()
+	})
 }
 
 // 有序集合计数
@@ -465,12 +501,16 @@ func (c *RedisCache) ZCount(ctx context.Context, key string, min, max float64) (
 
 // 获取有序集合成员分数
 func (c *RedisCache) ZScore(ctx context.Context, key string, member string) (float64, error) {
-	return c.client.ZScore(ctx, key, member).Result()
+	return runOp(ctx, "zscore", cacheReadTimeout, func(ctx context.Context) (float64, error) {
+		return c.client.ZScore(ctx, key, member).Result()
+	})
 }
 
 // 递增计数器
 func (c *RedisCache) Incr(ctx context.Context, key string) (int64, error) {
-	return c.client.Incr(ctx, key).Result()
+	return runOp(ctx, "incr", cacheWriteTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.Incr(ctx, key).Result()
+	})
 }
 
 // 递增指定值
@@ -482,12 +522,16 @@ func (c *RedisCache) IncrBy(ctx context.Context, key string, value int64) (int64
 
 // 递减计数器
 func (c *RedisCache) Decr(ctx context.Context, key string) (int64, error) {
-	return c.client.Decr(ctx, key).Result()
+	return runOp(ctx, "decr", cacheWriteTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.Decr(ctx, key).Result()
+	})
 }
 
 // 递减指定值
 func (c *RedisCache) DecrBy(ctx context.Context, key string, value int64) (int64, error) {
-	return c.client.DecrBy(ctx, key, value).Result()
+	return runOp(ctx, "decrby", cacheWriteTimeout, func(ctx context.Context) (int64, error) {
+		return c.client.DecrBy(ctx, key, value).Result()
+	})
 }
 
 // 执行 Lua 脚本
@@ -504,33 +548,37 @@ func (c *RedisCache) PipelineExec(ctx context.Context, cmds []PipelineCmd) ([]in
 		return nil, err
 	}
 
-	pipe := c.client.Pipeline()
+	return runOp(ctx, "pipeline", cacheWriteTimeout, func(ctx context.Context) ([]interface{}, error) {
+		pipe := c.client.Pipeline()
 
-	results := make([]interface{}, 0, len(cmds))
-	for _, cmd := range cmds {
-		switch cmd.Cmd {
-		case "ZREMRANGEBYSCORE":
-			results = append(results, pipe.ZRemRangeByScore(ctx, safeStringConvert(cmd.Args[0]), safeStringConvert(cmd.Args[1]), safeStringConvert(cmd.Args[2])))
-		case "ZADD":
-			results = append(results, pipe.ZAdd(ctx, safeStringConvert(cmd.Args[0]), redis.Z{Score: safeFloat64Convert(cmd.Args[1]), Member: cmd.Args[2]}))
-		case "ZRANGE":
-			results = append(results, pipe.ZRange(ctx, safeStringConvert(cmd.Args[0]), safeInt64Convert(cmd.Args[1]), safeInt64Convert(cmd.Args[2])))
-		case "PEXPIRE":
-			results = append(results, pipe.Expire(ctx, safeStringConvert(cmd.Args[0]), time.Duration(safeInt64Convert(cmd.Args[1]))*time.Millisecond))
+		results := make([]interface{}, 0, len(cmds))
+		for _, cmd := range cmds {
+			switch cmd.Cmd {
+			case "ZREMRANGEBYSCORE":
+				results = append(results, pipe.ZRemRangeByScore(ctx, safeStringConvert(cmd.Args[0]), safeStringConvert(cmd.Args[1]), safeStringConvert(cmd.Args[2])))
+			case "ZADD":
+				results = append(results, pipe.ZAdd(ctx, safeStringConvert(cmd.Args[0]), redis.Z{Score: safeFloat64Convert(cmd.Args[1]), Member: cmd.Args[2]}))
+			case "ZRANGE":
+				results = append(results, pipe.ZRange(ctx, safeStringConvert(cmd.Args[0]), safeInt64Convert(cmd.Args[1]), safeInt64Convert(cmd.Args[2])))
+			case "PEXPIRE":
+				results = append(results, pipe.Expire(ctx, safeStringConvert(cmd.Args[0]), time.Duration(safeInt64Convert(cmd.Args[1]))*time.Millisecond))
+			}
 		}
-	}
 
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return results, nil
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, err
+		}
+		return results, nil
+	})
 }
 
 // 测试连接
 func (c *RedisCache) Ping(ctx context.Context) error {
-	return c.client.Ping(ctx).Err()
+	// 健康探针同样要有自己的预算：探针本身就是用来发现「Redis 变慢」的，
+	// 如果它跟着调用方的 30s 超时一起挂住，探针就失去了意义。
+	return runErr(ctx, "ping", cacheReadTimeout, func(ctx context.Context) error {
+		return c.client.Ping(ctx).Err()
+	})
 }
 
 // 关闭连接

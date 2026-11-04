@@ -105,6 +105,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **容量信号与故障信号分离**：媒体排队失败打 `stage=queue`，快速路径槽位打满打 `result=busy`；两条容量告警必须引用这两个专用标签，不能混回 `failed`
 - **数据库重试边界**：`shouldWaitBeforeNextAttempt` 覆盖单次尝试、中间一次、最后一次与非法 attempts；最后一次失败后不再白等一个退避周期
 - **缓存懒加载自愈**：连接失败进入 30s 冷却期而非永久失败；冷却内不重连，冷却结束后恢复；成功实例只连一次且并发首调唯一；`Mapper` 构造时缓存不可用、恢复后仍能写入；缓存不可用时用户/群映射返回确定性 ID，反查返回错误
+- **缓存预算全覆盖**：`runOp` 自带上限且尊重调用方更短的 deadline；静态检查遍历 `RedisCache` 全部方法，任何直接调用 `c.client` 又没有套 `runOp/runErr` 的方法都会失败（`Close`/`RawClient` 显式豁免），防止批量/Hash/List/Pipeline 等新方法漏掉预算
 - **直连治理**：直连一个无人监听的端口且调用方不设 deadline 时，客户端超时拦截器必须让调用在预算内返回；调用方自带 deadline 时不被放大
 - **重试白名单**：SendMessage/SendBotMessage/CreatePaymentOrder/ConfirmPayment/Deposit/Withdraw/Consume*/Refund/AddFriend/Create*/Delete* 一律不重试；只读方法与幂等覆盖写可重试；方法名为空保守不重试；配置的 `retryable_codes` 真正生效，`UNAVAILABLE` 与 `Unavailable` 两种写法都能匹配；空配置保留最小安全集合
 - **重试白名单可配置**：`grpc.client.retry_safe_methods` 只做加法且被真正读取；空配置下危险写仍不重试；策略持有切片副本，调用方后续修改不影响已建连接；etcd 与直连两条路径都接收同一策略
