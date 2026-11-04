@@ -124,6 +124,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **懒初始化原语**：`pkg/lazyinit` 验证失败永不返回零值+nil；冷却窗口内不重复探测、窗口过后重试并自愈；成功结果永久复用；16 并发首次调用只执行一次 load（`-race`）；零冷却窗口表示立即重试；nil loader 显式 panic 而不是静默空转
 - **消费生命周期 ctx**：订阅时传入的 ctx 会出现在 handler 收到的 `Message.Context` 上；ES 实体 create/update/delete 与索引统计使用该 ctx，停机时在途写请求可被取消，不再退回 `context.Background()`
 - **问答投递与执行语义**：7 个内部 topic 名全部映射到对应 Kafka 常量，`QA_REQUEST` 必须落到 `qa_request`；`AskQuestion` 失败时 handler 返回错误（触发重试），成功才提交 offset；问答应拿到带 deadline 的子 ctx，父 ctx 取消后 handler 立即退出；非问答消息不触发 `AskQuestion`
+- **批量确认语义**：多个 id 只发一条批量 UPDATE（不是 N 次往返）；空字符串与重复 id 被过滤；没有有效 id 时不访问数据库；数据库失败时返回错误而不是 `continue` 后报成功；消费后状态更新失败也会上抛触发重试
 - **Milvus 启动预算**：持续连接失败时在总预算内返回而不是固定重试 60 次；单次尝试超时被剩余预算截断（预算 200ms、单次超时 10s 时仍在 1s 内返回）；首次成功立即返回且不继续重试；日志包含「预算耗尽」结论
 - **日志无配置降级**：`GetLogger` 在没有配置文件时退回 info + stdout，不 panic。单元测试、CLI 工具等未加载配置的场景仍可正常打日志
 - **HTTP 排空兜底**：`Shutdown` 在窗口内完成时在途请求正常返回；handler 超过窗口时 `Serve` 返回错误并调用 `Close` 强制断开，卡住请求的 `r.Context()` 会被取消，不会留下悬挂连接与 goroutine

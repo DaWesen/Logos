@@ -509,6 +509,7 @@ Logos/
 - **幂等键保留期**：`message_idempotency` 只覆盖客户端重试窗口，默认保留 7 天；每小时分批回收，每批 1000 行、单轮最多 10 批，并补 `created_at` 索引，避免表随消息量无限增长和一次删除锁表
 - **内部 topic 名不能直接当 Kafka topic**：DAO/gRPC enum/统计使用 `QA_REQUEST` 这类大写下划线内部名，而 Kafka 常量是 `qa_request`。outbox relay 原样把 Topic 字段当 Kafka topic 发，导致 QA 事件被投进一个没人订阅的 topic——`dispatch=sent`，业务却永远不执行。现在由 `kafkaTopicFor` 做唯一映射，避免两套命名再次漂移
 - **问答执行不能裸起 goroutine**：handler 里 `go AskQuestion(Background)` 后立即返回 nil，offset 会被提交；LLM 失败或进程崩溃时请求永久丢失，突发流量还会堆出无界 goroutine。现在消费端同步执行并返回错误，复用既有的就地重试/死信路径；单条问答应带 120s 上限，且使用 `Message.Context`，停机时可取消
+- **批量确认不能吞错**：`BatchAcknowledgeMessages` 原先逐条 UPDATE，失败只打日志后 `continue`，最后仍返回成功——客户端以为整批确认完成，实际部分消息会重投。现在过滤空/重复 id 后一条 `WHERE id IN (...)` 更新，失败整批返回错误交由上游重试；消费后状态更新失败同样上抛，避免 offset 已提交但消息状态永远停在旧值
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 
