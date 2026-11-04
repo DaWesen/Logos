@@ -29,7 +29,7 @@ type MessageRepository interface {
 	DeleteMessagesByTopic(ctx context.Context, topic string) error
 	ClearMessagesByTopic(ctx context.Context, topic string) error
 	DeleteSubscriptionsByTopic(ctx context.Context, topic string) error
-	GetMessageStats(ctx context.Context, topic string) (total, pending, processed, failed int64, err error)
+	GetMessageStatsByTopic(ctx context.Context) ([]TopicStats, error)
 
 	CreateSubscription(ctx context.Context, sub *model.MessageSubscription) error
 	GetSubscription(ctx context.Context, topic, consumerGroup string) (*model.MessageSubscription, error)
@@ -201,27 +201,32 @@ func (r *messageRepository) DeleteSubscriptionsByTopic(ctx context.Context, topi
 	return r.db.WithContext(ctx).Where("topic = ?", topic).Delete(&model.MessageSubscription{}).Error
 }
 
-func (r *messageRepository) GetMessageStats(ctx context.Context, topic string) (total, pending, processed, failed int64, err error) {
-	var stats struct {
-		Total     int64
-		Pending   int64
-		Processed int64
-		Failed    int64
-	}
+// TopicStats 是单个 topic 的聚合结果。
+type TopicStats struct {
+	Topic     string
+	Total     int64
+	Pending   int64
+	Processed int64
+	Failed    int64
+}
 
-	query := r.db.WithContext(ctx).Model(&model.Message{})
-	if topic != "" {
-		query = query.Where("topic = ?", topic)
-	}
-
-	query.Select(
-		"COUNT(*) as total",
-		"SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END) as pending",
-		"SUM(CASE WHEN status='PROCESSED' OR status='ACKED' THEN 1 ELSE 0 END) as processed",
-		"SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) as failed",
-	).Scan(&stats)
-
-	return stats.Total, stats.Pending, stats.Processed, stats.Failed, query.Error
+// GetMessageStatsByTopic 用一条 GROUP BY 返回全部 topic 的统计。
+//
+// 旧实现按 topic 逐条查询（1 + 7 次全表扫描），而且空表时 SUM 返回 NULL，
+// 扫描进 int64 会报错——统计页在队列为空时直接 500。
+// COALESCE 把空集归零，GROUP BY 把往返次数降到 1。
+func (r *messageRepository) GetMessageStatsByTopic(ctx context.Context) ([]TopicStats, error) {
+	var rows []TopicStats
+	err := r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Select(`topic,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status IN ('PROCESSED', 'ACKED') THEN 1 ELSE 0 END), 0) AS processed,
+			COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed`).
+		Group("topic").
+		Scan(&rows).Error
+	return rows, err
 }
 
 func (r *messageRepository) CreateSubscription(ctx context.Context, sub *model.MessageSubscription) error {

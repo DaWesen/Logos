@@ -291,49 +291,40 @@ func dedupeNonEmpty(ids []string) []string {
 }
 
 func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]interface{}, error) {
-	total, pending, processed, failed, err := s.repo.GetMessageStats(ctx, "")
+	rows, err := s.repo.GetMessageStatsByTopic(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed: %w", err)
+		return nil, fmt.Errorf("统计消息失败: %w", err)
 	}
 
-	topics := []int32{0, 1, 2, 3, 4, 5, 6}
-	var stats []map[string]interface{}
-
-	globalStat := map[string]interface{}{
-		"topic":              "ALL",
-		"total_messages":     total,
-		"pending_messages":   pending,
-		"processed_messages": processed,
-		"error_messages":     failed,
+	byTopic := make(map[string]dao.TopicStats, len(rows))
+	for _, row := range rows {
+		byTopic[row.Topic] = row
 	}
-	stats = append(stats, globalStat)
 
-	for _, t := range topics {
-		tTotal, tPending, tProcessed, tFailed, tErr := s.repo.GetMessageStats(ctx, dao.TopicString(int(t)))
-		if tErr != nil {
-			continue
-		}
-		stat := map[string]interface{}{
-			"topic":              dao.TopicString(int(t)),
-			"total_messages":     tTotal,
-			"pending_messages":   tPending,
-			"processed_messages": tProcessed,
-			"error_messages":     tFailed,
-		}
-		stats = append(stats, stat)
+	// 即使某个 topic 一条消息都没有也返回零值，客户端表格不会缺行。
+	stats := make([]map[string]interface{}, 0, 7)
+	for t := 0; t <= 6; t++ {
+		name := dao.TopicString(t)
+		row := byTopic[name]
+		stats = append(stats, map[string]interface{}{
+			"topic":              name,
+			"total_messages":     row.Total,
+			"pending_messages":   row.Pending,
+			"processed_messages": row.Processed,
+			"error_messages":     row.Failed,
+		})
 	}
 
 	return stats, nil
 }
 
 func (s *messageServiceImpl) CreateTopic(ctx context.Context, topic int32) error {
-	logger.Info("operation",
-		logger.StringField("topic", dao.TopicString(int(topic))))
-
 	if !dao.ValidTopic(int(topic)) {
 		return fmt.Errorf("无效的消息主题: %d", topic)
 	}
 	topicName := dao.TopicString(int(topic))
+	logger.Info("创建消息主题",
+		logger.StringField("topic", topicName))
 
 	return s.repo.WithTransaction(ctx, func(txRepo dao.MessageRepository) error {
 		event := map[string]interface{}{
@@ -359,9 +350,8 @@ func (s *messageServiceImpl) DeleteTopic(ctx context.Context, topic int32) error
 		if err := txRepo.DeleteMessagesByTopic(ctx, topicStr); err != nil {
 			return fmt.Errorf("删除主题消息失败: %w", err)
 		}
-
 		if err := txRepo.DeleteSubscriptionsByTopic(ctx, topicStr); err != nil {
-			logger.Warn("删除主题订阅失败", logger.ErrorField(err))
+			return fmt.Errorf("删除主题订阅失败: %w", err)
 		}
 
 		event := map[string]interface{}{

@@ -53,6 +53,9 @@ type stubMessageRepo struct {
 	claimLimit   int
 	claimResult  []*model.Message
 	claimErr     error
+
+	statsRows []dao.TopicStats
+	statsErr  error
 }
 
 func (s *stubMessageRepo) AckMessages(_ context.Context, ids []string, _ string) error {
@@ -83,6 +86,10 @@ func (s *stubMessageRepo) ClaimPendingMessages(
 	s.claimedGroup = consumerGroup
 	s.leaseUntil = leaseUntil
 	return s.claimResult, s.claimErr
+}
+
+func (s *stubMessageRepo) GetMessageStatsByTopic(_ context.Context) ([]dao.TopicStats, error) {
+	return s.statsRows, s.statsErr
 }
 
 // 内部 topic 名与 Kafka topic 必须一一对应。历史上 outbox 直接把
@@ -365,6 +372,40 @@ func TestAcknowledgeMessage_PropagatesNotClaimed(t *testing.T) {
 	err := svc.AcknowledgeMessage(context.Background(), "g", "m1", 3)
 	if !errors.Is(err, dao.ErrMessageNotClaimed) {
 		t.Fatalf("应保留 not claimed 语义供 handler 映射 404, got %v", err)
+	}
+}
+
+// 统计必须一次 GROUP BY 返回 7 个 topic，且空 topic 补零；
+// 旧实现按 topic 查 8 次，空表时 SUM(NULL) 扫描进 int64 直接报错。
+func TestGetMessageStats_FillsAllTopicsAndPropagatesError(t *testing.T) {
+	repo := &stubMessageRepo{statsRows: []dao.TopicStats{
+		{Topic: "QA_REQUEST", Total: 5, Pending: 1, Processed: 3, Failed: 1},
+	}}
+	svc := &messageServiceImpl{repo: repo}
+
+	stats, err := svc.GetMessageStats(context.Background())
+	if err != nil {
+		t.Fatalf("统计不应报错: %v", err)
+	}
+	if len(stats) != 7 {
+		t.Fatalf("应返回 7 个 topic, got %d", len(stats))
+	}
+	byTopic := make(map[string]map[string]interface{}, len(stats))
+	for _, stat := range stats {
+		byTopic[stat["topic"].(string)] = stat
+	}
+	if byTopic["DATA_COLLECTION"]["total_messages"].(int64) != 0 {
+		t.Fatal("没有数据的 topic 应补零而不是缺行")
+	}
+	qa := byTopic["QA_REQUEST"]
+	if qa["total_messages"].(int64) != 5 || qa["pending_messages"].(int64) != 1 ||
+		qa["processed_messages"].(int64) != 3 || qa["error_messages"].(int64) != 1 {
+		t.Fatalf("QA_REQUEST 统计错误: %+v", qa)
+	}
+
+	repo.statsErr = errors.New("db down")
+	if _, err := svc.GetMessageStats(context.Background()); err == nil {
+		t.Fatal("统计查询失败必须上抛，不能返回空列表冒充正常")
 	}
 }
 
