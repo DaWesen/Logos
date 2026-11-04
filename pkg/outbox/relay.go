@@ -2,12 +2,16 @@ package outbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 	"time"
 
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -36,6 +40,8 @@ type Relay struct {
 	alertHook      AlertHook
 	ctx            context.Context
 	cancel         context.CancelFunc
+	owner          string
+	wg             sync.WaitGroup
 }
 
 func NewRelay(db *gorm.DB, producer *mq.Producer, opts ...RelayOption) *Relay {
@@ -47,6 +53,7 @@ func NewRelay(db *gorm.DB, producer *mq.Producer, opts ...RelayOption) *Relay {
 		batchSize:      100,
 		replayInterval: 10 * time.Minute,
 		sendTimeout:    defaultSendTimeout,
+		owner:          newLeaseOwner(),
 	}
 
 	for _, opt := range opts {
@@ -118,6 +125,7 @@ func (r *Relay) sendTimeoutOrZero() time.Duration {
 }
 
 func (r *Relay) Start() {
+	r.wg.Add(1)
 	go r.run()
 	logger.Info("Outbox relay 已启动",
 		logger.StringField("interval", r.interval.String()),
@@ -125,12 +133,35 @@ func (r *Relay) Start() {
 		logger.StringField("replay_interval", r.replayInterval.String()))
 }
 
+// stopWaitTimeout 停机时等待在途轮次的上限。
+//
+// 不能无限等待：一块消息最坏要 dispatchChunkSize × sendTimeout，
+// 无界等待会让进程超过 K8s 的 terminationGracePeriodSeconds 被 SIGKILL，
+// 反而丢掉正在收尾的 MarkSent。超时后返回，未完成的消息靠租约到期自愈。
+const stopWaitTimeout = 10 * time.Second
+
+// Stop 取消主循环并有限等待在途轮次结束。
+//
+// 只 cancel 不等待会让进程在 dispatch 中途退出：此时消息已发送、MarkSent 未落库，
+// 租约到期后会被重复投递。有界等待兼顾「尽量收尾」与「不被强杀」。
 func (r *Relay) Stop() {
 	r.cancel()
-	logger.Info("Outbox relay 已停止")
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		logger.Info("Outbox relay 已停止")
+	case <-time.After(stopWaitTimeout):
+		logger.Warn("Outbox relay 停机等待超时，未完成的消息将由租约到期后重投",
+			logger.StringField("timeout", stopWaitTimeout.String()))
+	}
 }
 
 func (r *Relay) run() {
+	defer r.wg.Done()
 	cleanTicker := time.NewTicker(10 * time.Minute)
 	defer cleanTicker.Stop()
 
@@ -169,10 +200,60 @@ func (r *Relay) run() {
 	}
 }
 
-// dispatchLease 领取批次后各行的租约时长。
-// 租约短于最坏发送耗时是安全的：最坏情况只是租约到期后被另一副本重复领取，
-// 而 at-least-once 本就允许重复投递（消费端幂等），绝不会丢消息。
-const dispatchLease = 30 * time.Second
+// dispatchLease 默认租约窗口。
+//
+// 租约必须覆盖「一块消息的最坏投递耗时」，否则后面的消息会在轮次结束前过期，
+// 被其他副本重复领取。leaseWindow 会按实际块大小与单条超时推导出真正的窗口，
+// 这个常量只是下限。
+const dispatchLease = 60 * time.Second
+
+// leaseRenewMargin 续租/领取时在「最坏耗时」之上多留的余量，
+// 覆盖数据库往返与时钟漂移，避免刚好卡在到期边界。
+const leaseRenewMargin = 5 * time.Second
+
+// maxDispatchChunkSize 单块条数上限：块太大时，一条慢消息会拖长整块的续租间隔。
+const maxDispatchChunkSize = 20
+
+// dispatchChunkSizeFor 按单条超时推导单块条数，使一块的最坏耗时落在 dispatchLease 内。
+// 单条超时 <= 0 表示不限制，此时只能逐条处理并逐条续租。
+func dispatchChunkSizeFor(sendTimeout time.Duration) int {
+	if sendTimeout <= 0 {
+		return 1
+	}
+	budget := dispatchLease - leaseRenewMargin
+	if budget <= 0 {
+		return 1
+	}
+	n := int(budget / sendTimeout)
+	if n < 1 {
+		n = 1
+	}
+	if n > maxDispatchChunkSize {
+		n = maxDispatchChunkSize
+	}
+	return n
+}
+
+// leaseWindow 返回能覆盖这一块最坏耗时的租约时长，且不小于 dispatchLease。
+//
+// 这是「续租一定来得及」的构造性保证：不假设配置落在安全区间，
+// 而是按 size × sendTimeout 直接算出需要的窗口。
+func leaseWindow(size int, sendTimeout time.Duration) time.Duration {
+	window := dispatchLease
+	if sendTimeout > 0 && size > 0 {
+		need := time.Duration(size)*sendTimeout + leaseRenewMargin
+		if need > window {
+			window = need
+		}
+	}
+	return window
+}
+
+// newLeaseOwner 生成本副本的 fencing token。
+// 不用主机名/端口：同一台机器重启后端口可能复用，旧进程的迟到写入会误伤新进程。
+func newLeaseOwner() string {
+	return uuid.NewString()
+}
 
 // backlogReportInterval 积压采样间隔。
 // 不用每轮投递都 COUNT：500ms 一次会给数据库增加无意义负载，
@@ -208,18 +289,59 @@ func (r *Relay) reportBacklog() {
 // 若发送成功而标记失败，租约到期后消息回到 pending 被再次投递，
 // 这是 at-least-once 语义的一部分，消费端需保证幂等。
 func (r *Relay) dispatch() {
-	var messages []*OutboxMessage
-	err := r.db.WithContext(r.ctx).Transaction(func(tx *gorm.DB) error {
-		var claimErr error
-		messages, claimErr = r.repo.ClaimPending(r.ctx, tx, r.batchSize, time.Now().Add(dispatchLease))
-		return claimErr
-	})
-	if err != nil {
-		logger.Warn("Outbox dispatch failed", logger.ErrorField(err))
-		return
+	remaining := r.batchSize
+	if remaining <= 0 {
+		remaining = 1
 	}
 
 	consecutiveFailures := 0
+	for remaining > 0 {
+		if r.ctx.Err() != nil {
+			return
+		}
+		size := dispatchChunkSizeFor(r.sendTimeoutOrZero())
+		if remaining < size {
+			size = remaining
+		}
+
+		var messages []*OutboxMessage
+		err := r.db.WithContext(r.ctx).Transaction(func(tx *gorm.DB) error {
+			var claimErr error
+			window := leaseWindow(size, r.sendTimeoutOrZero())
+			messages, claimErr = r.repo.ClaimPending(r.ctx, tx, size, time.Now().Add(window), r.owner)
+			return claimErr
+		})
+		if err != nil {
+			logger.Warn("Outbox dispatch failed", logger.ErrorField(err))
+			return
+		}
+		if len(messages) == 0 {
+			return
+		}
+		remaining -= len(messages)
+
+		if r.dispatchChunk(messages, &consecutiveFailures) {
+			return
+		}
+	}
+}
+
+// dispatchChunk 投递一个小块，返回是否应提前结束本轮（连败熔断或租约丢失）。
+//
+// 每块开始前续租一次，把「租约覆盖投递耗时」变成可证明的不变式：
+// 单块最多 dispatchChunkSize 条，最坏耗时 dispatchChunkSize × sendTimeout，
+// 远小于 dispatchLease。
+func (r *Relay) dispatchChunk(messages []*OutboxMessage, consecutiveFailures *int) bool {
+	ids := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		ids = append(ids, msg.ID)
+	}
+	if err := r.renewLease(ids); err != nil {
+		// 续租失败说明这块消息已被其他副本接管：继续投递只会产生重复消息。
+		logger.Warn("Outbox lease renewal failed, aborting chunk", logger.ErrorField(err))
+		return true
+	}
+
 	for _, msg := range messages {
 		sendStart := time.Now()
 		// 每条消息独立超时：一条卡死的写入不能拖住整轮 batch。
@@ -234,15 +356,21 @@ func (r *Relay) dispatch() {
 		elapsed := time.Since(sendStart).Seconds()
 
 		if sendErr != nil {
-			consecutiveFailures++
+			*consecutiveFailures++
 			obs.RecordOutboxDispatch(r.ctx, msg.Topic, "failed", elapsed)
 			logger.Warn("Outbox send failed, will retry with backoff",
 				logger.StringField("id", msg.ID),
 				logger.StringField("topic", msg.Topic),
 				logger.IntField("retry_count", msg.RetryCount+1),
-				logger.IntField("consecutive_failures", consecutiveFailures),
+				logger.IntField("consecutive_failures", *consecutiveFailures),
 				logger.ErrorField(sendErr))
-			if markErr := r.repo.MarkFailed(r.ctx, r.db, msg, sendErr.Error()); markErr != nil {
+			if markErr := r.repo.MarkFailed(r.ctx, r.db, msg, r.owner, sendErr.Error()); markErr != nil {
+				if errors.Is(markErr, ErrLeaseLost) {
+					logger.Warn("Outbox lease lost, another relay owns this message",
+						logger.StringField("id", msg.ID),
+						logger.StringField("topic", msg.Topic))
+					continue
+				}
 				logger.Warn("Outbox mark failed error", logger.ErrorField(markErr))
 			}
 			if msg.RetryCount+1 >= MaxRetryCount {
@@ -252,24 +380,49 @@ func (r *Relay) dispatch() {
 					logger.StringField("topic", msg.Topic))
 				r.onDeadLetter(msg, sendErr)
 			}
-			if ShouldAbortDispatch(consecutiveFailures, dispatchFailureAbortThreshold) {
+			if ShouldAbortDispatch(*consecutiveFailures, dispatchFailureAbortThreshold) {
 				// 连败熔断：剩余消息保持 pending，租约到期后自动回到可领取状态。
 				obs.RecordOutboxDispatchAbort(r.ctx, msg.Topic)
 				logger.Error("Outbox 连续投递失败，提前结束本轮",
-					logger.IntField("consecutive_failures", consecutiveFailures),
+					logger.IntField("consecutive_failures", *consecutiveFailures),
 					logger.IntField("batch_size", len(messages)),
 					logger.StringField("last_topic", msg.Topic))
-				return
+				return true
 			}
 			continue
 		}
 
-		consecutiveFailures = 0
+		*consecutiveFailures = 0
 		obs.RecordOutboxDispatch(r.ctx, msg.Topic, "sent", elapsed)
-		if markErr := r.repo.MarkSent(r.ctx, r.db, msg.ID); markErr != nil {
+		if markErr := r.repo.MarkSent(r.ctx, r.db, msg.ID, r.owner); markErr != nil {
+			if errors.Is(markErr, ErrLeaseLost) {
+				// 发送成功但租约已被接管：消息可能被重复投递一次。
+				// at-least-once 语义下由消费端幂等兜底，这里只记录并继续。
+				obs.RecordOutboxDispatch(r.ctx, msg.Topic, "duplicate", elapsed)
+				logger.Warn("Outbox lease lost after send, message may be delivered twice",
+					logger.StringField("id", msg.ID),
+					logger.StringField("topic", msg.Topic))
+				continue
+			}
 			logger.Warn("Outbox mark sent error", logger.ErrorField(markErr))
 		}
 	}
+	return false
+}
+
+// renewLease 续租本块消息。返回 ErrLeaseLost 表示部分消息已不属于本副本。
+func (r *Relay) renewLease(ids []string) error {
+	ctx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+	defer cancel()
+	window := leaseWindow(len(ids), r.sendTimeoutOrZero())
+	renewed, err := r.repo.RenewLease(ctx, r.db, ids, r.owner, time.Now().Add(window))
+	if err != nil {
+		return err
+	}
+	if renewed < int64(len(ids)) {
+		return fmt.Errorf("%w: renewed %d/%d", ErrLeaseLost, renewed, len(ids))
+	}
+	return nil
 }
 
 func (r *Relay) clean() {

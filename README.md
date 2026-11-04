@@ -482,7 +482,7 @@ Logos/
 
 `pkg/outbox/` 实现与业务同事务写入的 at-least-once 事件投递，投递分三段执行，避免把 Kafka 网络往返放进数据库事务：
 
-1. **短事务领取**：`SELECT ... FOR UPDATE SKIP LOCKED` 取一批消息，同时把 `next_retry_at` 写成租约截止时间，提交即释放行锁 —— 多副本部署不会重复领取同一批消息，进程崩溃时租约到期自动回到可领取状态
+1. **短事务领取**：`SELECT ... FOR UPDATE SKIP LOCKED` 取一小块消息，同时把 `next_retry_at` 写成租约截止时间、`lease_owner` 写成实例级 fencing token，提交即释放行锁 —— 多副本部署不会重复领取同一批消息，进程崩溃时租约到期自动回到可领取状态
 2. **事务外发送**：逐条 `producer.Send`，网络抖动不再长时间持有行锁与连接池连接
 3. **单语句标记**：发送成功置 `sent`，失败按重试次数置回 `pending` 并设置退避；标记失败时消息会在租约到期后重投，属于 at-least-once 语义，消费端需保证幂等
 
@@ -490,6 +490,9 @@ Logos/
 - **死信终态**：重试耗尽进入 failed 终态保留排查，并触发告警日志/告警钩子
 - **死信重放**：每 10 分钟自动把 `replay_count < 3` 的死信重置回 pending，也支持人工确认后手工重放，避免毒消息被无限重投
 - **自动清理**：已发送消息 24 小时后定期清理
+- **租约必须覆盖投递耗时**：一轮 batch 最坏耗时是 `batchSize × sendTimeout`（默认 100 × 10s ≈ 17 分钟），远大于 30s 租约。只在开头领一次租约，后面的消息会在轮次结束前过期、被其他副本重复领取。改为按「单块最坏耗时」推导租约窗口（`size × sendTimeout + 余量`，且不小于 60s），每块开始前续租，把续租及时性变成构造性不变式而不是靠配置运气
+- **fencing token 防旧副本覆盖**：租约到期后消息可能被新副本领走，旧副本迟到的 `MarkSent`/`MarkFailed` 会把新副本的领取结果覆盖掉。写回条件加上 `lease_owner`，`RowsAffected=0` 即判定 `ErrLeaseLost`：发送后才发现丢失的记为 `duplicate`（at-least-once 下由消费端幂等兜底），续租阶段发现丢失则整块放弃，不再产生新的重复
+- **停机有界等待**：`Stop()` 不再只 cancel，而是等待在途轮次结束，避免「已发送、未落库」被租约到期重投；等待上限 10s，超时返回并交给租约自愈，不会被 K8s `terminationGracePeriodSeconds` 强杀
 
 ### Kafka 消费可靠性
 

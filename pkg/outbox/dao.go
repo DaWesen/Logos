@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,11 +19,14 @@ type OutboxRepository interface {
 	FetchPending(ctx context.Context, tx *gorm.DB, limit int) ([]*OutboxMessage, error)
 	// ClaimPending 在短事务内领取一批消息并写入租约（next_retry_at = leaseUntil）。
 	// 事务提交后行锁即释放，不持有到网络发送结束；其他副本在租约到期前不会重复领取。
-	ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time) ([]*OutboxMessage, error)
-	MarkSent(ctx context.Context, tx *gorm.DB, id string) error
+	ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time, owner string) ([]*OutboxMessage, error)
+	// RenewLease 为仍在处理中的消息续租。返回实际续租的行数；
+	// 小于传入 id 数说明部分消息已被其他副本接管（租约曾过期），调用方应停止投递。
+	RenewLease(ctx context.Context, db *gorm.DB, ids []string, owner string, leaseUntil time.Time) (int64, error)
+	MarkSent(ctx context.Context, tx *gorm.DB, id, owner string) error
 	// MarkFailed 记录一次投递失败：未达到 MaxRetryCount 时消息回到 pending
 	// 并按指数退避设置 NextRetryAt；达到上限后进入 failed 终态（死信）。
-	MarkFailed(ctx context.Context, tx *gorm.DB, msg *OutboxMessage, errMsg string) error
+	MarkFailed(ctx context.Context, tx *gorm.DB, msg *OutboxMessage, owner, errMsg string) error
 	CleanSent(ctx context.Context, db *gorm.DB, before time.Time) error
 	// ReplayFailed 把一批 failed 终态消息重置回 pending（清零重试计数与退避，
 	// replay_count +1），供人工/定时重放入口调用；返回被重置的行数。
@@ -32,6 +36,10 @@ type OutboxRepository interface {
 	// 成功率之外必须看积压：100% 成功也可能在持续堆积。
 	BacklogStats(ctx context.Context, db *gorm.DB) (int64, *time.Time, error)
 }
+
+// ErrLeaseLost 表示本次操作的 fencing token 已失效：
+// 消息在租约过期后被其他副本重新领取，旧副本不能再改写它的状态。
+var ErrLeaseLost = errors.New("outbox: lease lost to another relay instance")
 
 type outboxRepositoryImpl struct{}
 
@@ -73,7 +81,7 @@ func (r *outboxRepositoryImpl) FetchPending(ctx context.Context, tx *gorm.DB, li
 	return messages, err
 }
 
-func (r *outboxRepositoryImpl) ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time) ([]*OutboxMessage, error) {
+func (r *outboxRepositoryImpl) ClaimPending(ctx context.Context, tx *gorm.DB, limit int, leaseUntil time.Time, owner string) ([]*OutboxMessage, error) {
 	messages, err := r.FetchPending(ctx, tx, limit)
 	if err != nil || len(messages) == 0 {
 		return messages, err
@@ -85,13 +93,38 @@ func (r *outboxRepositoryImpl) ClaimPending(ctx context.Context, tx *gorm.DB, li
 	}
 	// 用 next_retry_at 充当租约截止时间：到期前其他副本的 FetchPending 不会命中这些行，
 	// 到期后自动回到可领取状态（进程崩溃时的自愈入口）
-	if err := tx.WithContext(ctx).
+	return messages, r.claimUpdateQuery(ctx, tx, ids, leaseUntil, owner).Error
+}
+
+// claimUpdateQuery 构造领取写回语句，抽出来便于直接断言 SQL 形态。
+func (r *outboxRepositoryImpl) claimUpdateQuery(ctx context.Context, tx *gorm.DB, ids []string, leaseUntil time.Time, owner string) *gorm.DB {
+	return tx.WithContext(ctx).
 		Model(&OutboxMessage{}).
 		Where("id IN ?", ids).
-		Update("next_retry_at", leaseUntil).Error; err != nil {
-		return nil, err
+		Updates(map[string]interface{}{
+			"next_retry_at": leaseUntil,
+			"lease_owner":   owner,
+		})
+}
+
+// RenewLease 只续租仍归本副本所有的消息。
+//
+// 用 lease_owner 做 fencing：仅靠时间戳相等判断不可靠（数据库精度可能截断），
+// 而 owner 是本副本生成的唯一 token，其他副本领取时一定会覆盖它。
+func (r *outboxRepositoryImpl) RenewLease(ctx context.Context, db *gorm.DB, ids []string, owner string, leaseUntil time.Time) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
 	}
-	return messages, nil
+	res := r.renewLeaseQuery(ctx, db, ids, owner, leaseUntil).Update("next_retry_at", leaseUntil)
+	return res.RowsAffected, res.Error
+}
+
+// renewLeaseQuery 构造续租语句，抽出来便于直接断言 SQL 形态。
+func (r *outboxRepositoryImpl) renewLeaseQuery(ctx context.Context, db *gorm.DB, ids []string, owner string, leaseUntil time.Time) *gorm.DB {
+	return db.WithContext(ctx).
+		Model(&OutboxMessage{}).
+		Where("id IN ? AND lease_owner = ? AND status = ?", ids, owner, StatusPending).
+		Where("next_retry_at < ?", leaseUntil)
 }
 
 // RetryBackoff 返回第 retryCount 次失败后的退避时长：30s * 2^n，上限 32 分钟
@@ -111,19 +144,32 @@ func RetryBackoff(retryCount int) time.Duration {
 	return backoff
 }
 
-func (r *outboxRepositoryImpl) MarkSent(ctx context.Context, tx *gorm.DB, id string) error {
+func (r *outboxRepositoryImpl) MarkSent(ctx context.Context, tx *gorm.DB, id, owner string) error {
 	now := time.Now()
-	return tx.WithContext(ctx).
-		Model(&OutboxMessage{}).
-		Where("id = ?", id).
+	res := r.markSentQuery(ctx, tx, id, owner).
 		Updates(map[string]interface{}{
 			"status":        StatusSent,
 			"sent_at":       now,
 			"next_retry_at": nil,
-		}).Error
+			"lease_owner":   "",
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrLeaseLost
+	}
+	return nil
 }
 
-func (r *outboxRepositoryImpl) MarkFailed(ctx context.Context, tx *gorm.DB, msg *OutboxMessage, errMsg string) error {
+// markSentQuery 构造状态写回语句，抽出来便于直接断言 fencing 条件。
+func (r *outboxRepositoryImpl) markSentQuery(ctx context.Context, tx *gorm.DB, id, owner string) *gorm.DB {
+	return tx.WithContext(ctx).
+		Model(&OutboxMessage{}).
+		Where("id = ? AND lease_owner = ?", id, owner)
+}
+
+func (r *outboxRepositoryImpl) MarkFailed(ctx context.Context, tx *gorm.DB, msg *OutboxMessage, owner, errMsg string) error {
 	newCount := msg.RetryCount + 1
 	updates := map[string]interface{}{
 		"retry_count":   newCount,
@@ -138,10 +184,17 @@ func (r *outboxRepositoryImpl) MarkFailed(ctx context.Context, tx *gorm.DB, msg 
 		updates["status"] = StatusPending
 		updates["next_retry_at"] = time.Now().Add(RetryBackoff(newCount))
 	}
-	return tx.WithContext(ctx).
+	res := tx.WithContext(ctx).
 		Model(&OutboxMessage{}).
-		Where("id = ?", msg.ID).
-		Updates(updates).Error
+		Where("id = ? AND lease_owner = ?", msg.ID, owner).
+		Updates(updates)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrLeaseLost
+	}
+	return nil
 }
 
 func (r *outboxRepositoryImpl) CleanSent(ctx context.Context, db *gorm.DB, before time.Time) error {

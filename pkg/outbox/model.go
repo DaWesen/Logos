@@ -30,9 +30,13 @@ type OutboxMessage struct {
 	// NextRetryAt 控制失败消息的指数退避重试时间，NULL 表示立即可投递
 	NextRetryAt *time.Time `gorm:"index"`
 	// ReplayCount 该消息被重放的次数，达到 MaxReplayCount 后不再自动重放
-	ReplayCount int       `gorm:"not null;default:0"`
-	CreatedAt   time.Time `gorm:"autoCreateTime;index"`
-	SentAt      *time.Time
+	ReplayCount int `gorm:"not null;default:0"`
+	// LeaseOwner 当前领取该消息的 relay 实例标识（fencing token）。
+	// 租约到期后消息可能被另一副本领走，旧副本的 MarkSent/MarkFailed 必须失效，
+	// 否则「慢副本」会把新副本的领取状态覆盖掉。
+	LeaseOwner string    `gorm:"size:64;index"`
+	CreatedAt  time.Time `gorm:"autoCreateTime;index"`
+	SentAt     *time.Time
 }
 
 type JSONRaw json.RawMessage
