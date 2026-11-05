@@ -160,14 +160,19 @@ func NewChatServiceWithContact(repo dao.ChatRepository, eventBus *types.EventBus
 func (s *ChatServiceImpl) StartEventConsumer() error {
 	logger.Info("启动聊天服务事件消费者")
 
-	go func() {
-		handler := func(msg *mq.Message) error {
-			return s.HandleMessageEvent(msg)
-		}
-		if err := s.eventBus.SubscribeChatEvents(s.ctx, handler, "chat-service-consumer"); err != nil {
-			logger.Error("订阅聊天事件失败", logger.ErrorField(err))
-		}
-	}()
+	if s.eventBus == nil {
+		return fmt.Errorf("event bus not initialized")
+	}
+
+	handler := func(msg *mq.Message) error {
+		return s.HandleMessageEvent(msg)
+	}
+	// Subscribe 内部已经启动消费循环并同步返回初始化错误，这里不能再包一层
+	// goroutine：否则订阅失败只会写日志，调用方拿到 nil 后会继续对外提供
+	// 「消费者已启动」的假象。
+	if err := s.eventBus.SubscribeChatEvents(s.ctx, handler, "chat-service-consumer"); err != nil {
+		return fmt.Errorf("subscribe chat events: %w", err)
+	}
 
 	s.startRetentionCleanup()
 
