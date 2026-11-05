@@ -24,6 +24,7 @@ import (
 	"Logos/internal/service/ai/process/parser"
 	"Logos/pkg/auth"
 	"Logos/pkg/logger"
+	"Logos/pkg/safego"
 	"Logos/pkg/safehttp"
 
 	"github.com/google/uuid"
@@ -163,7 +164,9 @@ func (s *ProcessService) ProcessFile(ctx context.Context, filename string, fileD
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
-	go s.processDocumentAsync(doc.ID, bytes.NewReader(fileData), int64(len(fileData)), filename)
+	safego.Go("process.document", func() {
+		s.processDocumentAsync(doc.ID, bytes.NewReader(fileData), int64(len(fileData)), filename)
+	})
 
 	return doc, nil
 }
@@ -191,7 +194,9 @@ func (s *ProcessService) ProcessFileFromPath(ctx context.Context, filename strin
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
-	go s.processDocumentAsyncFromPath(doc.ID, filePath, fileSize, filename)
+	safego.Go("process.document", func() {
+		s.processDocumentAsyncFromPath(doc.ID, filePath, fileSize, filename)
+	})
 
 	return doc, nil
 }
@@ -223,7 +228,9 @@ func (s *ProcessService) ProcessURL(ctx context.Context, url string, collectionI
 		return nil, fmt.Errorf("创建文档记录失败: %w", err)
 	}
 
-	go s.processURLAsync(ctx, doc.ID, url)
+	safego.Go("process.url", func() {
+		s.processURLAsync(ctx, doc.ID, url)
+	})
 
 	return doc, nil
 }
@@ -556,7 +563,9 @@ func (s *ProcessService) ReprocessDocument(ctx context.Context, id string) error
 		return fmt.Errorf("更新文档状态失败: %w", err)
 	}
 
-	go s.reprocessAsync(id)
+	safego.Go("process.reprocess", func() {
+		s.reprocessAsync(id)
+	})
 
 	return nil
 }

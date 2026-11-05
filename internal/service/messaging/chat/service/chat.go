@@ -597,7 +597,9 @@ func (s *ChatServiceImpl) handleBotMentions(event *types.MessageEvent) {
 		logger.StringField("msg_id", event.ID),
 		logger.StringField("bots", strings.Join(botIDs, ",")))
 
-	go s.invokeBotForMention(event, botIDs)
+	safego.Go("chat.bot_dispatch", func() {
+		s.invokeBotForMention(event, botIDs)
+	})
 }
 
 func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs []string) {

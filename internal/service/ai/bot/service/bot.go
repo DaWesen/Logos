@@ -28,6 +28,7 @@ import (
 	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
 	"Logos/pkg/pagination"
+	"Logos/pkg/safego"
 	"Logos/pkg/strutil"
 
 	"github.com/cloudwego/eino/components/model"
@@ -1056,7 +1057,9 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	s.storeSemanticCache(bot, userID, content, response)
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
-	go s.autoSaveToKnowledgeBase(bot, content, response, autoSave)
+	safego.Go("bot.auto_save_kb", func() {
+		s.autoSaveToKnowledgeBase(bot, content, response, autoSave)
+	})
 
 	event := map[string]any{
 		"action":    "message",
@@ -1229,7 +1232,9 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 	s.storeSemanticCache(bot, userID, content, fullResponse.String())
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
-	go s.autoSaveToKnowledgeBase(bot, content, fullResponse.String(), autoSave)
+	safego.Go("bot.auto_save_kb", func() {
+		s.autoSaveToKnowledgeBase(bot, content, fullResponse.String(), autoSave)
+	})
 
 	event := map[string]any{
 		"action":    "message_stream",
