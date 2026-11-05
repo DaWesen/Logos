@@ -105,6 +105,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **用户活动事件契约**（`ai/collection/service`）：`user_id`/`action` 齐全时正常处理；`action` 缺失/非字符串/空串、`user_id` 为 `null`/数字/空白、`target_type` 类型错误、生产端只发通用信封（三个契约字段全缺）都返回 `ErrSkipMessage` 且零副作用；整包 JSON 为 `null` 同样跳过；非法 JSON 不跳过，保留重试/死信路径以便留存原始载荷；合法事件的首尾空白会被裁剪
 - **消息枚举反解**（`messaging/message/handler`）：内部优先级 1..4 正确映射为 `LOW`/`NORMAL`/`HIGH`/`URGENT`，`0`、`5`、`-1` 返回 `ok=false`；消费时未知 topic、非法优先级、非 JSON `headers` 都返回 500 且清空半批消息，错误信息包含具体 `message_id`；批量发送遇到未知 topic 只失败该条，其余条目仍返回成功与实际 topic
 - **实体查重失败关闭**（`ai/knowledge/service`）：`FindEntityByNameAndType` 返回错误时，`FindOrCreateEntity` 必须返回 `ErrInternalServer` 且不返回实体、不进入创建事务；只有明确返回 `nil, nil`（确实不存在）才允许创建
+- **总结服务失败关闭**（`ai/summary/service`）：脚本化 ChatModel + 内存仓储覆盖——历史拉取失败或历史为空时不调用模型、不落库并返回带阶段信息的错误；`include_todos=true` 时提取失败返回错误且半成品摘要不落库；`key_points` 失败只降级为空要点，摘要仍成功落库；`CreateSummary` 失败不返回记录；候选/待办解析失败（含一次 JSON 修复后仍失败）返回错误而不是空列表；`message_ids` 暂不支持按 ID 取内容时显式回退最近历史并原样留档；`marshalField` 对不可序列化值返回错误
 - **向量集合读取边界**（`ai/vector/dao`）：数据库故障 + 指定 `userID` 时 `ListCollections` 必须报错且不返回任何结果（禁止回退到无归属的 Milvus 全量列表）；数据库故障且 Milvus 未连接、或两套存储都未初始化时同样报错，不能返回空切片；`row_count` 缺失、空 map、`"12abc"` 后缀垃圾、负数都让 `parseCollectionSize` 返回错误，正常值与带空白值可解析；`Search` / `TextSearch` 在 Milvus 未连接时返回「Milvus未连接」错误而不是空结果
 - **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
 - **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
