@@ -106,9 +106,10 @@ func (s *extractionServiceImpl) CreateTask(ctx context.Context, taskType int32, 
 
 	if scheduledTime != nil && *scheduledTime != "" {
 		t, err := time.Parse(time.RFC3339, *scheduledTime)
-		if err == nil {
-			task.ScheduledAt = &t
+		if err != nil {
+			return nil, fmt.Errorf("scheduled_time 必须是 RFC3339 时间: %w", err)
 		}
+		task.ScheduledAt = &t
 	}
 
 	if err := s.repo.CreateTask(ctx, task); err != nil {
@@ -139,9 +140,10 @@ func (s *extractionServiceImpl) UpdateTask(ctx context.Context, id string, taskT
 	}
 	if scheduledTime != nil {
 		t, parseErr := time.Parse(time.RFC3339, *scheduledTime)
-		if parseErr == nil {
-			task.ScheduledAt = &t
+		if parseErr != nil {
+			return nil, fmt.Errorf("scheduled_time 必须是 RFC3339 时间: %w", parseErr)
 		}
+		task.ScheduledAt = &t
 	}
 	task.UpdatedAt = time.Now()
 
@@ -395,13 +397,17 @@ func (s *extractionServiceImpl) handleCollectionEvent(msg *mq.Message) error {
 	// 采集服务发出的字段是 data_source_id，不是 data_id。
 	// 旧代码读错键，解析结果恒为空串：每个采集事件都会建出一个
 	// data_id="" 的抽取任务，任务详情里看不出数据来自哪。
-	dataID, _ := event["data_source_id"].(string)
-	collectionID, _ := event["collection_result_id"].(string)
-	status, _ := event["status"].(string)
-
-	if dataID == "" {
-		return fmt.Errorf("采集事件缺少 data_source_id，拒绝创建无数据源的抽取任务")
+	dataID, err := requiredString(event, "data_source_id")
+	if err != nil {
+		return fmt.Errorf("采集事件缺少可用的 data_source_id，拒绝创建无数据源的抽取任务: %w", err)
 	}
+	status, err := requiredString(event, "status")
+	if err != nil {
+		return fmt.Errorf("采集事件缺少可用的 status，无法判断是否应触发抽取: %w", err)
+	}
+	// collection_result_id 只用于回填来源，缺失不影响抽取本身。
+	collectionID, _ := event["collection_result_id"].(string)
+
 	if status != "SUCCESS" {
 		logger.Info("采集未成功，跳过自动抽取",
 			logger.StringField("data_source_id", dataID),
@@ -441,9 +447,9 @@ func (s *extractionServiceImpl) handleCollectionEvent(msg *mq.Message) error {
 }
 
 func (s *extractionServiceImpl) executeEntityRecognition(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {
-	parameters := make(map[string]string)
-	if task.Parameters != "" {
-		json.Unmarshal([]byte(task.Parameters), &parameters)
+	parameters, err := decodeTaskParameters(task.Parameters)
+	if err != nil {
+		return err
 	}
 
 	text := parameters["text"]
@@ -461,18 +467,8 @@ func (s *extractionServiceImpl) executeEntityRecognition(ctx context.Context, ta
 	result.Entities = strEntities
 
 	if s.knowledgeService != nil {
-		collectionID := parameters["collection_id"]
-		for _, entity := range entities {
-			entityType, _ := entity["type"].(string)
-			name, _ := entity["text"].(string)
-			props := make(map[string]string)
-			for k, v := range entity {
-				if strV, ok := v.(string); ok && k != "type" && k != "text" && k != "confidence" {
-					props[k] = strV
-				}
-			}
-			desc := fmt.Sprintf("置信度: %.2f", entity["confidence"])
-			s.knowledgeService.AddEntity(ctx, entityType, name, collectionID, props, &desc, "")
+		if err := s.persistEntities(ctx, entities, parameters["collection_id"]); err != nil {
+			return err
 		}
 	}
 
@@ -526,8 +522,10 @@ func (s *extractionServiceImpl) recognizeEntities(ctx context.Context, text stri
 }
 
 func (s *extractionServiceImpl) executeRelationExtraction(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {
-	parameters := make(map[string]string)
-	json.Unmarshal([]byte(task.Parameters), &parameters)
+	parameters, err := decodeTaskParameters(task.Parameters)
+	if err != nil {
+		return err
+	}
 
 	text := parameters["text"]
 	if text == "" {
@@ -544,19 +542,8 @@ func (s *extractionServiceImpl) executeRelationExtraction(ctx context.Context, t
 	result.Relations = strRelations
 
 	if s.knowledgeService != nil {
-		collectionID := parameters["collection_id"]
-		for _, rel := range relations {
-			relType, _ := rel["type"].(string)
-			sourceID, _ := rel["sourceId"].(string)
-			targetID, _ := rel["targetId"].(string)
-			props := make(map[string]string)
-			for k, v := range rel {
-				if strV, ok := v.(string); ok && k != "type" && k != "sourceId" && k != "targetId" && k != "confidence" {
-					props[k] = strV
-				}
-			}
-			textVal, _ := rel["text"].(string)
-			s.knowledgeService.AddRelation(ctx, relType, sourceID, targetID, collectionID, props, &textVal)
+		if err := s.persistRelations(ctx, relations, parameters["collection_id"]); err != nil {
+			return err
 		}
 	}
 
@@ -609,8 +596,10 @@ func (s *extractionServiceImpl) extractRelations(ctx context.Context, text strin
 }
 
 func (s *extractionServiceImpl) executeTripleExtraction(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {
-	parameters := make(map[string]string)
-	json.Unmarshal([]byte(task.Parameters), &parameters)
+	parameters, err := decodeTaskParameters(task.Parameters)
+	if err != nil {
+		return err
+	}
 
 	text := parameters["text"]
 	if text == "" {
@@ -627,27 +616,8 @@ func (s *extractionServiceImpl) executeTripleExtraction(ctx context.Context, tas
 	result.Triples = strTriples
 
 	if s.knowledgeService != nil {
-		collectionID := parameters["collection_id"]
-		for _, triple := range triples {
-			subject, _ := triple["subject"].(string)
-			predicate, _ := triple["predicate"].(string)
-			obj, _ := triple["object"].(string)
-
-			sourceEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", subject, collectionID, nil, nil, "")
-			targetEnt, _ := s.knowledgeService.AddEntity(ctx, "ENTITY", obj, collectionID, nil, nil, "")
-
-			srcID := ""
-			tgtID := ""
-			if sourceEnt != nil {
-				srcID = sourceEnt.GetID()
-			}
-			if targetEnt != nil {
-				tgtID = targetEnt.GetID()
-			}
-
-			if srcID != "" && tgtID != "" {
-				s.knowledgeService.AddRelation(ctx, predicate, srcID, tgtID, collectionID, nil, nil)
-			}
+		if err := s.persistTriples(ctx, triples, parameters["collection_id"]); err != nil {
+			return err
 		}
 	}
 
@@ -699,8 +669,10 @@ func (s *extractionServiceImpl) extractTriples(ctx context.Context, text string,
 }
 
 func (s *extractionServiceImpl) executeKeyphraseExtraction(ctx context.Context, task *model.ExtractionTask, result *model.ExtractionResult) error {
-	parameters := make(map[string]string)
-	json.Unmarshal([]byte(task.Parameters), &parameters)
+	parameters, err := decodeTaskParameters(task.Parameters)
+	if err != nil {
+		return err
+	}
 
 	text := parameters["text"]
 	if text == "" {
