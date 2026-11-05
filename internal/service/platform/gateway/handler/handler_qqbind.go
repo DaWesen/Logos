@@ -25,15 +25,11 @@ func (h *Handler) BindQQ(c *gin.Context) {
 		return
 	}
 
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, model.Error(401, "未授权"))
-		return
-	}
-
-	uid, ok := userID.(string)
+	// 身份缺失或类型不符都是「认证不可信」，必须 401。
+	// 旧写法对类型不符返回 500，把客户端问题伪装成服务端故障；
+	// 且未校验空串，会把 QQ 号绑定到空用户。
+	uid, ok := h.requireUserID(c)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, model.Error(500, "用户ID格式错误"))
 		return
 	}
 
@@ -73,15 +69,8 @@ func (h *Handler) BindQQ(c *gin.Context) {
 
 // UnbindQQ 解绑QQ号
 func (h *Handler) UnbindQQ(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, model.Error(401, "未授权"))
-		return
-	}
-
-	uid, ok := userID.(string)
+	uid, ok := h.requireUserID(c)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, model.Error(500, "用户ID格式错误"))
 		return
 	}
 
@@ -113,15 +102,8 @@ func (h *Handler) UnbindQQ(c *gin.Context) {
 
 // GetQQBind 查询当前用户的QQ绑定状态
 func (h *Handler) GetQQBind(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, model.Error(401, "未授权"))
-		return
-	}
-
-	uid, ok := userID.(string)
+	uid, ok := h.requireUserID(c)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, model.Error(500, "用户ID格式错误"))
 		return
 	}
 

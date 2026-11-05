@@ -9,14 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func getUserIDFromContext(c *gin.Context) string {
-	userID, _ := c.Get("user_id")
-	if id, ok := userID.(string); ok {
-		return id
-	}
-	return ""
-}
-
 func (h *Handler) AddFriend(c *gin.Context) {
 	var req struct {
 		UserID  string `json:"user_id"`
@@ -141,7 +133,12 @@ func (h *Handler) DeleteFriend(c *gin.Context) {
 }
 
 func (h *Handler) CheckFriendship(c *gin.Context) {
-	userID := getUserIDFromContext(c)
+	// 旧写法 getUserIDFromContext 在缺少身份时返回空串，查询就变成
+	// `user_id = ''`：不报错，但好友关系恒为 false，调用方会以为「没加过好友」。
+	userID, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 	friendID := c.Query("friend_id")
 	if friendID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 friend_id"})

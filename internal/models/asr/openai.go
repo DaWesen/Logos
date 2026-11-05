@@ -50,8 +50,8 @@ func NewOpenAIASR(config *Config) (*OpenAIASR, error) {
 
 // Transcribe sends audio bytes to OpenAI Whisper-style API.
 func (a *OpenAIASR) Transcribe(ctx context.Context, audioBytes []byte, fileName string) (string, error) {
-	logger.Info("Transcribing audio", 
-		logger.StringField("fileName", fileName), 
+	logger.Info("Transcribing audio",
+		logger.StringField("fileName", fileName),
 		logger.IntField("audioSize", len(audioBytes)))
 
 	body := &bytes.Buffer{}

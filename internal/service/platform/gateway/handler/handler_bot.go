@@ -30,10 +30,14 @@ func (h *Handler) CreateBot(c *gin.Context) {
 		return
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	// 身份只能来自认证中间件。旧写法 `req.UserId, _ = userID.(string)` 在
+	// key 缺失或类型不符时把身份静默变成空串，下游 Bot 服务会以「空用户」
+	// 建 Bot（归属列写成 ""），后续任何按用户过滤的查询都查不到它。
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 
 	resp, err := h.BotClient.CreateBot(c.Request.Context(), &req)
 	if err != nil {
@@ -61,9 +65,11 @@ func (h *Handler) UpdateBot(c *gin.Context) {
 
 	req.BotId = c.Param("id")
 
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 
 	resp, err := h.BotClient.UpdateBot(c.Request.Context(), &req)
 	if err != nil {
@@ -155,10 +161,14 @@ func (h *Handler) ListBots(c *gin.Context) {
 		PageSize: int32(pageSize),
 	}
 
-	// 从 gin.Context 获取 userID
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	// 列表接口的身份缺失后果比写接口更严重：DAO 里 `if userId != ""`
+	// 才加过滤，空身份等于「不加任何 user_id 条件」，会把全库用户的
+	// Bot 一起返回（水平越权）。这里必须先 401，不能继续往下查。
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 
 	resp, err := h.BotClient.ListBots(c.Request.Context(), req)
 	if err != nil {
@@ -187,9 +197,11 @@ func (h *Handler) SendBotMessage(c *gin.Context) {
 		return
 	}
 
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 
 	var header metadata.MD
 	resp, err := h.BotClient.SendBotMessage(c.Request.Context(), &req, grpc.Header(&header))
@@ -236,9 +248,11 @@ func (h *Handler) StreamBotMessage(c *gin.Context) {
 		return
 	}
 
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 	req.Stream = true
 
 	stream, err := h.BotClient.StreamBotMessage(c.Request.Context(), &req)
@@ -364,10 +378,15 @@ func (h *Handler) GetUserMemory(c *gin.Context) {
 		return
 	}
 	botID := c.Query("bot_id")
-	userID, _ := c.Get("user_id")
+	// 旧写法 `userID.(string)` 没有 ok 断言：中间件没写入 key 或类型不是
+	// string 时直接 panic，一个缺身份头的请求就能把 handler 打挂。
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 
 	req := &pb.GetUserMemoryRequest{
-		UserId: userID.(string),
+		UserId: uid,
 		BotId:  botID,
 	}
 
@@ -394,9 +413,11 @@ func (h *Handler) SetUserMemory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 		return
 	}
-	if userID, exists := c.Get("user_id"); exists {
-		req.UserId, _ = userID.(string)
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
 	}
+	req.UserId = uid
 
 	resp, err := h.BotClient.SetUserMemory(c.Request.Context(), &req)
 	if err != nil {
@@ -417,16 +438,19 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 	}
 	botID := c.Query("bot_id")
 	key := c.Query("key")
-	userID, _ := c.Get("user_id")
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 
 	logger.Info("收到删除记忆请求",
-		logger.StringField("user_id", fmt.Sprintf("%v", userID)),
+		logger.StringField("user_id", uid),
 		logger.StringField("bot_id", botID),
 		logger.StringField("key", key),
 	)
 
 	req := &pb.DeleteUserMemoryRequest{
-		UserId: userID.(string),
+		UserId: uid,
 		BotId:  botID,
 		Key:    key,
 	}

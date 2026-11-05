@@ -185,8 +185,12 @@ func (h *Handler) RegisterPushToken(c *gin.Context) {
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-	uid, _ := userID.(string)
+	// 推送令牌必须绑定到真实用户：空 uid 会让令牌注册到「空用户」名下，
+	// 之后所有该设备的推送都会被判成无主，且无法被正确注销。
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 
 	pushMgr := push.GetPushManager()
 	pushMgr.RegisterToken(&push.PushToken{
@@ -209,8 +213,10 @@ func (h *Handler) UnregisterPushToken(c *gin.Context) {
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-	uid, _ := userID.(string)
+	uid, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 
 	pushMgr := push.GetPushManager()
 	pushMgr.UnregisterToken(uid, req.DeviceID)

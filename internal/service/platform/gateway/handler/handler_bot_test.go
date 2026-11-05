@@ -39,6 +39,48 @@ func newBotRouter(client pb.BotServiceClient, userID string) *gin.Engine {
 	return r
 }
 
+func newBotRouterWithSetup(client pb.BotServiceClient, setup func(*gin.Context)) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	h := &Handler{BotClient: client}
+	r := gin.New()
+	r.GET("/bot", func(c *gin.Context) {
+		if setup != nil {
+			setup(c)
+		}
+		h.ListBots(c)
+	})
+	return r
+}
+
+// 身份缺失有三种形态：key 不存在、类型不是 string、字符串为空。
+// 旧代码只用 `if userID, exists := c.Get("user_id"); exists` 判断，
+// 后两种都会把空串透传给下游；而下游 DAO 是 `if userId != ""` 才加过滤，
+// 空身份等于不加过滤，ListBots 会返回全库用户的 Bot。
+func TestListBots_RejectsMissingOrInvalidIdentity(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*gin.Context)
+	}{
+		{"缺少 user_id", nil},
+		{"user_id 类型不是 string", func(c *gin.Context) { c.Set("user_id", 123) }},
+		{"user_id 为空串", func(c *gin.Context) { c.Set("user_id", "") }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeBotClient{}
+			rec := doQuery(t, newBotRouterWithSetup(client, tc.setup), "/bot")
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("HTTP 状态 = %d, want 401, body = %s", rec.Code, rec.Body.String())
+			}
+			if client.calls != 0 {
+				t.Fatalf("身份不可信时不应调用下游，实际调用 %d 次", client.calls)
+			}
+		})
+	}
+}
+
 // 字符串枚举拼错时必须 400。旧实现把未命中的值一律当 UNSPECIFIED，
 // `?type=bulitin` 于是变成「不过滤」，接口 200 返回全部 Bot，
 // 调用方以为筛了内置 Bot，实际拿到全部。

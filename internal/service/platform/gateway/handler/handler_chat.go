@@ -147,8 +147,13 @@ func (h *Handler) SendMediaMessage(c *gin.Context) {
 		req.ChatType = 1
 	}
 
-	userID, _ := c.Get("user_id")
-	senderID, _ := userID.(string)
+	// 发送者身份必须可信：旧写法 `senderID, _ := userID.(string)` 在身份缺失时
+	// 得到空串，消息照样以 sender_id="" 落库。幂等键 DeriveMessageID 也以
+	// senderID 参与哈希，空身份会让不同用户的同名 request_id 相互覆盖。
+	senderID, ok := h.requireUserID(c)
+	if !ok {
+		return
+	}
 
 	logger.Info("SendMediaMessage", logger.StringField("chat_id", req.ChatID), logger.StringField("media_url", req.MediaURL), logger.IntField("message_type", req.MessageType))
 

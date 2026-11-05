@@ -66,6 +66,51 @@ func TestHandlersDoNotTrustUserIDQueryParam(t *testing.T) {
 	}
 }
 
+// 身份提取只有两种合法形态：requireUserID（失败即 401），或者显式 ok 断言后
+// 再判断非空。旧写法 `userID, _ := c.Get("user_id")` 会吞掉「key 不存在」，
+// 接着 `userID.(string)` 直接 panic；更隐蔽的是 `req.UserId, _ = userID.(string)`
+// 把身份变成空串——下游 DAO 的 `if userId != ""` 于是不加过滤，返回全库数据。
+func TestHandlersRequireAuthenticatedUserID(t *testing.T) {
+	files := mustGlobHandlers(t)
+
+	// handler.go 是 helper 本身的实现处，requireUserID / withUserID 在这里合法。
+	skip := map[string]bool{"handler.go": true}
+	forbidden := []string{
+		", _ := c.Get(",
+		", _ = c.Get(",
+	}
+	// 裸断言：没有 ok 的 `xxx.(string)`。命中时要求同一行出现 `, ok :=`。
+	bareAssertions := []string{"userID.(string)", "senderID.(string)"}
+
+	for _, file := range files {
+		if skip[file] {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("读取 %s 失败: %v", file, err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, pattern := range forbidden {
+				if strings.Contains(line, pattern) {
+					t.Errorf("%s:%d 丢弃了 gin.Context 的 exists 结果：%s（请改用 requireUserID）",
+						file, i+1, trimmed)
+				}
+			}
+			for _, pattern := range bareAssertions {
+				if strings.Contains(line, pattern) && !strings.Contains(line, ", ok :=") {
+					t.Errorf("%s:%d 未检查类型断言结果：%s（请改用 requireUserID）",
+						file, i+1, trimmed)
+				}
+			}
+		}
+	}
+}
+
 // 参数名错位（读 c.Param("type") 却挂在 :id 路由上）不会报错，只会操作错对象。
 // 这里锁定索引接口的路由参数名，改路由时必须同步改 handler。
 func TestIndexHandlersReadRouteParamID(t *testing.T) {
