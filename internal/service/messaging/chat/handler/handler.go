@@ -36,6 +36,10 @@ func chatErrorCode(err error) (int32, string) {
 		case types.ErrChatMessageConflict.Code:
 			// 409：客户端持有的版本已过期，可用最新内容修正请求后重试。
 			return 409, me.Message
+		case types.ErrChatBlocked.Code:
+			return 403, me.Message
+		case types.ErrChatRelationshipUnavailable.Code:
+			return 503, me.Message
 		}
 	}
 	return 500, err.Error()

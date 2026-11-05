@@ -68,6 +68,8 @@ type stubChatRepo struct {
 	groupErr    error
 	// created 按写入顺序记录成功落库的消息，供转发等用例断言「一条都没写」。
 	created []*model.Message
+	// privateConvCalls 记录私聊会话创建次数：被拉黑拦截时连会话都不该创建。
+	privateConvCalls int
 }
 
 type purgeCall struct {
@@ -153,6 +155,7 @@ func (r *stubChatRepo) GetAllGroupMemberIDs(_ context.Context, groupID string) (
 }
 
 func (r *stubChatRepo) GetOrCreatePrivateConversation(_ context.Context, _, _ string) (*model.Conversation, error) {
+	r.privateConvCalls++
 	if r.privateConvErr != nil {
 		return nil, r.privateConvErr
 	}

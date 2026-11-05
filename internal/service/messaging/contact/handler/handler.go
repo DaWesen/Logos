@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"Logos/internal/service/messaging/contact/model"
@@ -12,6 +13,7 @@ import (
 	pb "Logos/proto_gen/contact"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"gorm.io/gorm"
 )
 
 type ContactServiceImpl struct {
@@ -330,6 +332,15 @@ func (s *ContactServiceImpl) CheckFriendship(ctx context.Context, req *pb.CheckF
 
 	friendship, err := s.service.GetFriendship(ctx, req.UserId, req.FriendId)
 	if err != nil {
+		// 只有「确实没有关系记录」才能回答 false/false；
+		// 数据库故障必须上抛，否则调用方会把「查不到」缓存成「没拉黑」。
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.Error("\x1b[31m🔴 [Contact] 查询好友关系失败\x1b[0m", logger.ErrorField(err))
+			return &pb.CheckFriendshipResponse{
+				Code:    500,
+				Message: "查询好友关系失败",
+			}, nil
+		}
 		logger.Warn("\x1b[33m🟡 [Contact] 好友关系记录不存在\x1b[0m", logger.ErrorField(err))
 		return &pb.CheckFriendshipResponse{
 			Code:      200,

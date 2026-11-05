@@ -69,18 +69,24 @@ type friendshipCacheEntry struct {
 	cachedAt  time.Time
 }
 
+// friendshipStatusClient 只保留关系查询能力，便于单测注入故障与缓存行为；
+// 生产环境由 *client.ContactClient 实现。
+type friendshipStatusClient interface {
+	IsFriend(ctx context.Context, userID, friendID string) (*client.FriendshipStatus, error)
+}
+
 type ContactCheckerAdapter struct {
-	*client.ContactClient
-	cache map[string]*friendshipCacheEntry
-	mu    sync.RWMutex
-	ttl   time.Duration
+	client friendshipStatusClient
+	cache  map[string]*friendshipCacheEntry
+	mu     sync.RWMutex
+	ttl    time.Duration
 }
 
 func NewContactCheckerAdapter(c *client.ContactClient) *ContactCheckerAdapter {
 	return &ContactCheckerAdapter{
-		ContactClient: c,
-		cache:         make(map[string]*friendshipCacheEntry),
-		ttl:           5 * time.Minute,
+		client: c,
+		cache:  make(map[string]*friendshipCacheEntry),
+		ttl:    5 * time.Minute,
 	}
 }
 
@@ -128,15 +134,10 @@ func (a *ContactCheckerAdapter) CheckFriendship(ctx context.Context, userID, fri
 		}, nil
 	}
 
-	status, err := a.ContactClient.IsFriend(ctx, userID, friendID)
+	status, err := a.client.IsFriend(ctx, userID, friendID)
 	if err != nil {
-		if cached, ok := a.getCachedExpired(key); ok {
-			return &FriendshipResult{
-				IsFriend:  cached.isFriend,
-				IsBlocked: cached.isBlocked,
-				Cached:    true,
-			}, nil
-		}
+		// 不能用过期缓存兜底：用户刚拉黑某人、关系服务又恰好抖动时，
+		// 旧值会继续返回「未拉黑」，拦截窗口被无限延长。
 		return nil, err
 	}
 
@@ -147,16 +148,6 @@ func (a *ContactCheckerAdapter) CheckFriendship(ctx context.Context, userID, fri
 		IsBlocked: status.IsBlocked,
 		Cached:    false,
 	}, nil
-}
-
-func (a *ContactCheckerAdapter) getCachedExpired(key string) (*friendshipCacheEntry, bool) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	entry, ok := a.cache[key]
-	if !ok {
-		return nil, false
-	}
-	return entry, true
 }
 
 func (a *ContactCheckerAdapter) IsFriend(ctx context.Context, userID, friendID string) (bool, error) {

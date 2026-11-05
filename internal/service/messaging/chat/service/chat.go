@@ -968,6 +968,54 @@ func privateChatTarget(chatID, senderID string) (userA, userB, target string, pa
 	return userA, userB, userA, true, nil
 }
 
+// enforcePrivateSendPolicy 在创建会话与写入消息之前校验双向拉黑关系。
+// 只查一个方向不够：A 拉黑 B 后，B 发给 A 也必须被拦住。
+// 关系服务不可用时失败关闭——把「查不到」当成「没拉黑」会让一次服务抖动
+// 直接把黑名单变成装饰品，这正是旧实现只打 Debug 日志的问题。
+func (s *ChatServiceImpl) enforcePrivateSendPolicy(senderID, targetUserID string) error {
+	if s.contactChecker == nil || senderID == "" || targetUserID == "" {
+		return nil
+	}
+	// Bot 与系统消息不是自然人关系，不能拿它们去查联系人库。
+	if senderID == "system" || strings.HasPrefix(senderID, "bot_") || strings.HasPrefix(targetUserID, "bot_") {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+
+	blockedBySender, err := s.contactChecker.IsBlocked(ctx, senderID, targetUserID)
+	if err != nil {
+		logger.Error("查询拉黑关系失败，拒绝私聊发送",
+			logger.StringField("sender_id", senderID),
+			logger.StringField("target_user_id", targetUserID),
+			logger.ErrorField(err))
+		return types.ErrChatRelationshipUnavailable
+	}
+	if blockedBySender {
+		logger.Warn("发送方已拉黑对方，拦截私聊发送",
+			logger.StringField("sender_id", senderID),
+			logger.StringField("target_user_id", targetUserID))
+		return types.ErrChatBlocked
+	}
+
+	blockedByTarget, err := s.contactChecker.IsBlocked(ctx, targetUserID, senderID)
+	if err != nil {
+		logger.Error("查询反向拉黑关系失败，拒绝私聊发送",
+			logger.StringField("sender_id", senderID),
+			logger.StringField("target_user_id", targetUserID),
+			logger.ErrorField(err))
+		return types.ErrChatRelationshipUnavailable
+	}
+	if blockedByTarget {
+		logger.Warn("接收方已拉黑发送方，拦截私聊发送",
+			logger.StringField("sender_id", senderID),
+			logger.StringField("target_user_id", targetUserID))
+		return types.ErrChatBlocked
+	}
+	return nil
+}
+
 func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.ChatType, msgType model.MessageType, content string, metadata map[string]string, replyToID string, mentionIDs []string, requestID string) (*model.Message, []string, bool, error) {
 	var actualChatID string
 	var targetUserID string
@@ -981,6 +1029,9 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 			return nil, nil, false, err
 		}
 		targetUserID = target
+		if err := s.enforcePrivateSendPolicy(senderID, targetUserID); err != nil {
+			return nil, nil, false, err
+		}
 		if paired {
 			conv, err := s.repo.GetOrCreatePrivateConversation(s.ctx, userA, userB)
 			if err != nil {
@@ -1006,27 +1057,6 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 		}
 	} else {
 		actualChatID = chatID
-	}
-
-	if chatType == model.ChatTypePrivate && s.contactChecker != nil && senderID != "system" && targetUserID != "" {
-		// 异步检查关系，不阻塞消息发送，但降低日志级别
-		go func() {
-			relCtx, relCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer relCancel()
-			isBlocked, _ := s.contactChecker.IsBlocked(relCtx, senderID, targetUserID)
-			blockedByTarget, _ := s.contactChecker.IsBlocked(relCtx, targetUserID, senderID)
-			isFriend, _ := s.contactChecker.IsFriend(relCtx, senderID, targetUserID)
-
-			// 只在有异常情况时才记录日志
-			if isBlocked || blockedByTarget || !isFriend {
-				logger.Debug("关系检查结果",
-					logger.StringField("sender_id", senderID),
-					logger.StringField("target_user_id", targetUserID),
-					logger.BoolField("is_blocked", isBlocked),
-					logger.BoolField("blocked_by_target", blockedByTarget),
-					logger.BoolField("is_friend", isFriend))
-			}
-		}()
 	}
 
 	if chatType == model.ChatTypeGroup {

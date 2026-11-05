@@ -77,6 +77,12 @@ var (
 	// ErrChatMessageConflict 编辑消息时客户端持有的版本已过期（其他端已先编辑成功）。
 	// 返回 409 而非覆盖写入，客户端应重新拉取最新内容后再提交，避免并发编辑丢失更新。
 	ErrChatMessageConflict = &MessagingError{Code: 50410, Message: "消息内容已变更，请刷新后重试"}
+	// ErrChatBlocked 私聊双方存在拉黑关系，消息不得落库或推送。
+	// 两个方向都要拦：A 拉黑 B 后，B 发给 A 同样不能送达。
+	ErrChatBlocked = &MessagingError{Code: 50423, Message: "消息发送失败，对方已拒收"}
+	// ErrChatRelationshipUnavailable 关系服务不可用，无法确认拉黑状态。
+	// 拉黑是用户明确表达的安全语义，状态未知时失败关闭，不能用「查不到」冒充「没拉黑」。
+	ErrChatRelationshipUnavailable = &MessagingError{Code: 50503, Message: "消息服务暂时不可用，请稍后重试"}
 )
 
 type MessagingError struct {
