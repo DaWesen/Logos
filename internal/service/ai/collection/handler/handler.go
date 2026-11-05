@@ -245,6 +245,9 @@ func (s *DataCollectionServiceImpl) ExecuteTask(ctx context.Context, req *pb.Exe
 		resp.BaseResp.StatusCode = statusCodeForError(execErr)
 		resp.BaseResp.StatusMessage = execErr.Error()
 	}
+	if result == nil {
+		return resp, nil
+	}
 
 	resp.Result = collectionResultToProto(result)
 	return resp, nil

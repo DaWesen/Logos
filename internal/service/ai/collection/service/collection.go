@@ -58,6 +58,10 @@ type collectionServiceImpl struct {
 var (
 	ErrUnauthenticated = auth.ErrMissingUser
 	ErrNotFound        = errors.New("资源不存在")
+	// ErrKnowledgeUnavailable 表示知识服务未配置。
+	// 采集的唯一产物就是知识条目，服务不可用时继续跑只会写出
+	// collected_count=0 的 SUCCESS，把配置故障伪装成业务成功。
+	ErrKnowledgeUnavailable = errors.New("知识服务不可用")
 )
 
 func NewCollectionService(repo dao.CollectionRepository, knowledgeService KnowledgeService, extractionService ExtractionService, outboxRepo outbox.OutboxRepository) CollectionService {
@@ -297,9 +301,25 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		return nil, ErrNotFound
 	}
 
+	// 先校验数据源再改任务状态。
+	//
+	// 旧实现先写 RUNNING 再查数据源，且把查询错误丢掉：数据源被删或
+	// 查库抖动时，任务会永久停在 RUNNING，doCollect 还会解引用 nil 直接
+	// panic。校验前置后，失败路径不会留下任何状态变更。
+	ds, err := s.repo.GetDataSourceWithOwnerCheck(ctx, task.DataSourceID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("查询数据源失败: %w", err)
+	}
+	if ds == nil {
+		return nil, fmt.Errorf("%w: 任务关联的数据源不存在", ErrNotFound)
+	}
+
 	now := time.Now()
 	task.Status = "RUNNING"
-	s.repo.UpdateTask(ctx, task)
+	task.UpdatedAt = now
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, fmt.Errorf("更新任务状态失败: %w", err)
+	}
 
 	result := &model.CollectionResult{
 		ID:             uuid.New().String(),
@@ -310,8 +330,6 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		StartTime:      now.Unix(),
 		EndTime:        now.Unix(),
 	}
-
-	ds, _ := s.repo.GetDataSourceWithOwnerCheck(ctx, task.DataSourceID, userID)
 
 	collectErr := s.doCollect(ctx, task, ds, result)
 
@@ -332,6 +350,7 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 			logger.Int64Field("collected", result.CollectedCount),
 			logger.Int64Field("processed", result.ProcessedCount))
 	}
+	task.UpdatedAt = time.Now()
 
 	err = s.repo.WithTransaction(ctx, func(txRepo dao.CollectionRepository) error {
 		if err := txRepo.CreateResult(ctx, result); err != nil {
@@ -351,9 +370,27 @@ func (s *collectionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		logger.Error("保存采集结果事务失败",
 			logger.StringField("task_id", taskID),
 			logger.ErrorField(err))
+		// 结果没落库就不能返回 SUCCESS：调用方会以为这次采集可查，
+		// 实际结果列表里什么都没有。
+		return nil, fmt.Errorf("保存采集结果失败: %w", err)
 	}
 
 	return result, collectErr
+}
+
+// addKnowledge 统一处理知识写入，保证采集计数只在真正落库后递增。
+func (s *collectionServiceImpl) addKnowledge(
+	ctx context.Context,
+	title, content, sourceType, sourceID string,
+	metadata map[string]string,
+) error {
+	if s.knowledgeService == nil {
+		return ErrKnowledgeUnavailable
+	}
+	if _, err := s.knowledgeService.AddKnowledge(ctx, title, content, sourceType, sourceID, metadata); err != nil {
+		return fmt.Errorf("写入知识库失败: %w", err)
+	}
+	return nil
 }
 
 func (s *collectionServiceImpl) saveCollectionEventToOutbox(ctx context.Context, txDB *gorm.DB, task *model.CollectionTask, result *model.CollectionResult) error {
@@ -415,8 +452,8 @@ func (s *collectionServiceImpl) collectFromInternalSystem(ctx context.Context, t
 			"index":          fmt.Sprintf("%d", i+1),
 		}
 
-		if s.knowledgeService != nil {
-			s.knowledgeService.AddKnowledge(ctx, title, content, sourceType, ds.ID, metadata)
+		if err := s.addKnowledge(ctx, title, content, sourceType, ds.ID, metadata); err != nil {
+			return fmt.Errorf("采集第 %d 条数据失败: %w", i+1, err)
 		}
 		result.CollectedCount++
 		result.ProcessedCount++
@@ -433,11 +470,11 @@ func (s *collectionServiceImpl) collectFromDocument(ctx context.Context, task *m
 		"url":            ds.URL,
 	}
 
-	if s.knowledgeService != nil {
-		s.knowledgeService.AddKnowledge(ctx, ds.Name, fmt.Sprintf("文档采集: 来自 %s (%s)", ds.URL, formatStr), "document", ds.ID, metadata)
-		result.CollectedCount++
-		result.ProcessedCount++
+	if err := s.addKnowledge(ctx, ds.Name, fmt.Sprintf("文档采集: 来自 %s (%s)", ds.URL, formatStr), "document", ds.ID, metadata); err != nil {
+		return err
 	}
+	result.CollectedCount++
+	result.ProcessedCount++
 
 	return nil
 }
@@ -461,11 +498,11 @@ func (s *collectionServiceImpl) collectFromAPI(ctx context.Context, task *model.
 		"format":         dao.DataFormatString(task.Format),
 	}
 
-	if s.knowledgeService != nil {
-		s.knowledgeService.AddKnowledge(ctx, fmt.Sprintf("API采集-%s", ds.Name), fmt.Sprintf("API数据采集结果 from %s [%s]", apiEndpoint, method), "api", ds.ID, metadata)
-		result.CollectedCount++
-		result.ProcessedCount++
+	if err := s.addKnowledge(ctx, fmt.Sprintf("API采集-%s", ds.Name), fmt.Sprintf("API数据采集结果 from %s [%s]", apiEndpoint, method), "api", ds.ID, metadata); err != nil {
+		return err
 	}
+	result.CollectedCount++
+	result.ProcessedCount++
 
 	return nil
 }
@@ -488,11 +525,11 @@ func (s *collectionServiceImpl) collectFromDatabase(ctx context.Context, task *m
 		"format":         dao.DataFormatString(task.Format),
 	}
 
-	if s.knowledgeService != nil {
-		s.knowledgeService.AddKnowledge(ctx, fmt.Sprintf("DB采集-%s", ds.Name), fmt.Sprintf("数据库采集结果 from %s.%s (查询: %s)", dbName, tableName, query), "database", ds.ID, metadata)
-		result.CollectedCount++
-		result.ProcessedCount++
+	if err := s.addKnowledge(ctx, fmt.Sprintf("DB采集-%s", ds.Name), fmt.Sprintf("数据库采集结果 from %s.%s (查询: %s)", dbName, tableName, query), "database", ds.ID, metadata); err != nil {
+		return err
 	}
+	result.CollectedCount++
+	result.ProcessedCount++
 
 	return nil
 }
@@ -507,11 +544,11 @@ func (s *collectionServiceImpl) collectFromWebsite(ctx context.Context, task *mo
 		"format":         dao.DataFormatString(task.Format),
 	}
 
-	if s.knowledgeService != nil {
-		s.knowledgeService.AddKnowledge(ctx, fmt.Sprintf("网页采集-%s", ds.Name), fmt.Sprintf("网站爬取结果 from %s", ds.URL), "website", ds.ID, metadata)
-		result.CollectedCount++
-		result.ProcessedCount++
+	if err := s.addKnowledge(ctx, fmt.Sprintf("网页采集-%s", ds.Name), fmt.Sprintf("网站爬取结果 from %s", ds.URL), "website", ds.ID, metadata); err != nil {
+		return err
 	}
+	result.CollectedCount++
+	result.ProcessedCount++
 
 	return nil
 }
