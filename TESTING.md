@@ -113,6 +113,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **实体缓存编码边界**（`ai/knowledge`）：注入 `marshalCachedEntity` 返回错误时 `cacheEntity` 不得调用 `Set`，且必须删除已有缓存，避免更新后继续返回旧实体；缓存内容损坏时 `GetEntity` 按未命中回源一次，并用回源结果覆盖坏值
 - **推荐负缓存**（`ai/recommend`）：空结果连续请求只回源 1 次，且写入 TTL 不超过 2 分钟（正常结果是 30 分钟）；向量检索失败导致的空列表不写缓存，第二次请求仍会回源且 `Set` 调用数为 0
 - **推荐并行化边界**（`ai/recommend`）：向量检索与知识图谱检索同时进行，慢的一路不会串行阻塞另一路；标题改写并发数不超过 4，`-race` 下所有标题都被正确回填；已有真实标题不会被模型覆盖；两路检索其中一路失败时另一路结果照常合并，不互相取消；`chatGenerator` 为 nil 时不发起任何模型调用
+- **反馈元信息查询**（`ai/recommend`）：反馈只按主键查询 1 次，不得调用推荐列表（`calls == 0`）；查询成功时落库真实 `type`/`title`；查询失败或条目不存在时仍保存反馈，`type=unknown`、`title=itemID`；数据库字段为空时不覆盖降级值；`SaveHistory` 失败向上返回错误
 - **向量集合读取边界**（`ai/vector/dao`）：数据库故障 + 指定 `userID` 时 `ListCollections` 必须报错且不返回任何结果（禁止回退到无归属的 Milvus 全量列表）；数据库故障且 Milvus 未连接、或两套存储都未初始化时同样报错，不能返回空切片；`row_count` 缺失、空 map、`"12abc"` 后缀垃圾、负数都让 `parseCollectionSize` 返回错误，正常值与带空白值可解析；`Search` / `TextSearch` 在 Milvus 未连接时返回「Milvus未连接」错误而不是空结果
 - **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
 - **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
