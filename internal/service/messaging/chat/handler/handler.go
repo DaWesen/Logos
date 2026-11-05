@@ -248,15 +248,24 @@ func (s *ChatServiceImpl) CreateGroup(ctx context.Context, req *pb.CreateGroupRe
 		return &pb.CreateGroupResponse{Code: 500, Message: err.Error()}, nil
 	}
 
-	memberIDs, _ := s.service.GetGroupMemberIDs(group.ID)
+	// 群已经落库，这里再查失败不能把整个请求判为失败：客户端重试会再建一个群。
+	// member_ids 退化为空，但 member_count 由建群事务回填，前端用它兜底显示人数。
+	memberIDs, memberErr := s.service.GetGroupMemberIDs(group.ID)
+	if memberErr != nil {
+		logger.Error("查询群成员列表失败，降级为仅返回成员数",
+			logger.StringField("group_id", group.ID),
+			logger.StringField("owner_id", ownerID),
+			logger.ErrorField(memberErr))
+	}
 
 	return &pb.CreateGroupResponse{
 		Code: 200, Message: "创建成功",
 		Data: &pb.Group{
 			Id: group.ID, Name: group.Name, OwnerId: group.OwnerID,
-			MemberIds: memberIDs,
-			CreatedAt: timestamppb.New(group.CreatedAt),
-			UpdatedAt: timestamppb.New(group.UpdatedAt), Announcement: group.Announcement,
+			MemberIds:   memberIDs,
+			MemberCount: int32(group.MemberCount),
+			CreatedAt:   timestamppb.New(group.CreatedAt),
+			UpdatedAt:   timestamppb.New(group.UpdatedAt), Announcement: group.Announcement,
 		},
 	}, nil
 }
@@ -406,7 +415,16 @@ func (s *ChatServiceImpl) GetGroup(ctx context.Context, req *pb.GetGroupRequest)
 		return &pb.GetGroupResponse{Code: 500, Message: err.Error()}, nil
 	}
 
-	memberIDs, _ := s.service.GetGroupMemberIDs(group.ID)
+	// 详情页要靠 member_ids 渲染成员列表，返回空列表等于告诉前端「这个群没人」；
+	// 读接口没有副作用，显式失败让客户端重试比返回错误数据更安全。
+	memberIDs, err := s.service.GetGroupMemberIDs(group.ID)
+	if err != nil {
+		logger.Error("查询群成员列表失败",
+			logger.StringField("group_id", req.GroupId),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return &pb.GetGroupResponse{Code: 500, Message: "查询群成员列表失败"}, nil
+	}
 
 	return &pb.GetGroupResponse{
 		Code: 200, Message: "获取成功",
