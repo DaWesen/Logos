@@ -564,6 +564,7 @@ func (s *knowledgeServiceImpl) ImportData(ctx context.Context, dataType string, 
 		logger.IntField("count", len(data)))
 
 	if len(data) == 0 {
+		logger.Warn("导入数据为空", logger.StringField("dataType", dataType))
 		return nil
 	}
 
@@ -576,93 +577,6 @@ func (s *knowledgeServiceImpl) ImportData(ctx context.Context, dataType string, 
 		logger.Warn("不支持的数据类型", logger.StringField("dataType", dataType))
 		return fmt.Errorf("不支持的数据类型: %s", dataType)
 	}
-}
-
-func (s *knowledgeServiceImpl) importEntities(ctx context.Context, data []string) error {
-	for _, item := range data {
-		var entityData map[string]interface{}
-		if err := json.Unmarshal([]byte(item), &entityData); err != nil {
-			logger.Warn("解析实体数据失败",
-				logger.StringField("data", item),
-				logger.ErrorField(err))
-			continue
-		}
-
-		entityType, _ := entityData["type"].(string)
-		name, _ := entityData["name"].(string)
-		if entityType == "" || name == "" {
-			logger.Warn("实体数据缺少必要字段", logger.StringField("data", item))
-			continue
-		}
-
-		collectionID, _ := entityData["collection_id"].(string)
-
-		properties := make(map[string]string)
-		if props, ok := entityData["properties"].(map[string]interface{}); ok {
-			for k, v := range props {
-				if strV, ok := v.(string); ok {
-					properties[k] = strV
-				}
-			}
-		}
-
-		var description *string
-		if desc, ok := entityData["description"].(string); ok {
-			description = &desc
-		}
-
-		if _, err := s.FindOrCreateEntity(ctx, entityType, name, collectionID, properties, description, ""); err != nil {
-			logger.Warn("导入实体失败",
-				logger.StringField("name", name),
-				logger.ErrorField(err))
-		}
-	}
-
-	logger.Info("导入实体完成", logger.IntField("count", len(data)))
-	return nil
-}
-
-func (s *knowledgeServiceImpl) importRelations(ctx context.Context, data []string) error {
-	for _, item := range data {
-		var relationData map[string]interface{}
-		if err := json.Unmarshal([]byte(item), &relationData); err != nil {
-			logger.Warn("解析关系数据失败",
-				logger.StringField("data", item),
-				logger.ErrorField(err))
-			continue
-		}
-
-		relationType, _ := relationData["type"].(string)
-		sourceId, _ := relationData["sourceId"].(string)
-		targetId, _ := relationData["targetId"].(string)
-		if relationType == "" || sourceId == "" || targetId == "" {
-			logger.Warn("关系数据缺少必要字段", logger.StringField("data", item))
-			continue
-		}
-
-		properties := make(map[string]string)
-		if props, ok := relationData["properties"].(map[string]interface{}); ok {
-			for k, v := range props {
-				if strV, ok := v.(string); ok {
-					properties[k] = strV
-				}
-			}
-		}
-
-		var description *string
-		if desc, ok := relationData["description"].(string); ok {
-			description = &desc
-		}
-
-		if _, err := s.AddRelation(ctx, relationType, sourceId, targetId, "", properties, description); err != nil {
-			logger.Warn("导入关系失败",
-				logger.StringField("type", relationType),
-				logger.ErrorField(err))
-		}
-	}
-
-	logger.Info("导入关系完成", logger.IntField("count", len(data)))
-	return nil
 }
 
 func (s *knowledgeServiceImpl) SearchEntities(ctx context.Context, keyword string, entityType *string, collectionID string, page, pageSize int) ([]*model.Entity, int64, error) {
