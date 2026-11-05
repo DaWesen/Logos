@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/postgres"
@@ -63,19 +64,43 @@ func TestDBResult_Classifies(t *testing.T) {
 // 任意一次 Find 都应产生带 table/operation/result 的耗时数据点。
 func TestRegisterDBMetrics_RecordsStatement(t *testing.T) {
 	db := dryRunPostgres(t)
-	registerDBMetrics(db)
+	if err := registerDBMetrics(db); err != nil {
+		t.Fatalf("注册数据库指标失败: %v", err)
+	}
+
+	// before/after 必须是两个独立回调。GORM 的 Register 会改写回调对象自身，
+	// 复用同一个 Before(...) 对象会让 before 被 after 覆盖，指标从此恒为空。
+	for _, name := range []string{"logos:db:metrics:before:query", "logos:db:metrics:after:query"} {
+		if db.Callback().Query().Get(name) == nil {
+			t.Fatalf("回调 %s 未注册", name)
+		}
+	}
+
+	before := dbMetricCount(t, "query", "db_metric_rows")
 
 	var rows []dbMetricRow
 	if err := db.Find(&rows).Error; err != nil {
 		t.Fatalf("DryRun 查询失败: %v", err)
 	}
 
+	if dbMetricCount(t, "query", "db_metric_rows") == 0 {
+		t.Fatal("未找到 db_metric_rows/query/ok 的数据库耗时数据点")
+	}
+	// 一次查询只能记一次，重复注册回调会把延迟和慢查询计数翻倍。
+	if after := dbMetricCount(t, "query", "db_metric_rows"); after != before+1 {
+		t.Fatalf("一次 Find 产生了 %d 个数据点，want 1", after-before)
+	}
+}
+
+func dbMetricCount(t *testing.T, operation, table string) uint64 {
+	t.Helper()
+
 	var rm metricdata.ResourceMetrics
 	if err := dbTestReader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("采集指标失败: %v", err)
 	}
 
-	var found bool
+	var count uint64
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name != "logos.db.statement.duration" {
@@ -86,17 +111,58 @@ func TestRegisterDBMetrics_RecordsStatement(t *testing.T) {
 				t.Fatalf("耗时指标类型 = %T", m.Data)
 			}
 			for _, p := range hist.DataPoints {
-				table, _ := p.Attributes.Value(attribute.Key("table"))
 				op, _ := p.Attributes.Value(attribute.Key("operation"))
+				tbl, _ := p.Attributes.Value(attribute.Key("table"))
 				result, _ := p.Attributes.Value(attribute.Key("result"))
-				if table.AsString() == "db_metric_rows" &&
-					op.AsString() == "query" && result.AsString() == "ok" {
-					found = true
+				if op.AsString() == operation && tbl.AsString() == table && result.AsString() == "ok" {
+					count += p.Count
 				}
 			}
 		}
 	}
-	if !found {
-		t.Fatal("未找到 db_metric_rows/query/ok 的数据库耗时数据点")
+	return count
+}
+
+// TestRegisterDBMetrics_CoversRawExec 原生 Exec 走的是 raw processor。
+// 保留策略的批量 DELETE、启动期的表结构修正都在这里，漏掉就恰好漏掉最慢的语句。
+func TestRegisterDBMetrics_CoversRawExec(t *testing.T) {
+	db := dryRunPostgres(t)
+	if err := registerDBMetrics(db); err != nil {
+		t.Fatalf("注册数据库指标失败: %v", err)
+	}
+
+	if err := db.Exec("DELETE FROM db_metric_rows WHERE id = ?", 1).Error; err != nil {
+		t.Fatalf("DryRun Exec 失败: %v", err)
+	}
+
+	// 原生语句拿不到 table 名，统一落到 unknown，不能因此直接丢弃。
+	if got := dbMetricCount(t, "raw", "unknown"); got != 1 {
+		t.Fatalf("raw/unknown 数据点 = %d, want 1（Exec 没有被埋点或重复埋点）", got)
+	}
+}
+
+// TestRegisterDBMetrics_RejectsMissingAnchor 锚点回调被移除时，
+// GORM 只会把我们的回调排到链尾（计时恒为 0），不会报错。
+// 这种「假指标」必须变成显式错误，并且不能半注册。
+func TestRegisterDBMetrics_RejectsMissingAnchor(t *testing.T) {
+	db := dryRunPostgres(t)
+	if err := db.Callback().Query().Remove("gorm:query"); err != nil {
+		t.Fatalf("移除 gorm:query 失败: %v", err)
+	}
+
+	err := registerDBMetrics(db)
+	if err == nil {
+		t.Fatal("锚点缺失时 registerDBMetrics 应返回错误")
+	}
+	if !strings.Contains(err.Error(), "gorm:query") || !strings.Contains(err.Error(), "query") {
+		t.Fatalf("错误信息未指明缺失的锚点: %v", err)
+	}
+	if db.Callback().Query().Get("logos:db:metrics:before:query") != nil {
+		t.Fatal("锚点缺失时不应注册 before 回调，否则会留下恒为 0 的假指标")
+	}
+
+	// 单个 processor 失败不应影响其他 processor 的埋点。
+	if db.Callback().Create().Get("logos:db:metrics:before:create") == nil {
+		t.Fatal("query 注册失败时 create 的埋点也被跳过了")
 	}
 }

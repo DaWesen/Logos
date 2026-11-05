@@ -54,7 +54,11 @@ func InitPostgresWithRetry(ctx context.Context, attempts int) (*gorm.DB, error) 
 				sqlDB.SetMaxIdleConns(pool.MaxIdle)
 				sqlDB.SetConnMaxLifetime(pool.MaxLifetime)
 				sqlDB.SetConnMaxIdleTime(pool.MaxIdleTime)
-				registerDBMetrics(db)
+				if metricsErr := registerDBMetrics(db); metricsErr != nil {
+					// 指标注册失败不影响数据库可用性，但必须让人知道哪些操作没有指标：
+					// 否则只能等出故障时才发现慢查询面板是空的。
+					logger.Error("数据库指标回调注册失败，部分 SQL 操作将没有指标", logger.ErrorField(metricsErr))
+				}
 				registerDBPoolStats(sqlDB)
 				logger.Info("PostgreSQL连接成功",
 					logger.IntField("max_open_conns", pool.MaxOpen),
