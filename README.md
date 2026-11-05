@@ -517,6 +517,7 @@ Logos/
 - **状态字符串必须有唯一来源**：Kafka 消费成功后写入的是 `PROCESSED_FROM_KAFKA`，统计 SQL 只累加 `PROCESSED/ACKED`——消息确实处理了，监控却永远显示 0。现在 `PENDING/PROCESSED/ACKED/FAILED/CLEARED` 集中定义在 model 常量里，写入、统计、清理全部复用同一组常量，统计 SQL 用参数绑定而不是再抄一遍字面量
 - **路径参数不能把解析失败吞成零值**：`DeleteTopic` 里 `strconv.ParseInt` 的错误被 `_` 丢弃，`DELETE /message/topic/abc` 会退化成 `Topic=0`，在网关层“成功”删掉 `DATA_COLLECTION` 的全部消息与订阅——一次手误就是跨租户数据丢失。现在解析失败、负数、越界枚举都在网关层返回 400，且拒绝时不会发出下游 gRPC 调用
 - **成功码不能碰巧等于 HTTP 200**：各 handler 把 gRPC 的 `StatusCode` 直接塞进 `c.JSON`。业务成功码是 `0`，HTTP 写回时靠 gin 的 `WriteHeader` 跳过非正数才“看起来是 200”；任何一层把成功码改成 1 或漏填，整个网关就会返回 500/畸形状态。消息接口统一走 `mapBaseRespStatusCode`（`0 → 200`、`1 → 500`、`100..599` 直通、其余 500），把协议语义和传输状态解耦
+- **timeout_ms 不能是装饰参数**：`ConsumeMessages` 收了 `timeout_ms` 却从不使用，调用方以为自己在长轮询，实际每次立刻返回空列表——客户端要么高频空转打爆 DB，要么把「暂时没有」误判成「队列为空」直接退出。现在 `timeout_ms > 0` 时在预算内每 200ms 重新领取，拿到消息立即返回、预算耗尽返回空列表（正常超时）；`<= 0` 保持单次尝试语义，超过 30s 收敛到上限。等待用 `timer + select ctx.Done()`，客户端断开立刻退出，不留 goroutine；领取错误仍然上抛，不会被当成「队列为空」
 
 Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互错开——若四层都写成同一个巨大值，实际生效的只有最宽松的一层：
 

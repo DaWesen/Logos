@@ -54,7 +54,9 @@ type stubMessageRepo struct {
 	leaseUntil   time.Time
 	claimLimit   int
 	claimResult  []*model.Message
+	claimResults [][]*model.Message
 	claimErr     error
+	claimCtxErr  []error
 
 	statsRows []dao.TopicStats
 	statsErr  error
@@ -78,7 +80,7 @@ func (s *stubMessageRepo) AckMessage(_ context.Context, _ string, _ string) erro
 }
 
 func (s *stubMessageRepo) ClaimPendingMessages(
-	_ context.Context,
+	ctx context.Context,
 	topic string,
 	limit int,
 	consumerGroup string,
@@ -89,6 +91,12 @@ func (s *stubMessageRepo) ClaimPendingMessages(
 	s.claimLimit = limit
 	s.claimedGroup = consumerGroup
 	s.leaseUntil = leaseUntil
+	s.claimCtxErr = append(s.claimCtxErr, ctx.Err())
+	if len(s.claimResults) > 0 {
+		result := s.claimResults[0]
+		s.claimResults = s.claimResults[1:]
+		return result, s.claimErr
+	}
 	return s.claimResult, s.claimErr
 }
 
@@ -367,6 +375,104 @@ func TestConsumeMessages_RejectsInvalidTopicAndPropagatesClaimError(t *testing.T
 	svc = &messageServiceImpl{repo: repo}
 	if _, err := svc.ConsumeMessages(context.Background(), "g", 3, 10, 0); err == nil {
 		t.Fatal("领取失败必须上抛，不能返回空列表让客户端以为队列为空")
+	}
+}
+
+// timeout_ms 是长轮询预算：空结果不能立刻返回，否则客户端只能空转；
+// 预算内拿到消息要立即返回，不能等满整个窗口。
+func TestConsumeMessages_LongPollRetriesUntilMessageArrives(t *testing.T) {
+	repo := &stubMessageRepo{
+		claimResults: [][]*model.Message{
+			nil,
+			nil,
+			{{ID: "m1", Topic: "QA_REQUEST"}},
+		},
+	}
+	svc := &messageServiceImpl{repo: repo}
+
+	start := time.Now()
+	msgs, err := svc.ConsumeMessages(context.Background(), "group-a", 3, 10, 600)
+	if err != nil {
+		t.Fatalf("长轮询不应报错: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != "m1" {
+		t.Fatalf("应返回第三次领取到的消息, got %+v", msgs)
+	}
+	if repo.claimCalls != 3 {
+		t.Fatalf("应在空结果后继续领取, calls = %d", repo.claimCalls)
+	}
+	if elapsed := time.Since(start); elapsed < consumePollInterval*2 {
+		t.Fatalf("空结果之间必须有间隔, elapsed = %v", elapsed)
+	}
+	if elapsed := time.Since(start); elapsed > 600*time.Millisecond {
+		t.Fatalf("拿到消息应立即返回, elapsed = %v", elapsed)
+	}
+}
+
+// 预算耗尽返回空列表是正常的长轮询超时，不是错误；
+// 但调用必须真的等满预算，而不是“假装”等过。
+func TestConsumeMessages_LongPollReturnsEmptyAfterBudget(t *testing.T) {
+	repo := &stubMessageRepo{}
+	svc := &messageServiceImpl{repo: repo}
+
+	start := time.Now()
+	msgs, err := svc.ConsumeMessages(context.Background(), "group-a", 3, 10, 450)
+	if err != nil {
+		t.Fatalf("预算耗尽应返回空列表而不是错误: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("队列为空时应返回空列表, got %+v", msgs)
+	}
+	if elapsed := time.Since(start); elapsed < 400*time.Millisecond {
+		t.Fatalf("未等满预算就返回, elapsed = %v", elapsed)
+	}
+	if repo.claimCalls < 2 {
+		t.Fatalf("预算内应多次尝试领取, calls = %d", repo.claimCalls)
+	}
+}
+
+// 客户端断开必须立刻停止轮询，且不能把取消错误吞成“队列为空”。
+func TestConsumeMessages_LongPollStopsOnContextCancel(t *testing.T) {
+	repo := &stubMessageRepo{}
+	svc := &messageServiceImpl{repo: repo}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(120 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err := svc.ConsumeMessages(ctx, "group-a", 3, 10, 5000)
+	cancel()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("取消应上抛 context.Canceled, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("取消后应立即退出, elapsed = %v", elapsed)
+	}
+	if repo.claimCalls > 3 {
+		t.Fatalf("取消后不应继续领取, calls = %d", repo.claimCalls)
+	}
+}
+
+// timeout_ms <= 0 保持旧语义（只尝试一次），超上限收敛到 30s，
+// 避免调用方用天文数字把连接钉死。
+func TestNormalizeConsumeTimeout(t *testing.T) {
+	cases := []struct {
+		in   int32
+		want time.Duration
+	}{
+		{-1, 0},
+		{0, 0},
+		{100, 100 * time.Millisecond},
+		{int32(maxConsumeTimeout / time.Millisecond), maxConsumeTimeout},
+		{60000, maxConsumeTimeout},
+	}
+	for _, c := range cases {
+		if got := normalizeConsumeTimeout(c.in); got != c.want {
+			t.Fatalf("normalizeConsumeTimeout(%d) = %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 

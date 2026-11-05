@@ -26,6 +26,14 @@ const maxBatchSize = 100
 // 否则消息会被其他消费者重新领取（至少一次投递）。
 const claimLease = 60 * time.Second
 
+// 长轮询参数：客户端最多挂起 30s，空结果时每 200ms 重新领取一次。
+// timeout_ms 是调用方的等待预算，不是数据库查询超时；不设上限会让
+// 一个 HTTP/gRPC 连接被恶意占住几分钟，拖满服务端 goroutine。
+const (
+	maxConsumeTimeout   = 30 * time.Second
+	consumePollInterval = 200 * time.Millisecond
+)
+
 // ErrMessageNotClaimed 由 dao 透出，供 handler 映射成 404/409 而不是一律 500。
 var ErrMessageNotClaimed = dao.ErrMessageNotClaimed
 
@@ -235,19 +243,80 @@ func (s *messageServiceImpl) ConsumeMessages(ctx context.Context, consumerGroup 
 	logger.Info("operation",
 		logger.StringField("consumer_group", consumerGroup),
 		logger.StringField("topic", topicStr),
-		logger.IntField("max_messages", int(maxMessages)))
+		logger.IntField("max_messages", int(maxMessages)),
+		logger.IntField("timeout_ms", int(timeoutMs)))
 
 	limit := int(maxMessages)
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
 
+	// timeout_ms <= 0 表示只尝试一次（保持旧调用方的立即返回语义）；
+	// 超过上限则收敛到 30s，避免调用方把等待预算写成天文数字。
+	waitBudget := normalizeConsumeTimeout(timeoutMs)
+	if waitBudget <= 0 {
+		return s.claimOnce(ctx, topicStr, limit, consumerGroup)
+	}
+
+	// 长轮询：空结果不是“没有消息”，而是“暂时没有”。在预算内反复领取，
+	// 有消息立即返回；预算耗尽返回空列表（正常的长轮询超时）。
+	deadline := time.Now().Add(waitBudget)
+	for {
+		msgs, err := s.claimOnce(ctx, topicStr, limit, consumerGroup)
+		if err != nil {
+			return nil, err
+		}
+		if len(msgs) > 0 {
+			return msgs, nil
+		}
+
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, nil
+		}
+		if err := sleepWithContext(ctx, minDuration(consumePollInterval, remaining)); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (s *messageServiceImpl) claimOnce(ctx context.Context, topicStr string, limit int, consumerGroup string) ([]*model.Message, error) {
 	msgs, err := s.repo.ClaimPendingMessages(ctx, topicStr, limit, consumerGroup, time.Now().Add(claimLease))
 	if err != nil {
 		return nil, fmt.Errorf("领取待处理消息失败: %w", err)
 	}
-
 	return msgs, nil
+}
+
+func normalizeConsumeTimeout(timeoutMs int32) time.Duration {
+	if timeoutMs <= 0 {
+		return 0
+	}
+	wait := time.Duration(timeoutMs) * time.Millisecond
+	if wait > maxConsumeTimeout {
+		return maxConsumeTimeout
+	}
+	return wait
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// sleepWithContext 等待 d 或 ctx 取消，二者先到者生效。
+// 用 timer 而不是 time.Sleep，客户端断开时能立刻释放 goroutine。
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *messageServiceImpl) AcknowledgeMessage(ctx context.Context, consumerGroup string, messageID string, topic int32) error {
