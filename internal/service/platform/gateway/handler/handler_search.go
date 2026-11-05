@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
 
@@ -146,13 +145,15 @@ func (h *Handler) BatchDeleteDocuments(c *gin.Context) {
 }
 
 func (h *Handler) CreateIndex(c *gin.Context) {
-	indexTypeStr := c.Param("type")
-	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.CreateIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	indexType, ok := parseIndexTypeQuery(c)
+	if !ok {
+		return
+	}
+	resp, err := h.SearchClient.CreateIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: indexType})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -162,13 +163,15 @@ func (h *Handler) CreateIndex(c *gin.Context) {
 }
 
 func (h *Handler) DeleteIndex(c *gin.Context) {
-	indexTypeStr := c.Param("type")
-	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.DeleteIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	indexType, ok := parseIndexTypePath(c)
+	if !ok {
+		return
+	}
+	resp, err := h.SearchClient.DeleteIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: indexType})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
@@ -178,13 +181,15 @@ func (h *Handler) DeleteIndex(c *gin.Context) {
 }
 
 func (h *Handler) RefreshIndex(c *gin.Context) {
-	indexTypeStr := c.Param("type")
-	indexType, _ := strconv.ParseInt(indexTypeStr, 10, 64)
 	if h.SearchClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	resp, err := h.SearchClient.RefreshIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: pb.IndexType(indexType)})
+	indexType, ok := parseIndexTypePath(c)
+	if !ok {
+		return
+	}
+	resp, err := h.SearchClient.RefreshIndex(c.Request.Context(), &pb.GetByIndexTypeReq{Type: indexType})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
