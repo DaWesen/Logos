@@ -192,14 +192,7 @@ func (b *Bridge) subscribeOutgoing(ctx context.Context) {
 // 返回可重试错误时由 Kafka 消费者就地重试，超过上限后转死信队列。
 func (b *Bridge) handleOutboundMessage(ctx context.Context, event *types.MessageEvent) error {
 	// 从 Metadata 中获取目标 QQ 号
-	var targetQQ int64
-	if event.Metadata != nil {
-		if qqUserID, ok := event.Metadata[types.MetaQQUserID]; ok {
-			if id, err := strconv.ParseInt(qqUserID, 10, 64); err == nil {
-				targetQQ = id
-			}
-		}
-	}
+	targetQQ := parseQQID(event.Metadata[types.MetaQQUserID])
 
 	if targetQQ == 0 {
 		logger.Warn("出站消息缺少目标QQ号，跳过",
@@ -245,7 +238,7 @@ func (b *Bridge) handleOutboundMessage(ctx context.Context, event *types.Message
 			logger.StringField("content", truncate(event.Content, 50)))
 
 	case types.ChatTypeGroup:
-		groupID, _ := strconv.ParseInt(event.Metadata[types.MetaQQGroupID], 10, 64)
+		groupID := parseQQID(event.Metadata[types.MetaQQGroupID])
 		if groupID == 0 {
 			obs.RecordQQOutbound(ctx, "skipped", "missing_group_id")
 			return fmt.Errorf("%w: 缺少目标QQ群号", mq.ErrSkipMessage)
@@ -270,13 +263,27 @@ func (b *Bridge) handleOutboundMessage(ctx context.Context, event *types.Message
 // getSelfID 从事件中获取 Bot 的 QQ 号
 func (b *Bridge) getSelfID(event *types.MessageEvent) int64 {
 	if event.Metadata != nil {
-		if qqSelfID, ok := event.Metadata[types.MetaQQSelfID]; ok {
-			if id, err := strconv.ParseInt(qqSelfID, 10, 64); err == nil {
-				return id
-			}
-		}
+		return parseQQID(event.Metadata[types.MetaQQSelfID])
 	}
 	return 0
+}
+
+// parseQQID 把 Metadata 里的 QQ 号字符串转成 int64。
+//
+// 旧写法是 `groupID, _ := strconv.ParseInt(...)` 再判 `== 0`：解析失败、
+// 没填、以及字面量 "0" 被压成同一个零值，三类完全不同的输入在日志和
+// 监控里都只表现为 missing_group_id。更关键的是负数没有被拦——"‑123"
+// 会解析成功并通过 `== 0` 检查，直接被下发到 ZeroBot 插件。
+//
+// QQ 号是正整数，因此这里把「解析失败」和「非正数」统一收敛成 0（调用方
+// 按「不可恢复、跳过」处理）：解析失败重试多少次都不会变好，把它留在
+// 可重试路径只会让毒消息反复占用消费位。
+func parseQQID(raw string) int64 {
+	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 // truncate 截断字符串
