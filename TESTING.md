@@ -111,6 +111,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **翻译失败关闭**（`ai/moderation` + `pkg/client`）：无 ChatModel 时 `Translate` 返回错误、不返回记录、不写库，错误信息不含占位文案；客户端对 `TranslateResponse.Code != 0` 返回错误且不返回译文，`Code=0` 正常返回 `translated_content`
 - **消费循环生命周期**（`pkg/mq` + `ai/collection` + `ai/extraction` + `ai/knowledge`）：`Subscribe` 拿到已取消 ctx 时不拉取任何消息并关闭 reader；extraction `handleCollectionEvent` 建任务时透传 `msg.Context`（用 ctx value 断言），直接调用时回落 Background；三个服务入口统一用 SIGINT/SIGTERM 派生的 ctx 启动消费者
 - **实体缓存编码边界**（`ai/knowledge`）：注入 `marshalCachedEntity` 返回错误时 `cacheEntity` 不得调用 `Set`，且必须删除已有缓存，避免更新后继续返回旧实体；缓存内容损坏时 `GetEntity` 按未命中回源一次，并用回源结果覆盖坏值
+- **推荐负缓存**（`ai/recommend`）：空结果连续请求只回源 1 次，且写入 TTL 不超过 2 分钟（正常结果是 30 分钟）；向量检索失败导致的空列表不写缓存，第二次请求仍会回源且 `Set` 调用数为 0
 - **向量集合读取边界**（`ai/vector/dao`）：数据库故障 + 指定 `userID` 时 `ListCollections` 必须报错且不返回任何结果（禁止回退到无归属的 Milvus 全量列表）；数据库故障且 Milvus 未连接、或两套存储都未初始化时同样报错，不能返回空切片；`row_count` 缺失、空 map、`"12abc"` 后缀垃圾、负数都让 `parseCollectionSize` 返回错误，正常值与带空白值可解析；`Search` / `TextSearch` 在 Milvus 未连接时返回「Milvus未连接」错误而不是空结果
 - **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
 - **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
