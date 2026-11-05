@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/pagination"
@@ -18,7 +17,11 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
 		return
 	}
-	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+	// 推荐结果同样按用户画像生成，?user_id= 只能等于登录用户，否则 403。
+	userID, ok := h.resolveTargetUserID(c)
+	if !ok {
+		return
+	}
 	limit, ok := parseLimit(c, "limit", 20, pagination.MaxPageSize)
 	if !ok {
 		return
@@ -105,7 +108,10 @@ func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
+	userID, ok := h.resolveTargetUserID(c)
+	if !ok {
+		return
+	}
 	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
 	if !ok {
 		return

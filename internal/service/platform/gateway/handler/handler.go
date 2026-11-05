@@ -100,6 +100,50 @@ func (h *Handler) requireUserID(c *gin.Context) (string, bool) {
 	return "", false
 }
 
+// requireNumericUserID 在 requireUserID 之上把字符串身份转成数据库主键。
+// 认证中间件写入的 user_id 来自 JWT claims，正常情况下一定是数字；
+// 转换失败说明令牌内容与用户表主键约定不一致，属于身份不可信，必须 401，
+// 不能像旧代码那样 `userID, _ := strconv.ParseInt(...)` 静默变成 0。
+func (h *Handler) requireNumericUserID(c *gin.Context) (int64, bool) {
+	raw, ok := h.requireUserID(c)
+	if !ok {
+		return 0, false
+	}
+	userID, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || userID <= 0 {
+		c.JSON(http.StatusUnauthorized, model.Error(401, "用户身份无效"))
+		return 0, false
+	}
+	return userID, true
+}
+
+// resolveTargetUserID 决定「这次请求查谁的数据」。
+//
+// 身份只能来自认证中间件。查询参数 user_id 历史上被当成身份使用，任何登录
+// 用户改个数字就能读他人的问答历史、推荐记录和统计（水平越权 / IDOR）。
+// 这里保留该参数只是为了兼容老客户端，但只允许它等于当前登录用户：
+// 不相等直接 403，而不是悄悄按自己的身份查询，否则调用方会以为读到了别人。
+func (h *Handler) resolveTargetUserID(c *gin.Context) (int64, bool) {
+	authUserID, ok := h.requireNumericUserID(c)
+	if !ok {
+		return 0, false
+	}
+	raw := c.Query("user_id")
+	if raw == "" {
+		return authUserID, true
+	}
+	requested, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || requested <= 0 {
+		c.JSON(http.StatusBadRequest, model.BadRequest("user_id 必须是正整数"))
+		return 0, false
+	}
+	if requested != authUserID {
+		c.JSON(http.StatusForbidden, model.Error(403, "无权访问其他用户的数据"))
+		return 0, false
+	}
+	return authUserID, true
+}
+
 // withUserID 从 gin.Context 提取 user_id 并附加到 gRPC metadata，用于下游服务识别用户。
 // 基座必须用请求上下文：认证中间件已把身份写进 c.Request.Context()，
 // 这样客户端断开/超时会随链路取消下游调用，trace 也不会断链。

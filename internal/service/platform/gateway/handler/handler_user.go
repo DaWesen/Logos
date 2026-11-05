@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -173,13 +174,17 @@ func getString(m map[string]interface{}, key, defaultValue string) string {
 }
 
 func (h *Handler) GetUser(c *gin.Context) {
-	id := c.Param("id")
-	userID, _ := strconv.ParseInt(id, 10, 64)
+	// 路径参数解析失败时旧代码吞成 0，会去查「用户 0」并返回 200 + 空数据，
+	// 让客户端以为这个 ID 存在。非法 ID 是请求错误，直接 400。
+	userID, ok := parseBoundedIntPath(c, "id", 1, math.MaxInt32)
+	if !ok {
+		return
+	}
 	if h.UserClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "用户服务不可用"))
 		return
 	}
-	req := &pb.UserInfoReq{UserId: userID}
+	req := &pb.UserInfoReq{UserId: int64(userID)}
 	resp, err := h.UserClient.GetUserInfo(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
@@ -330,13 +335,10 @@ func (h *Handler) UpdateAvatar(c *gin.Context) {
 
 	proxyURL := "/api/v1/file/minio/" + objectKey
 
-	userID := int64(0)
-	if uid, exists := c.Get("user_id"); exists {
-		if idStr, ok := uid.(string); ok {
-			if parsedID, err := strconv.ParseInt(idStr, 10, 64); err == nil {
-				userID = parsedID
-			}
-		}
+	// 头像写入必须绑定登录身份；旧代码解析失败时留下 0，等于往 user 0 写数据。
+	userID, ok := h.requireNumericUserID(c)
+	if !ok {
+		return
 	}
 
 	logger.Info("Updating avatar", logger.Int64Field("user_id", userID), logger.StringField("url", proxyURL))
@@ -455,9 +457,13 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 }
 
 func (h *Handler) GetUserStats(c *gin.Context) {
-	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
 	if h.UserClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "用户服务不可用"))
+		return
+	}
+	// 统计包含问答数、收藏数等行为画像，属于个人数据，不能由查询参数指定对象。
+	userID, ok := h.resolveTargetUserID(c)
+	if !ok {
 		return
 	}
 	req := &pb.UserStatsReq{UserId: userID}
