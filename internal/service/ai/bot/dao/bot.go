@@ -53,6 +53,7 @@ type BotRepository interface {
 	SetUserMemory(ctx context.Context, memory *model.UserMemory) error
 	DeleteUserMemory(ctx context.Context, userID, botID, key string) error
 	DeleteUserMemoryByID(ctx context.Context, id string) error
+	DeleteUserMemoriesByUser(ctx context.Context, userID, botID string) (int64, error)
 
 	WithTransaction(ctx context.Context, fn func(txRepo BotRepository) error) error
 	DB() *gorm.DB
@@ -359,6 +360,23 @@ func (r *botRepository) DeleteUserMemory(ctx context.Context, userID, botID, key
 
 func (r *botRepository) DeleteUserMemoryByID(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.UserMemory{}).Error
+}
+
+// DeleteUserMemoriesByUser 用一条 DELETE 清空某个用户（可限定 Bot）的全部记忆。
+//
+// 旧实现是「先查全部 ID，再逐条 DeleteUserMemoryByID 且 `_ =` 丢掉错误」：
+// 一次清空 N 条记忆要 N+1 次往返，中途失败也会返回 nil，调用方看到
+// 「清空成功」但库里还留着半截记忆。批量删除让语义变成全成功或全失败。
+func (r *botRepository) DeleteUserMemoriesByUser(ctx context.Context, userID, botID string) (int64, error) {
+	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if botID != "" {
+		query = query.Where("bot_id = ?", botID)
+	}
+	result := query.Delete(&model.UserMemory{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *botRepository) WithTransaction(ctx context.Context, fn func(txRepo BotRepository) error) error {

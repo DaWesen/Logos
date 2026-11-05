@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -79,6 +80,8 @@ type stubRepo struct {
 	memoriesQueried []string
 	setMemories     []*botmodel.UserMemory
 	deletedMemories []string
+	bulkDeleteCalls []string
+	bulkDeleteErr   error
 }
 
 func (r *stubRepo) GetMessages(_ context.Context, conversationID string, _ int, _ *time.Time) ([]*botmodel.Message, error) {
@@ -222,6 +225,14 @@ func (r *stubRepo) DeleteUserMemory(_ context.Context, userID, botID, key string
 func (r *stubRepo) DeleteUserMemoryByID(_ context.Context, id string) error {
 	r.deletedMemories = append(r.deletedMemories, id)
 	return nil
+}
+
+func (r *stubRepo) DeleteUserMemoriesByUser(_ context.Context, userID, botID string) (int64, error) {
+	r.bulkDeleteCalls = append(r.bulkDeleteCalls, userID+"|"+botID)
+	if r.bulkDeleteErr != nil {
+		return 0, r.bulkDeleteErr
+	}
+	return int64(len(r.memoriesQueried)), nil
 }
 
 // stubCache 只实现测试用到的方法；其余方法由嵌入的 nil 接口兜底。
@@ -471,6 +482,32 @@ func TestUserScopedWrites_RejectMissingIdentity(t *testing.T) {
 	if len(repo.memoriesQueried) != 0 || len(repo.setMemories) != 0 || len(repo.deletedMemories) != 0 {
 		t.Fatalf("未认证请求不应触达记忆表：queried=%v set=%d deleted=%v",
 			repo.memoriesQueried, len(repo.setMemories), repo.deletedMemories)
+	}
+	if len(repo.bulkDeleteCalls) != 0 {
+		t.Fatalf("未认证请求不应触发批量删除，实际 %v", repo.bulkDeleteCalls)
+	}
+}
+
+// 清空记忆曾写成「先查全部 ID，再逐条 DeleteUserMemoryByID 且 `_ =` 吞错」：
+// 中途失败也返回 nil，调用方以为清空了，库里还留着半截。
+// 现在是一条批量 DELETE，全成功或全失败。
+func TestDeleteAllUserMemories_IsAtomicAndSurfacesErrors(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	if err := svc.DeleteAllUserMemories(userCtx("alice"), "alice", "bot-owner"); err != nil {
+		t.Fatalf("清空记忆应成功，实际 %v", err)
+	}
+	if len(repo.bulkDeleteCalls) != 1 || repo.bulkDeleteCalls[0] != "alice|bot-owner" {
+		t.Fatalf("必须用认证身份一次批量删除，实际 %v", repo.bulkDeleteCalls)
+	}
+	if len(repo.deletedMemories) != 0 {
+		t.Fatalf("不应退化成逐条删除，实际 %v", repo.deletedMemories)
+	}
+
+	repo.bulkDeleteErr = errors.New("db down")
+	err := svc.DeleteAllUserMemories(userCtx("alice"), "alice", "bot-owner")
+	if !errors.Is(err, ErrInternalServer) {
+		t.Fatalf("批量删除失败应返回 ErrInternalServer，实际 %v", err)
 	}
 }
 

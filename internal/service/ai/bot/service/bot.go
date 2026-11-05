@@ -1496,13 +1496,18 @@ func (s *botServiceImpl) DeleteAllUserMemories(ctx context.Context, userID, botI
 	}
 	userID = ownerID
 
-	memories, err := s.repo.GetUserMemoriesByUser(ctx, userID, botID)
+	deleted, err := s.repo.DeleteUserMemoriesByUser(ctx, userID, botID)
 	if err != nil {
-		return err
+		logger.Error("清空用户记忆失败",
+			logger.StringField("user_id", userID),
+			logger.StringField("bot_id", botID),
+			logger.ErrorField(err))
+		return ErrInternalServer
 	}
-	for _, mem := range memories {
-		_ = s.repo.DeleteUserMemoryByID(ctx, mem.ID)
-	}
+	logger.Info("清空用户记忆完成",
+		logger.StringField("user_id", userID),
+		logger.StringField("bot_id", botID),
+		logger.Int64Field("deleted", deleted))
 	return nil
 }
 
