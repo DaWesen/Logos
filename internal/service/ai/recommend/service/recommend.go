@@ -28,6 +28,12 @@ type KnowledgeService interface {
 	SearchEntities(ctx context.Context, query string) ([]string, error)
 }
 
+// chatGenerator 只依赖「一次问答」这个能力，而不是整个 *eino.EinoManager：
+// 生成标题的逻辑不需要嵌入、流式或治理细节，接口收窄后在测试里可以直接替身。
+type chatGenerator interface {
+	Chat(ctx context.Context, messages []string) (string, error)
+}
+
 type RecommendService interface {
 	GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, reqContext map[string]string) ([]*model.RecommendationItem, int64, error)
 	GetRelatedRecommendations(ctx context.Context, entityID string, recommendType string, limit int) ([]*model.RecommendationItem, int64, error)
@@ -38,7 +44,7 @@ type RecommendService interface {
 
 type recommendServiceImpl struct {
 	recommendRepo    dao.RecommendRepository
-	einoClient       *eino.EinoManager
+	einoClient       chatGenerator
 	vectorService    VectorService
 	knowledgeService KnowledgeService
 	cache            cache.Cache
@@ -60,14 +66,23 @@ func NewRecommendService(
 	knowledgeService KnowledgeService,
 ) RecommendService {
 	return &recommendServiceImpl{
-		recommendRepo:    recommendRepo,
-		einoClient:       einoClient,
+		recommendRepo: recommendRepo,
+		// 不能直接把 *eino.EinoManager 赋给接口：初始化失败时它是 nil 指针，
+		// 装进接口后会变成「非 nil 接口」，随后的 nil 判断全部失效。
+		einoClient:       wrapChatGenerator(einoClient),
 		vectorService:    vectorService,
 		knowledgeService: knowledgeService,
 		cache:            cache.NewRedisCache(),
 		// 回源上限 10s：推荐生成会调向量检索/知识库，但不应无限期挂住。
 		fills: singleflight.NewGroup[recommendResult](10 * time.Second),
 	}
+}
+
+func wrapChatGenerator(client *eino.EinoManager) chatGenerator {
+	if client == nil {
+		return nil
+	}
+	return client
 }
 
 func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int, reqContext map[string]string) ([]*model.RecommendationItem, int64, error) {
@@ -237,21 +252,48 @@ func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context,
 	return items, degraded
 }
 
+// recommendEnrichConcurrency 限制标题改写的并发度。
+//
+// 串行改写时 10 条推荐就是 10 次 LLM 往返顺序叠加，一次刷新就能把
+// 推荐接口的 P99 推到秒级；完全放开又会撞供应商限流。4 路是折中值：
+// 延迟约降为 1/4，同时在途请求数有明确上限。
+const recommendEnrichConcurrency = 4
+
 func (s *recommendServiceImpl) enrichWithEino(ctx context.Context, items []*model.RecommendationItem) {
+	sem := make(chan struct{}, recommendEnrichConcurrency)
+	var wg sync.WaitGroup
 	for _, item := range items {
-		if item.Title != "" && !startsWith(item.Title, "相关内容") && !startsWith(item.Title, "知识实体") {
+		if item == nil || !needsGeneratedTitle(item) {
 			continue
 		}
-		prompt := fmt.Sprintf("请为以下推荐内容生成一个简洁的中文标题（不超过20字），不要加引号：\n描述：%s\n实体ID：%s", item.Description, item.EntityID)
-		result, err := s.einoClient.Chat(ctx, []string{prompt})
-		if err != nil {
-			logger.Warn("Eino生成标题失败", logger.ErrorField(err))
-			continue
+		if ctx.Err() != nil {
+			// 调用方已取消：不再排队打 LLM，已发出的调用会在各自 ctx 上返回。
+			break
 		}
-		if result != "" {
-			item.Title = result
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(item *model.RecommendationItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			prompt := fmt.Sprintf("请为以下推荐内容生成一个简洁的中文标题（不超过20字），不要加引号：\n描述：%s\n实体ID：%s", item.Description, item.EntityID)
+			result, err := s.einoClient.Chat(ctx, []string{prompt})
+			if err != nil {
+				logger.Warn("Eino生成标题失败", logger.ErrorField(err))
+				return
+			}
+			if result != "" {
+				item.Title = result
+			}
+		}(item)
 	}
+	wg.Wait()
+}
+
+// needsGeneratedTitle 判断标题是否只是占位文案。
+// 用户/数据库给出的真实标题不能被模型覆盖。
+func needsGeneratedTitle(item *model.RecommendationItem) bool {
+	return item.Title == "" || startsWith(item.Title, "相关内容") || startsWith(item.Title, "知识实体")
 }
 
 func startsWith(s, prefix string) bool {
@@ -337,29 +379,43 @@ func (s *recommendServiceImpl) GetRelatedRecommendations(ctx context.Context, en
 		limit = 10
 	}
 
-	var vectorIDs []string
+	// 向量检索和知识图谱检索互不依赖，串行执行只是把两段网络延迟相加。
+	// 两边都允许各自失败降级（失败等于空结果），所以不用 errgroup 的
+	// 「一个失败就取消另一个」语义，各自记录日志即可。
+	var (
+		vectorIDs    []string
+		knowledgeIDs []string
+		wg           sync.WaitGroup
+	)
 	if s.vectorService != nil {
-		similarResults, err := s.vectorService.SearchSimilar(ctx, entityID, limit)
-		if err != nil {
-			logger.Warn("向量搜索失败", logger.ErrorField(err))
-		} else {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			similarResults, err := s.vectorService.SearchSimilar(ctx, entityID, limit)
+			if err != nil {
+				logger.Warn("向量搜索失败", logger.ErrorField(err))
+				return
+			}
 			vectorIDs = similarResults
 			logger.Info("从向量搜索获取相关推荐",
 				logger.IntField("count", len(similarResults)))
-		}
+		}()
 	}
-
-	var knowledgeIDs []string
 	if s.knowledgeService != nil {
-		entities, err := s.knowledgeService.SearchEntities(ctx, entityID)
-		if err != nil {
-			logger.Warn("知识图谱搜索失败", logger.ErrorField(err))
-		} else {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			entities, err := s.knowledgeService.SearchEntities(ctx, entityID)
+			if err != nil {
+				logger.Warn("知识图谱搜索失败", logger.ErrorField(err))
+				return
+			}
 			knowledgeIDs = entities
 			logger.Info("从知识图谱获取相关实体",
 				logger.IntField("count", len(entities)))
-		}
+		}()
 	}
+	wg.Wait()
 
 	items, total, err := s.recommendRepo.GetRelatedRecommendations(ctx, entityID, recommendType, limit)
 	if err != nil {

@@ -48,17 +48,91 @@ func (f *fakeRecommendCache) Set(ctx context.Context, key string, value interfac
 
 type fakeVectorService struct {
 	VectorService
-	err   error
-	ids   []string
-	calls int32
+	err     error
+	ids     []string
+	delay   time.Duration
+	tracker *inflightTracker
+	calls   int32
 }
 
 func (f *fakeVectorService) SearchSimilar(ctx context.Context, text string, topK int) ([]string, error) {
 	atomic.AddInt32(&f.calls, 1)
+	if f.tracker != nil {
+		f.tracker.enter()
+		defer f.tracker.leave()
+	}
+	time.Sleep(f.delay)
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.ids, nil
+}
+
+type fakeKnowledgeService struct {
+	KnowledgeService
+	err     error
+	ids     []string
+	delay   time.Duration
+	tracker *inflightTracker
+	calls   int32
+}
+
+func (f *fakeKnowledgeService) SearchEntities(ctx context.Context, query string) ([]string, error) {
+	atomic.AddInt32(&f.calls, 1)
+	if f.tracker != nil {
+		f.tracker.enter()
+		defer f.tracker.leave()
+	}
+	time.Sleep(f.delay)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.ids, nil
+}
+
+// inflightTracker 观测两段互不依赖的调用是否真的重叠执行。
+type inflightTracker struct {
+	cur int32
+	max int32
+}
+
+func (t *inflightTracker) enter() {
+	cur := atomic.AddInt32(&t.cur, 1)
+	for {
+		max := atomic.LoadInt32(&t.max)
+		if cur <= max || atomic.CompareAndSwapInt32(&t.max, max, cur) {
+			return
+		}
+	}
+}
+
+func (t *inflightTracker) leave() {
+	atomic.AddInt32(&t.cur, -1)
+}
+
+type fakeTitleChat struct {
+	err         error
+	delay       time.Duration
+	calls       int32
+	inFlight    int32
+	maxInFlight int32
+}
+
+func (f *fakeTitleChat) Chat(ctx context.Context, messages []string) (string, error) {
+	atomic.AddInt32(&f.calls, 1)
+	cur := atomic.AddInt32(&f.inFlight, 1)
+	for {
+		max := atomic.LoadInt32(&f.maxInFlight)
+		if cur <= max || atomic.CompareAndSwapInt32(&f.maxInFlight, max, cur) {
+			break
+		}
+	}
+	defer atomic.AddInt32(&f.inFlight, -1)
+	time.Sleep(f.delay)
+	if f.err != nil {
+		return "", f.err
+	}
+	return "生成标题", nil
 }
 
 type fakeRecommendRepo struct {
@@ -80,6 +154,12 @@ func (f *fakeRecommendRepo) GetRecommendations(ctx context.Context, userID int64
 		}
 	}
 	defer atomic.AddInt32(&f.inFlight, -1)
+	time.Sleep(f.delay)
+	return f.items, int64(len(f.items)), nil
+}
+
+func (f *fakeRecommendRepo) GetRelatedRecommendations(ctx context.Context, entityID string, recommendType string, limit int) ([]*model.RecommendationItem, int64, error) {
+	atomic.AddInt32(&f.calls, 1)
 	time.Sleep(f.delay)
 	return f.items, int64(len(f.items)), nil
 }
@@ -196,6 +276,68 @@ func TestGetRecommendations_DegradedEmptyResultNotCached(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&c.sets); got != 0 {
 		t.Fatalf("依赖失败时不应写缓存，实际 Set %d 次", got)
+	}
+}
+
+// 向量检索与知识图谱检索互不依赖，串行执行等于把两段网络延迟相加。
+func TestGetRelatedRecommendations_ParallelSearches(t *testing.T) {
+	tracker := &inflightTracker{}
+	vec := &fakeVectorService{delay: 30 * time.Millisecond, ids: []string{"v1"}, tracker: tracker}
+	know := &fakeKnowledgeService{delay: 30 * time.Millisecond, ids: []string{"k1"}, tracker: tracker}
+	repo := &fakeRecommendRepo{}
+	svc := &recommendServiceImpl{
+		recommendRepo:    repo,
+		vectorService:    vec,
+		knowledgeService: know,
+	}
+
+	items, total, err := svc.GetRelatedRecommendations(context.Background(), "e1", "feed", 10)
+	if err != nil {
+		t.Fatalf("GetRelatedRecommendations 失败: %v", err)
+	}
+	if len(items) != 2 || total != 2 {
+		t.Fatalf("两路检索结果都应合入，实际 len=%d total=%d", len(items), total)
+	}
+	if max := atomic.LoadInt32(&tracker.max); max < 2 {
+		t.Fatalf("两路检索应并行执行，观测到的最大并发 %d", max)
+	}
+}
+
+// 串行改写时 10 条推荐就是 10 次 LLM 往返顺序叠加。
+func TestEnrichWithEino_BoundedParallel(t *testing.T) {
+	chat := &fakeTitleChat{delay: 20 * time.Millisecond}
+	svc := &recommendServiceImpl{einoClient: chat}
+
+	items := make([]*model.RecommendationItem, 0, 13)
+	for i := 0; i < 12; i++ {
+		items = append(items, &model.RecommendationItem{
+			ID:          "i",
+			Title:       "相关内容 #1",
+			Description: "描述",
+		})
+	}
+	// 真实标题不能被模型覆盖，也不该占用一次 LLM 调用。
+	items = append(items, &model.RecommendationItem{ID: "human", Title: "人工标题"})
+
+	svc.enrichWithEino(context.Background(), items)
+
+	if got := atomic.LoadInt32(&chat.calls); got != 12 {
+		t.Fatalf("只有占位标题需要改写，应调用 12 次，实际 %d 次", got)
+	}
+	max := atomic.LoadInt32(&chat.maxInFlight)
+	if max < 2 {
+		t.Fatalf("改写应并行执行，观测到的最大并发 %d", max)
+	}
+	if max > recommendEnrichConcurrency {
+		t.Fatalf("并发度 %d 超过上限 %d，会打爆供应商限流", max, recommendEnrichConcurrency)
+	}
+	for i := 0; i < 12; i++ {
+		if items[i].Title != "生成标题" {
+			t.Fatalf("第 %d 条标题未改写：%q", i, items[i].Title)
+		}
+	}
+	if items[12].Title != "人工标题" {
+		t.Fatalf("真实标题被覆盖：%q", items[12].Title)
 	}
 }
 
