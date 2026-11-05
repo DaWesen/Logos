@@ -110,6 +110,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **文档 DTO 统计失败边界**（`ai/process`）：单条与批量块数查询失败都返回带「查询文档块数量失败」的错误，不返回 `chunk_count=0` 的半成品 DTO 或整页零值；正常路径按文档 ID 映射真实块数；文档不存在返回 `nil, nil`，重处理不存在文档返回 `ErrDocumentNotFound`（handler 映射 404）；静态守卫禁止 handler 再用 `dto, _ := GetDocumentDTO`
 - **翻译失败关闭**（`ai/moderation` + `pkg/client`）：无 ChatModel 时 `Translate` 返回错误、不返回记录、不写库，错误信息不含占位文案；客户端对 `TranslateResponse.Code != 0` 返回错误且不返回译文，`Code=0` 正常返回 `translated_content`
 - **消费循环生命周期**（`pkg/mq` + `ai/collection` + `ai/extraction` + `ai/knowledge`）：`Subscribe` 拿到已取消 ctx 时不拉取任何消息并关闭 reader；extraction `handleCollectionEvent` 建任务时透传 `msg.Context`（用 ctx value 断言），直接调用时回落 Background；三个服务入口统一用 SIGINT/SIGTERM 派生的 ctx 启动消费者
+- **Chat 消费启动失败**（`messaging/chat`）：`eventBus` 为 nil 时 `StartEventConsumer` 返回启动错误而不是在 goroutine 里 panic；订阅错误同步上抛给入口，不得只写日志后返回 nil 伪装成就绪
 - **实体缓存编码边界**（`ai/knowledge`）：注入 `marshalCachedEntity` 返回错误时 `cacheEntity` 不得调用 `Set`，且必须删除已有缓存，避免更新后继续返回旧实体；缓存内容损坏时 `GetEntity` 按未命中回源一次，并用回源结果覆盖坏值
 - **推荐负缓存**（`ai/recommend`）：空结果连续请求只回源 1 次，且写入 TTL 不超过 2 分钟（正常结果是 30 分钟）；向量检索失败导致的空列表不写缓存，第二次请求仍会回源且 `Set` 调用数为 0
 - **推荐并行化边界**（`ai/recommend`）：向量检索与知识图谱检索同时进行，慢的一路不会串行阻塞另一路；标题改写并发数不超过 4，`-race` 下所有标题都被正确回填；已有真实标题不会被模型覆盖；两路检索其中一路失败时另一路结果照常合并，不互相取消；`chatGenerator` 为 nil 时不发起任何模型调用
