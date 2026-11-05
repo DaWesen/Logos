@@ -27,7 +27,8 @@ import (
 
 func checkChatCode(c *gin.Context, code int32, message string) bool {
 	if code != 0 && code != 200 {
-		c.JSON(mapStatusCode(code), model.Response{Code: int(code), Message: message})
+		statusCode := mapStatusCode(code)
+		c.JSON(statusCode, model.Response{Code: statusCode, Message: message})
 		return false
 	}
 	return true

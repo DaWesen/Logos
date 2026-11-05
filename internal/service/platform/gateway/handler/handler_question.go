@@ -27,10 +27,7 @@ func (h *Handler) AskQuestion(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"answer":     resp.Answer,
 		"confidence": resp.Confidence,
@@ -55,10 +52,7 @@ func (h *Handler) BatchAskQuestions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Answers})
 }
 
@@ -88,10 +82,7 @@ func (h *Handler) GetHistory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"records": resp.Records,
 		"total":   resp.Total,
@@ -113,10 +104,7 @@ func (h *Handler) SubmitFeedback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -131,10 +119,7 @@ func (h *Handler) GetRecommendedQuestions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 

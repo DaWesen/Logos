@@ -183,10 +183,7 @@ func (h *Handler) GetAccount(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -228,10 +225,7 @@ func (h *Handler) GetTransactions(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -271,10 +265,7 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -313,10 +304,7 @@ func (h *Handler) ConsumeModelCall(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -348,10 +336,7 @@ func (h *Handler) ConsumeEmbedding(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -383,10 +368,7 @@ func (h *Handler) ConsumeStorage(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -418,10 +400,7 @@ func (h *Handler) ConsumeBandwidth(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -453,10 +432,7 @@ func (h *Handler) Withdraw(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -488,10 +464,7 @@ func (h *Handler) Refund(c *gin.Context) {
 		return
 	}
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,

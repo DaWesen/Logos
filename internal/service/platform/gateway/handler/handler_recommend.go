@@ -36,10 +36,7 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"items": resp.Items,
 		"total": resp.Total,
@@ -70,10 +67,7 @@ func (h *Handler) GetRelatedRecommendations(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"items": resp.Items,
 		"total": resp.Total,
@@ -95,10 +89,7 @@ func (h *Handler) SubmitRecommendFeedback(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -121,10 +112,7 @@ func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"items": resp.Items,
 		"total": resp.Total,
@@ -146,10 +134,7 @@ func (h *Handler) BatchGetRecommendations(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Recommendations})
 }
 

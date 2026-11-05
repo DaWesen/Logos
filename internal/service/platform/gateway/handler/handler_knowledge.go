@@ -26,10 +26,7 @@ func (h *Handler) AddEntity(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entity})
 }
 
@@ -48,10 +45,7 @@ func (h *Handler) UpdateEntity(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entity})
 }
 
@@ -67,10 +61,7 @@ func (h *Handler) DeleteEntity(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: nil})
 }
 
@@ -85,10 +76,7 @@ func (h *Handler) GetEntity(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entity})
 }
 
@@ -118,10 +106,7 @@ func (h *Handler) QueryEntities(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entities})
 }
 
@@ -150,10 +135,7 @@ func (h *Handler) SearchEntities(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entities})
 }
 
@@ -172,10 +154,7 @@ func (h *Handler) AddRelation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Relation})
 }
 
@@ -194,10 +173,7 @@ func (h *Handler) UpdateRelation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Relation})
 }
 
@@ -213,10 +189,7 @@ func (h *Handler) DeleteRelation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: nil})
 }
 
@@ -231,10 +204,7 @@ func (h *Handler) GetRelation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Relation})
 }
 
@@ -267,10 +237,7 @@ func (h *Handler) QueryRelations(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Relations})
 }
 
@@ -287,10 +254,7 @@ func (h *Handler) GetGraphStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"entity_count":        resp.EntityCount,
 		"relation_count":      resp.RelationCount,
@@ -317,10 +281,7 @@ func (h *Handler) GetRelatedEntities(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Entities})
 }
 
@@ -339,10 +300,7 @@ func (h *Handler) ImportData(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: nil})
 }
 
@@ -366,10 +324,7 @@ func (h *Handler) GetSubgraph(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: gin.H{
 		"nodes":     resp.Nodes,
 		"edges":     resp.Edges,
@@ -402,8 +357,8 @@ func (h *Handler) ClearEntities(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 			return
 		}
-		if resp.BaseResp != nil && resp.BaseResp.StatusCode != 0 {
-			c.JSON(int(resp.BaseResp.StatusCode), model.Error(int(resp.BaseResp.StatusCode), resp.BaseResp.StatusMessage))
+		if statusCode := mapBaseRespStatusCode(resp.BaseResp); statusCode != http.StatusOK {
+			c.JSON(statusCode, model.Error(statusCode, getBaseRespMessage(resp.BaseResp)))
 			return
 		}
 
@@ -456,9 +411,6 @@ func (h *Handler) GetEntityPaths(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Paths})
 }

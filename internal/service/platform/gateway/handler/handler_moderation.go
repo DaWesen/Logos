@@ -24,11 +24,11 @@ func (h *Handler) Translate(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"translated_content": resp.TranslatedContent,
 		"source_lang":        resp.SourceLang,
 		"target_lang":        resp.TargetLang,
-	}})
+	})
 }
 
 func (h *Handler) ModerateContent(c *gin.Context) {
@@ -46,7 +46,7 @@ func (h *Handler) ModerateContent(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) GetModerationRecords(c *gin.Context) {
@@ -64,8 +64,8 @@ func (h *Handler) GetModerationRecords(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"records": resp.Records,
 		"total":   resp.Total,
-	}})
+	})
 }

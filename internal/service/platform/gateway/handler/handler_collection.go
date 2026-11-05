@@ -26,10 +26,7 @@ func (h *Handler) AddDataSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.DataSource})
 }
 
@@ -43,10 +40,7 @@ func (h *Handler) ListDataSources(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.DataSources})
 }
 
@@ -61,10 +55,7 @@ func (h *Handler) GetDataSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.DataSource})
 }
 
@@ -84,10 +75,7 @@ func (h *Handler) UpdateDataSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.DataSource})
 }
 
@@ -103,10 +91,7 @@ func (h *Handler) DeleteDataSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -125,10 +110,7 @@ func (h *Handler) CreateCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Task})
 }
 
@@ -142,10 +124,7 @@ func (h *Handler) ListCollectionTasks(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Tasks})
 }
 
@@ -160,10 +139,7 @@ func (h *Handler) GetCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Task})
 }
 
@@ -183,10 +159,7 @@ func (h *Handler) UpdateCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Task})
 }
 
@@ -201,10 +174,7 @@ func (h *Handler) DeleteCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: map[string]string{"deleted_id": id}})
 }
 
@@ -220,10 +190,7 @@ func (h *Handler) ExecuteCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Result})
 }
 
@@ -238,10 +205,7 @@ func (h *Handler) StopCollectionTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -256,10 +220,7 @@ func (h *Handler) GetCollectionResults(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Results})
 }
 
@@ -274,10 +235,7 @@ func (h *Handler) GetCollectionResult(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Result})
 }
 

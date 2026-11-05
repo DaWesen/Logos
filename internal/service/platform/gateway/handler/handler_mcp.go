@@ -25,10 +25,10 @@ func (h *Handler) CallTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"result":   resp.Result,
 		"metadata": resp.Metadata,
-	}})
+	})
 }
 
 func (h *Handler) RegisterTool(c *gin.Context) {
@@ -46,7 +46,7 @@ func (h *Handler) RegisterTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) ListMCPTools(c *gin.Context) {
@@ -61,10 +61,10 @@ func (h *Handler) ListMCPTools(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"tools": resp.Tools,
 		"total": resp.Total,
-	}})
+	})
 }
 
 func (h *Handler) GetMCPTool(c *gin.Context) {
@@ -78,7 +78,7 @@ func (h *Handler) GetMCPTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) UpdateMCPTool(c *gin.Context) {
@@ -98,7 +98,7 @@ func (h *Handler) UpdateMCPTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) DeleteMCPTool(c *gin.Context) {
@@ -112,10 +112,10 @@ func (h *Handler) DeleteMCPTool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"success": resp.Code == 0,
 		"message": resp.Message,
-	}})
+	})
 }
 
 func (h *Handler) CreateMCPService(c *gin.Context) {
@@ -133,7 +133,7 @@ func (h *Handler) CreateMCPService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) ListMCPServices(c *gin.Context) {
@@ -151,10 +151,10 @@ func (h *Handler) ListMCPServices(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"services": resp.Services,
 		"total":    resp.Total,
-	}})
+	})
 }
 
 func (h *Handler) GetMCPService(c *gin.Context) {
@@ -168,7 +168,7 @@ func (h *Handler) GetMCPService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) UpdateMCPService(c *gin.Context) {
@@ -188,7 +188,7 @@ func (h *Handler) UpdateMCPService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Data})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Data)
 }
 
 func (h *Handler) DeleteMCPService(c *gin.Context) {
@@ -202,7 +202,7 @@ func (h *Handler) DeleteMCPService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message})
+	respondProtoCode(c, resp.Code, resp.Message, nil)
 }
 
 func (h *Handler) TestMCPService(c *gin.Context) {
@@ -220,8 +220,8 @@ func (h *Handler) TestMCPService(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"success": resp.Code == 0,
 		"message": resp.Message,
-	}})
+	})
 }

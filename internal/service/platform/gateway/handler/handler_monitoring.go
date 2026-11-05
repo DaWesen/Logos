@@ -31,10 +31,7 @@ func (h *Handler) RecordMetric(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -53,10 +50,7 @@ func (h *Handler) BatchRecordMetric(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -76,10 +70,7 @@ func (h *Handler) QueryMetrics(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Metrics})
 }
 
@@ -98,10 +89,7 @@ func (h *Handler) RecordLog(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -120,10 +108,7 @@ func (h *Handler) BatchRecordLog(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -156,10 +141,7 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Logs})
 }
 
@@ -192,10 +174,7 @@ func (h *Handler) QueryAlerts(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Alerts})
 }
 
@@ -210,10 +189,7 @@ func (h *Handler) ResolveAlert(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp), Data: map[string]string{"resolved_id": alertId}})
 }
 
@@ -232,10 +208,7 @@ func (h *Handler) UpdateServiceStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -250,10 +223,7 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	if resp != nil && resp.StatusCode != 0 {
 		c.JSON(statusCode, model.Response{Code: statusCode, Message: resp.StatusMessage})
 		return
@@ -277,10 +247,7 @@ func (h *Handler) ListServiceStatuses(c *gin.Context) {
 		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	if resp != nil && resp.StatusCode != 0 {
 		c.JSON(statusCode, model.Response{Code: statusCode, Message: resp.StatusMessage})
 		return

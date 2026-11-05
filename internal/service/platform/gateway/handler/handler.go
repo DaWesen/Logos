@@ -318,6 +318,18 @@ func mapBaseRespStatusCode(resp *pbCommon.BaseResp) int {
 	return mapStatusCode(resp.StatusCode)
 }
 
+// respondProtoCode 是所有「下游返回 int32 code」的 handler 的唯一出口：
+// 业务码先经 mapStatusCode 变成合法 HTTP 状态码，响应体的 code 再复用同一个值。
+// 这样响应体不会出现 0（成功）与 HTTP 200 不一致，也不会把 7 之类的业务码写进状态行。
+func respondProtoCode(c *gin.Context, code int32, message string, data interface{}) {
+	statusCode := mapStatusCode(code)
+	c.JSON(statusCode, model.Response{
+		Code:    statusCode,
+		Message: message,
+		Data:    data,
+	})
+}
+
 func (h *Handler) ProxyProcessService(c *gin.Context) {
 	target, err := url.Parse(h.ProcessServiceURL)
 	if err != nil {

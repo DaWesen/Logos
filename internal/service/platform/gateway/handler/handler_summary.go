@@ -88,13 +88,13 @@ func (h *Handler) SummarizeMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: gin.H{
+	respondProtoCode(c, resp.Code, resp.Message, gin.H{
 		"summary":          resp.Summary,
 		"todos":            resp.Todos,
 		"reply_candidates": resp.ReplyCandidates,
 		"key_points":       resp.KeyPoints,
 		"participants":     resp.Participants,
-	}})
+	})
 }
 
 func (h *Handler) GenerateReplyCandidates(c *gin.Context) {
@@ -122,7 +122,7 @@ func (h *Handler) GenerateReplyCandidates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Candidates})
+	respondProtoCode(c, resp.Code, resp.Message, resp.Candidates)
 }
 
 func (h *Handler) ExtractTodos(c *gin.Context) {
@@ -149,12 +149,5 @@ func (h *Handler) ExtractTodos(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	c.JSON(toHTTPCode(resp.Code), model.Response{Code: int(resp.Code), Message: resp.Message, Data: resp.Todos})
-}
-
-func toHTTPCode(code int32) int {
-	if code == 0 {
-		return http.StatusOK
-	}
-	return int(code)
+	respondProtoCode(c, resp.Code, resp.Message, resp.Todos)
 }

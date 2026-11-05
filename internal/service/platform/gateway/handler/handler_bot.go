@@ -39,10 +39,7 @@ func (h *Handler) CreateBot(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -72,10 +69,7 @@ func (h *Handler) UpdateBot(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -96,10 +90,7 @@ func (h *Handler) DeleteBot(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -119,10 +110,7 @@ func (h *Handler) GetBot(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -175,10 +163,7 @@ func (h *Handler) ListBots(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -353,10 +338,7 @@ func (h *Handler) GetBotHistory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -385,10 +367,7 @@ func (h *Handler) GetUserMemory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -415,10 +394,7 @@ func (h *Handler) SetUserMemory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
@@ -458,10 +434,7 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 		logger.StringField("message", resp.Message),
 	)
 
-	statusCode := 200
-	if resp.Code != 0 {
-		statusCode = int(resp.Code)
-	}
+	statusCode := mapStatusCode(resp.Code)
 	c.JSON(statusCode, model.Response{
 		Code:    statusCode,
 		Message: resp.Message,
