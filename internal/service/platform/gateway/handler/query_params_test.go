@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	pbCommon "Logos/proto_gen/common"
@@ -228,3 +229,88 @@ func TestQueryAlerts_ResolvedTriState(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+// 登出接口的 all 参数没有「第三态」：不传就是只登出当前设备。
+// 但历史上前端用过 1/0，因此兼容这两种写法；其余值必须 400，
+// 否则 `?all=yes` 会静默降级成「只登出当前设备」。
+func TestParseOptionalBoolCompatQuery(t *testing.T) {
+	cases := []struct {
+		name     string
+		raw      string
+		want     bool
+		wantCode int
+	}{
+		{"未传", "", false, http.StatusOK},
+		{"true", "true", true, http.StatusOK},
+		{"TRUE 大写", "TRUE", true, http.StatusOK},
+		{"1", "1", true, http.StatusOK},
+		{"false", "false", false, http.StatusOK},
+		{"0", "0", false, http.StatusOK},
+		{"yes 非法", "yes", false, http.StatusBadRequest},
+		{"2 非法", "2", false, http.StatusBadRequest},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/logout?all="+tc.raw, nil)
+
+			got, ok := parseOptionalBoolCompatQuery(c, "all")
+			if rec.Code != tc.wantCode {
+				t.Fatalf("HTTP 状态 = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if !ok {
+				if got {
+					t.Fatal("解析失败时不应返回 true")
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("all = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// 字符串枚举：拼错/大小写不一致/传数字都必须 400，错误信息要列出合法值，
+// 让调用方一眼看出拼写问题，而不是去翻文档。
+func TestParseEnumQuery(t *testing.T) {
+	allowed := map[string]int32{"builtin": 1, "custom": 2}
+
+	cases := []struct {
+		name     string
+		raw      string
+		want     int32
+		wantCode int
+	}{
+		{"未传回落默认值", "", 0, http.StatusOK},
+		{"builtin", "builtin", 1, http.StatusOK},
+		{"custom", "custom", 2, http.StatusOK},
+		{"拼写错误", "bulitin", 0, http.StatusBadRequest},
+		{"大小写不一致", "Builtin", 0, http.StatusBadRequest},
+		{"误传数字", "1", 0, http.StatusBadRequest},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodGet, "/?type="+tc.raw, nil)
+
+			got, ok := parseEnumQuery(c, "type", 0, allowed)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("HTTP 状态 = %d, want %d, body = %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if !ok {
+				if !strings.Contains(rec.Body.String(), "builtin") || !strings.Contains(rec.Body.String(), "custom") {
+					t.Fatalf("错误信息应列出合法枚举值，实际 %s", rec.Body.String())
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("枚举值 = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

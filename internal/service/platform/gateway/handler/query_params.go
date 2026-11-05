@@ -3,7 +3,9 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 
 	"Logos/internal/service/platform/gateway/model"
 	pb "Logos/proto_gen/search"
@@ -97,6 +99,64 @@ func parseOptionalBoolQuery(c *gin.Context, key string) (*bool, bool) {
 		return nil, false
 	}
 	return &parsed, true
+}
+
+// parseOptionalBoolCompatQuery 解析「缺省为 false」的开关参数，
+// 同时兼容前端历史上用过的 1/0 写法。
+//
+// 与 parseOptionalBoolQuery 的差别在默认值语义：登出接口的 `all` 不传就是
+// 「只登出当前设备」，因此没有「不过滤」这个第三态，调用方只需要 bool。
+// 非法值必须 400：旧写法 `c.Query("all") == "true" || c.Query("all") == "1"`
+// 会让 `?all=yes` 静默变成 false —— 用户以为退出了所有设备，实际只退出了
+// 当前这台。这类「安全语义刚好反了」的静默降级比报错危险得多。
+func parseOptionalBoolCompatQuery(c *gin.Context, key string) (bool, bool) {
+	raw := strings.ToLower(c.Query(key))
+	switch raw {
+	case "", "false", "0":
+		return false, true
+	case "true", "1":
+		return true, true
+	default:
+		c.JSON(http.StatusBadRequest, model.BadRequest(key+" 必须是 true 或 false"))
+		return false, false
+	}
+}
+
+// parseEnumQuery 解析「字符串枚举」查询参数：取值必须命中白名单，
+// 空字符串表示没传，回落 defaultValue（通常是 UNSPECIFIED = 不过滤）。
+//
+// 旧写法是一串 if/else if：
+//
+//	if t := c.Query("type"); t == "builtin" { ... } else if t == "custom" { ... } else { UNSPECIFIED }
+//
+// 拼错（bulitin）、大小写不一致（Builtin）或误传数字（1）都会掉进最后的
+// else，被当成「不过滤」，接口 200 返回全部 Bot。调用方以为筛了「内置
+// Bot」，实际拿到全部——过滤条件静默失效，和返回全量数据一样难排查。
+//
+// 这里要求调用方给出明确的枚举名而不是数字：字符串枚举的契约是
+// 「可读、可校验」，允许数字等于把 proto 的数值编号泄漏成公开 API，
+// 之后调整枚举顺序就会悄悄改变语义。
+func parseEnumQuery(c *gin.Context, key string, defaultValue int32, allowed map[string]int32) (int32, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return defaultValue, true
+	}
+	value, ok := allowed[raw]
+	if !ok {
+		c.JSON(http.StatusBadRequest, model.BadRequest(
+			fmt.Sprintf("%s 必须是以下之一: %s", key, enumNames(allowed))))
+		return 0, false
+	}
+	return value, true
+}
+
+func enumNames(allowed map[string]int32) string {
+	names := make([]string, 0, len(allowed))
+	for name := range allowed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // maxEnumValue 从 protoc 生成的 `<Enum>_name` map 里取最大合法值，

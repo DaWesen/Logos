@@ -129,29 +129,28 @@ func (h *Handler) ListBots(c *gin.Context) {
 		return
 	}
 
-	var botType pb.BotType
-	if t := c.Query("type"); t == "builtin" {
-		botType = pb.BotType_BOT_TYPE_BUILTIN
-	} else if t == "custom" {
-		botType = pb.BotType_BOT_TYPE_CUSTOM
-	} else {
-		botType = pb.BotType_BOT_TYPE_UNSPECIFIED
+	// 字符串枚举必须命中白名单：拼写错误/大小写不一致/误传数字都会 400，
+	// 而不是掉进 else 被当成「不过滤」返回全部 Bot（过滤静默失效）。
+	botTypeValue, ok := parseEnumQuery(c, "type", int32(pb.BotType_BOT_TYPE_UNSPECIFIED), map[string]int32{
+		"builtin": int32(pb.BotType_BOT_TYPE_BUILTIN),
+		"custom":  int32(pb.BotType_BOT_TYPE_CUSTOM),
+	})
+	if !ok {
+		return
 	}
 
-	var status pb.BotStatus
-	if s := c.Query("status"); s == "active" {
-		status = pb.BotStatus_BOT_STATUS_ACTIVE
-	} else if s == "inactive" {
-		status = pb.BotStatus_BOT_STATUS_INACTIVE
-	} else if s == "deleted" {
-		status = pb.BotStatus_BOT_STATUS_DELETED
-	} else {
-		status = pb.BotStatus_BOT_STATUS_UNSPECIFIED
+	statusValue, ok := parseEnumQuery(c, "status", int32(pb.BotStatus_BOT_STATUS_UNSPECIFIED), map[string]int32{
+		"active":   int32(pb.BotStatus_BOT_STATUS_ACTIVE),
+		"inactive": int32(pb.BotStatus_BOT_STATUS_INACTIVE),
+		"deleted":  int32(pb.BotStatus_BOT_STATUS_DELETED),
+	})
+	if !ok {
+		return
 	}
 
 	req := &pb.ListBotsRequest{
-		Type:     botType,
-		Status:   status,
+		Type:     pb.BotType(botTypeValue),
+		Status:   pb.BotStatus(statusValue),
 		Page:     int32(page),
 		PageSize: int32(pageSize),
 	}

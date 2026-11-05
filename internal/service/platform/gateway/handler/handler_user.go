@@ -82,7 +82,12 @@ func (h *Handler) Logout(c *gin.Context) {
 		return
 	}
 
-	allDevices := c.Query("all") == "true" || c.Query("all") == "1"
+	// `?all=yes` 之类旧写法会静默变成 false（只登出当前设备），
+	// 用户以为退出了所有设备。非法值必须 400。
+	allDevices, ok := parseOptionalBoolCompatQuery(c, "all")
+	if !ok {
+		return
+	}
 	if allDevices {
 		ttl := time.Duration(h.JWTManager.GetTokenExpireHours())*time.Hour + time.Minute
 		if err := h.Revoker.RevokeAll(c.Request.Context(), claims.UserID, ttl); err != nil {

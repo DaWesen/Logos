@@ -86,6 +86,55 @@ func TestIndexHandlersReadRouteParamID(t *testing.T) {
 	}
 }
 
+// 登出接口的 all 参数没有「第三态」：旧写法
+// `c.Query("all") == "true" || c.Query("all") == "1"` 会把 `?all=yes`
+// 静默当成 false（只登出当前设备），安全语义刚好反了。
+// 这里锁定必须走严格解析的 helper。
+func TestLogoutParsesAllStrictly(t *testing.T) {
+	data, err := os.ReadFile("handler_user.go")
+	if err != nil {
+		t.Fatalf("读取 handler_user.go 失败: %v", err)
+	}
+	source := string(data)
+
+	if !strings.Contains(source, `parseOptionalBoolCompatQuery(c, "all")`) {
+		t.Error("Logout 未使用 parseOptionalBoolCompatQuery 解析 all 参数")
+	}
+	for i, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		if strings.Contains(line, `Query("all") ==`) {
+			t.Errorf("handler_user.go:%d 仍在用 == 比较 all 参数：%s", i+1, trimmed)
+		}
+	}
+}
+
+// 字符串枚举不能再写成 if/else 链：未命中的值会掉进 else 被当成
+// 「不过滤」，过滤条件静默失效。新增枚举参数必须走 parseEnumQuery。
+func TestHandlersDoNotInlineStringEnums(t *testing.T) {
+	files := mustGlobHandlers(t)
+
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("读取 %s 失败: %v", file, err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			// `if t := c.Query("type"); t == "builtin" {` 这类内联比较
+			if strings.Contains(line, `:= c.Query(`) && strings.Contains(line, `==`) {
+				t.Errorf("%s:%d 内联比较字符串枚举：%s（请改用 parseEnumQuery）",
+					file, i+1, trimmed)
+			}
+		}
+	}
+}
+
 func mustGlobHandlers(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob("*.go")
