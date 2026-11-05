@@ -13,6 +13,7 @@ import (
 	"Logos/internal/service/ai/process/service"
 	"Logos/pkg/jwt"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	"Logos/pkg/uploadguard"
 )
 
@@ -137,15 +138,9 @@ func (h *ProcessHandler) ProcessURL(c *gin.Context) {
 }
 
 func (h *ProcessHandler) ListDocuments(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	statusStr := c.Query("status")
-
-	var status *int
-	if statusStr != "" {
-		if s, err := strconv.Atoi(statusStr); err == nil {
-			status = &s
-		}
+	page, pageSize, status, ok := parseDocumentListQuery(c)
+	if !ok {
+		return
 	}
 
 	dtos, total, err := h.processService.ListDocumentDTOs(c.Request.Context(), status, page, pageSize)
@@ -161,6 +156,72 @@ func (h *ProcessHandler) ListDocuments(c *gin.Context) {
 		"page":      page,
 		"page_size": pageSize,
 	})
+}
+
+const defaultDocumentPageSize = 20
+
+// parseDocumentListQuery 解析文档列表的分页与状态过滤。
+//
+// 旧写法是 `page, _ := strconv.Atoi(...)`：`?page=abc` 变成 0，DAO 归一化后
+// 静默返回第一页；`?status=abc` 的错误被 `if err == nil` 吃掉，status 保持
+// nil —— 等于**取消过滤**，调用方以为筛了「失败文档」，实际拿到全部状态。
+// `?status=99` 则完全没有白名单，被原样下传给 SQL。
+//
+// 这里把「非法输入」和「合法但需要归一化」分开：
+//   - 非数字 / 非正数 / 未知状态 → 400，不猜测调用方意图
+//   - page_size 超过上限 → 收敛到上限，并回显**实际生效**的值
+//
+// 回显很重要：旧实现里 DAO 把 page_size=1e9 截断成 100，响应体却仍写着
+// 1e9，前端按响应算出的页数和服务端真实分页对不上。
+func parseDocumentListQuery(c *gin.Context) (page, pageSize int, status *int, ok bool) {
+	page, ok = parsePositiveIntQuery(c, "page", pagination.DefaultPage)
+	if !ok {
+		return 0, 0, nil, false
+	}
+	pageSize, ok = parsePositiveIntQuery(c, "page_size", defaultDocumentPageSize)
+	if !ok {
+		return 0, 0, nil, false
+	}
+	page, pageSize = pagination.NormalizeWithDefault(page, pageSize, defaultDocumentPageSize)
+
+	raw := c.Query("status")
+	if raw == "" {
+		return page, pageSize, nil, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || !validDocumentStatus(parsed) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "status 必须是 1..4 之一（1=待处理 2=处理中 3=已完成 4=失败）",
+		})
+		return 0, 0, nil, false
+	}
+	status = &parsed
+	return page, pageSize, status, true
+}
+
+func parsePositiveIntQuery(c *gin.Context, key string, defaultValue int) (int, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return defaultValue, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": key + " 必须是 >= 1 的整数"})
+		return 0, false
+	}
+	return parsed, true
+}
+
+func validDocumentStatus(status int) bool {
+	switch status {
+	case model.DocumentStatusPending,
+		model.DocumentStatusProcessing,
+		model.DocumentStatusCompleted,
+		model.DocumentStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *ProcessHandler) GetDocument(c *gin.Context) {
