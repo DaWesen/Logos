@@ -188,23 +188,63 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		return
 	}
 
-	// 一次提取的结果也要设上限：模型可能把整段对话拆成几十条，
-	// 全量写入会让记忆表迅速膨胀，反过来挤占注入预算。
-	seenKeys := make(map[string]struct{}, len(result.Memories))
-	saved, failed, deduped, mergedCount := 0, 0, 0, 0
-	processed := 0
+	stats := m.saveExtractedMemories(ctx, userID, botID, result.Memories, messages)
+
+	logger.Info("自动提取记忆完成",
+		logger.StringField("user_id", userID),
+		logger.StringField("bot_id", botID),
+		logger.IntField("candidates", len(result.Memories)),
+		logger.IntField("saved", stats.Saved),
+		logger.IntField("failed", stats.Failed),
+		logger.IntField("deduped", stats.Deduped),
+		logger.IntField("merged_similar", stats.Merged))
+	if stats.Failed > 0 {
+		// 旧实现 `_ =` 吞掉写入错误，日志照样报「完成 N 条」，
+		// 结果双方都以为存进去了，下次提取又生成一遍。
+		logger.Warn("部分记忆未能写入",
+			logger.StringField("user_id", userID),
+			logger.IntField("failed", stats.Failed))
+	}
+}
+
+// memorySaveStats 记录一次提取的落库结果，便于日志与单测断言。
+type memorySaveStats struct {
+	Processed int
+	Saved     int
+	Failed    int
+	Deduped   int
+	Merged    int
+}
+
+// saveExtractedMemories 把模型抽出的候选记忆落库。
+//
+// 旧实现有两处「查询错误当成功」：
+//   - `GetUserMemoryByKey` 的错误被 `err == nil &&` 吞掉，查询失败会
+//     落到「新建」分支，把已存在的记忆再插一条；
+//   - 相似记忆快照 `known, _ =` 同样丢弃错误，后续所有条目都失去合并机会。
+//
+// 现在查询失败按单条失败处理：既不去新建（避免重复），也不静默继续。
+func (m *MemoryManager) saveExtractedMemories(
+	ctx context.Context,
+	userID, botID string,
+	candidates []ExtractedMemory,
+	messages []*botmodel.Message,
+) memorySaveStats {
+	stats := memorySaveStats{}
+	seenKeys := make(map[string]struct{}, len(candidates))
 	// 相似度合并需要已有记忆快照；只在首次未命中时才加载，避免每条都查一次库。
 	var known []*botmodel.UserMemory
 	knownLoaded := false
-	for _, mem := range result.Memories {
-		if processed >= maxMemoriesPerExtraction {
+
+	for _, mem := range candidates {
+		if stats.Processed >= maxMemoriesPerExtraction {
 			break
 		}
 		if !prepareExtractedMemory(&mem, seenKeys) {
-			deduped++
+			stats.Deduped++
 			continue
 		}
-		processed++
+		stats.Processed++
 		// 归一化：模型没好好打分按"不知道"(0.5)处理，越界收敛
 		mem.Confidence = normalizeConfidence(mem.Confidence)
 
@@ -219,18 +259,26 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		}
 
 		existing, err := m.repo.GetUserMemoryByKey(ctx, userID, botID, mem.Key)
-		if err == nil && existing != nil {
+		if err != nil {
+			stats.Failed++
+			logger.Warn("查询已有记忆失败，跳过该条以免重复写入",
+				logger.StringField("key", mem.Key),
+				logger.ErrorField(err))
+			continue
+		}
+		if existing != nil {
 			merged, relation := ApplyMemoryMerge(existing, mem.Value, mem.Confidence, evidence)
-			if relation != RelationUserOverride {
-				merged.Category = mem.Category
-				if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
-					failed++
-					logger.Warn("合并记忆写入失败",
-						logger.StringField("key", mem.Key),
-						logger.ErrorField(setErr))
-				} else {
-					saved++
-				}
+			if relation == RelationUserOverride {
+				continue
+			}
+			merged.Category = mem.Category
+			if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
+				stats.Failed++
+				logger.Warn("合并记忆写入失败",
+					logger.StringField("key", mem.Key),
+					logger.ErrorField(setErr))
+			} else {
+				stats.Saved++
 			}
 			continue
 		}
@@ -238,23 +286,34 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 		// 精确键未命中时，再看是否有「措辞几乎一致」的已有记忆：
 		// 归一化只能消格式差异，同义措辞仍会各存一条，最后互相挤占注入预算。
 		if !knownLoaded {
-			known, _ = m.repo.GetUserMemoriesByUser(ctx, userID, botID)
+			snapshot, snapErr := m.repo.GetUserMemoriesByUser(ctx, userID, botID)
+			if snapErr != nil {
+				// 拿不到快照就不知道有没有近似条目：宁可这条稍后重试，
+				// 也不要在不确定的情况下插一条新的重复记忆。
+				stats.Failed++
+				logger.Warn("加载已有记忆快照失败，跳过相似合并",
+					logger.StringField("key", mem.Key),
+					logger.ErrorField(snapErr))
+				continue
+			}
+			known = snapshot
 			knownLoaded = true
 		}
 		if idx := findSimilarMemoryIndex(known, mem.Key, mem.Category); idx >= 0 {
 			merged, relation := ApplyMemoryMerge(known[idx], mem.Value, mem.Confidence, evidence)
-			if relation != RelationUserOverride {
-				merged.Category = mem.Category
-				if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
-					failed++
-					logger.Warn("相似记忆合并失败",
-						logger.StringField("key", mem.Key),
-						logger.StringField("existing_key", known[idx].Key),
-						logger.ErrorField(setErr))
-				} else {
-					known[idx] = merged
-					mergedCount++
-				}
+			if relation == RelationUserOverride {
+				continue
+			}
+			merged.Category = mem.Category
+			if setErr := m.repo.SetUserMemory(ctx, merged); setErr != nil {
+				stats.Failed++
+				logger.Warn("相似记忆合并失败",
+					logger.StringField("key", mem.Key),
+					logger.StringField("existing_key", known[idx].Key),
+					logger.ErrorField(setErr))
+			} else {
+				known[idx] = merged
+				stats.Merged++
 			}
 			continue
 		}
@@ -270,34 +329,18 @@ func (m *MemoryManager) doExtractAndSave(userID, botID string, messages []*botmo
 			Evidence:   botmodel.StringSlice(evidence),
 		}
 		if setErr := m.repo.SetUserMemory(ctx, newMem); setErr != nil {
-			failed++
+			stats.Failed++
 			logger.Warn("新记忆写入失败",
 				logger.StringField("key", mem.Key),
 				logger.ErrorField(setErr))
 		} else {
-			saved++
-			if knownLoaded {
-				// 保证同批次后续条目能看到这条新记忆
-				known = append(known, newMem)
-			}
+			stats.Saved++
+			// 保证同批次后续条目能看到这条新记忆
+			known = append(known, newMem)
 		}
 	}
 
-	logger.Info("自动提取记忆完成",
-		logger.StringField("user_id", userID),
-		logger.StringField("bot_id", botID),
-		logger.IntField("candidates", len(result.Memories)),
-		logger.IntField("saved", saved),
-		logger.IntField("failed", failed),
-		logger.IntField("deduped", deduped),
-		logger.IntField("merged_similar", mergedCount))
-	if failed > 0 {
-		// 旧实现 `_ =` 吞掉写入错误，日志照样报「完成 N 条」，
-		// 结果双方都以为存进去了，下次提取又生成一遍。
-		logger.Warn("部分记忆未能写入",
-			logger.StringField("user_id", userID),
-			logger.IntField("failed", failed))
-	}
+	return stats
 }
 
 // maxMemoriesPerExtraction 单次提取最多写入的记忆条数。
