@@ -112,6 +112,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **消费循环生命周期**（`pkg/mq` + `ai/collection` + `ai/extraction` + `ai/knowledge`）：`Subscribe` 拿到已取消 ctx 时不拉取任何消息并关闭 reader；extraction `handleCollectionEvent` 建任务时透传 `msg.Context`（用 ctx value 断言），直接调用时回落 Background；三个服务入口统一用 SIGINT/SIGTERM 派生的 ctx 启动消费者
 - **Chat 消费启动失败**（`messaging/chat`）：`eventBus` 为 nil 时 `StartEventConsumer` 返回启动错误而不是在 goroutine 里 panic；订阅错误同步上抛给入口，不得只写日志后返回 nil 伪装成就绪
 - **消息消费启动失败**（`messaging/message`）：把 `newMessageConsumer` 替换为返回零值 `Consumer` 的桩后，`StartKafkaConsumer` 必须返回错误，且错误同时包含失败的 topic 与底层原因 `consumer not initialized`；不允许只记日志就返回 nil，否则三个 topic 都可能在无消费者状态下启动成功
+- **离线推送启动失败**（`messaging/offline`）：`eventBus` 为 nil 时 `startConsumer` 必须返回 `event bus not initialized` 且不发起订阅，初始化路径不得返回半成品实例；订阅函数返回错误时必须以 `subscribe notifications: %w` 上抛并携带底层原因；离线推送必须使用独立 consumer group，不能复用 gateway 的默认组。**边界**：推送令牌目前仍是 gateway 进程内的内存表，chat 进程即使完成初始化也读不到另一进程注册的 token，跨进程令牌共享是后续独立改造
 - **实体缓存编码边界**（`ai/knowledge`）：注入 `marshalCachedEntity` 返回错误时 `cacheEntity` 不得调用 `Set`，且必须删除已有缓存，避免更新后继续返回旧实体；缓存内容损坏时 `GetEntity` 按未命中回源一次，并用回源结果覆盖坏值
 - **推荐负缓存**（`ai/recommend`）：空结果连续请求只回源 1 次，且写入 TTL 不超过 2 分钟（正常结果是 30 分钟）；向量检索失败导致的空列表不写缓存，第二次请求仍会回源且 `Set` 调用数为 0
 - **推荐缓存读失败边界**（`ai/recommend`）：`Get` 返回错误时推荐仍回源成功并写回新缓存，不是直接失败；缓存内容为非法 JSON 时按未命中回源，删除脏 key 恰好一次，并用回源结果重写；两种降级都不得只表现为静默 miss
