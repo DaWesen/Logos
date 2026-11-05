@@ -114,6 +114,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **消息消费启动失败**（`messaging/message`）：把 `newMessageConsumer` 替换为返回零值 `Consumer` 的桩后，`StartKafkaConsumer` 必须返回错误，且错误同时包含失败的 topic 与底层原因 `consumer not initialized`；不允许只记日志就返回 nil，否则三个 topic 都可能在无消费者状态下启动成功
 - **实体缓存编码边界**（`ai/knowledge`）：注入 `marshalCachedEntity` 返回错误时 `cacheEntity` 不得调用 `Set`，且必须删除已有缓存，避免更新后继续返回旧实体；缓存内容损坏时 `GetEntity` 按未命中回源一次，并用回源结果覆盖坏值
 - **推荐负缓存**（`ai/recommend`）：空结果连续请求只回源 1 次，且写入 TTL 不超过 2 分钟（正常结果是 30 分钟）；向量检索失败导致的空列表不写缓存，第二次请求仍会回源且 `Set` 调用数为 0
+- **推荐缓存读失败边界**（`ai/recommend`）：`Get` 返回错误时推荐仍回源成功并写回新缓存，不是直接失败；缓存内容为非法 JSON 时按未命中回源，删除脏 key 恰好一次，并用回源结果重写；两种降级都不得只表现为静默 miss
 - **推荐并行化边界**（`ai/recommend`）：向量检索与知识图谱检索同时进行，慢的一路不会串行阻塞另一路；标题改写并发数不超过 4，`-race` 下所有标题都被正确回填；已有真实标题不会被模型覆盖；两路检索其中一路失败时另一路结果照常合并，不互相取消；`chatGenerator` 为 nil 时不发起任何模型调用
 - **反馈元信息查询**（`ai/recommend`）：反馈只按主键查询 1 次，不得调用推荐列表（`calls == 0`）；查询成功时落库真实 `type`/`title`；查询失败或条目不存在时仍保存反馈，`type=unknown`、`title=itemID`；数据库字段为空时不覆盖降级值；`SaveHistory` 失败向上返回错误
 - **向量集合读取边界**（`ai/vector/dao`）：数据库故障 + 指定 `userID` 时 `ListCollections` 必须报错且不返回任何结果（禁止回退到无归属的 Milvus 全量列表）；数据库故障且 Milvus 未连接、或两套存储都未初始化时同样报错，不能返回空切片；`row_count` 缺失、空 map、`"12abc"` 后缀垃圾、负数都让 `parseCollectionSize` 返回错误，正常值与带空白值可解析；`Search` / `TextSearch` 在 Milvus 未连接时返回「Milvus未连接」错误而不是空结果
