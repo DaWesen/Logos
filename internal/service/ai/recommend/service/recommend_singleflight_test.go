@@ -142,6 +142,12 @@ type fakeRecommendRepo struct {
 	maxInFlight int32
 	delay       time.Duration
 	items       []*model.RecommendationItem
+
+	itemByID       *model.RecommendationItem
+	itemByIDErr    error
+	byIDCalls      int32
+	savedHistory   []*model.RecommendationHistory
+	saveHistoryErr error
 }
 
 func (f *fakeRecommendRepo) GetRecommendations(ctx context.Context, userID int64, recommendType string, limit int) ([]*model.RecommendationItem, int64, error) {
@@ -162,6 +168,16 @@ func (f *fakeRecommendRepo) GetRelatedRecommendations(ctx context.Context, entit
 	atomic.AddInt32(&f.calls, 1)
 	time.Sleep(f.delay)
 	return f.items, int64(len(f.items)), nil
+}
+
+func (f *fakeRecommendRepo) GetRecommendationByID(ctx context.Context, itemID string) (*model.RecommendationItem, error) {
+	atomic.AddInt32(&f.byIDCalls, 1)
+	return f.itemByID, f.itemByIDErr
+}
+
+func (f *fakeRecommendRepo) SaveHistory(ctx context.Context, history *model.RecommendationHistory) error {
+	f.savedHistory = append(f.savedHistory, history)
+	return f.saveHistoryErr
 }
 
 func TestGetRecommendations_MergesConcurrentCacheMiss(t *testing.T) {

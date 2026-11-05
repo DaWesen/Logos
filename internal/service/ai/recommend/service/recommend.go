@@ -503,14 +503,25 @@ func (s *recommendServiceImpl) SubmitFeedback(ctx context.Context, itemID string
 
 	itemType := "unknown"
 	title := itemID
-	dbItems, _, err := s.recommendRepo.GetRecommendations(ctx, userID, "", 100)
-	if err == nil {
-		for _, item := range dbItems {
-			if item.ID == itemID {
-				itemType = item.Type
-				title = item.Title
-				break
-			}
+	item, err := s.recommendRepo.GetRecommendationByID(ctx, itemID)
+	switch {
+	case err != nil:
+		// 反馈本身是用户行为数据，不能因为补全元信息失败就丢掉；
+		// 但必须留下日志，否则 item_type 长期堆积 unknown 也无人察觉。
+		logger.Warn("查询推荐项失败，反馈以降级元信息落库",
+			logger.StringField("item_id", itemID),
+			logger.Int64Field("user_id", userID),
+			logger.ErrorField(err))
+	case item == nil:
+		logger.Warn("反馈对应的推荐项不存在，反馈以降级元信息落库",
+			logger.StringField("item_id", itemID),
+			logger.Int64Field("user_id", userID))
+	default:
+		if item.Type != "" {
+			itemType = item.Type
+		}
+		if item.Title != "" {
+			title = item.Title
 		}
 	}
 
