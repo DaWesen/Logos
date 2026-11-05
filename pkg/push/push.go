@@ -267,7 +267,13 @@ func (p *FCMProvider) Send(ctx context.Context, msg *PushMessage) (*PushResult, 
 				Error string `json:"error"`
 			} `json:"results"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			// 200 只代表 HTTP 传输成功。响应体读不懂是我们和 FCM 之间的契约出了问题
+			// （代理截断、网关改写、协议升级），不是「供应商拒绝了这条消息」。
+			// 以前这里吞掉解码错误再编一个 "message rejected"，会把排查方向直接带偏。
+			return fcmContractFailure(msg.UserID, resp.StatusCode,
+				"invalid FCM response body", fmt.Errorf("decode FCM response: %w", err))
+		}
 
 		reason := ""
 		if len(body.Results) > 0 {
@@ -277,6 +283,12 @@ func (p *FCMProvider) Send(ctx context.Context, msg *PushMessage) (*PushResult, 
 			return &PushResult{UserID: msg.UserID, Success: true}, nil
 		}
 		if reason == "" {
+			if body.Failure == 0 {
+				// success=0 且 failure=0：既没成功也没失败计数的空壳响应，
+				// 同样不能冒充成 FCM 的拒收理由。
+				return fcmContractFailure(msg.UserID, resp.StatusCode,
+					"empty FCM response", fmt.Errorf("FCM returned 200 without success/failure counters"))
+			}
 			reason = "message rejected"
 		}
 
@@ -300,6 +312,20 @@ func (p *FCMProvider) Send(ctx context.Context, msg *PushMessage) (*PushResult, 
 		Error:      resp.Status,
 		Failure:    failure,
 	}, fmt.Errorf("FCM error: %s", resp.Status)
+}
+
+// fcmContractFailure 描述「我们没能理解 FCM 的响应」，与「FCM 拒绝了消息」严格区分：
+// 前者是自身契约或链路问题，后者才是供应商给出的业务结论。
+// 两者都归为 Unknown，避免把解析失败误判成令牌失效而误删设备。
+func fcmContractFailure(userID string, statusCode int, reason string, cause error) (*PushResult, error) {
+	return &PushResult{
+		UserID:     userID,
+		Success:    false,
+		StatusCode: statusCode,
+		Reason:     reason,
+		Error:      reason,
+		Failure:    PushFailure{Kind: PushFailureUnknown, Reason: reason},
+	}, fmt.Errorf("FCM response contract violation: %s: %w", reason, cause)
 }
 
 type WebPushConfig struct {
