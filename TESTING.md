@@ -133,6 +133,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **批量发送原子性**：一批消息只开一个事务、一次多值 INSERT，并写入等量 outbox 事件；任一条非法时在开启事务前被拒绝且错误定位到「第 N 条」；写库失败整批回滚、不留下任何 outbox 事件；超过 100 条直接拒绝；批量响应逐条回显消息的真实 topic
 - **消费租约与确认语义**：领取 SQL 必须包含 `FOR UPDATE SKIP LOCKED`、过期租约条件与 `UPDATE ... RETURNING`；消费返回前不再额外标记状态；默认 limit 与服务端一致；领取失败必须上抛而不是返回空列表；确认 SQL 同时校验 `status IN (PROCESSED, ACKED)` 与 `claimed_by`；非本消费组/不存在的消息确认返回 `ErrMessageNotClaimed`，handler 映射 404
 - **统计聚合语义**：一条 `GROUP BY topic` 返回全部 topic（不是 1+7 次查询）；空 topic 补零行且总数/待处理/已处理/失败字段齐全；`COALESCE` 保证空表不报错；查询失败必须上抛，不能返回空列表冒充正常
+- **统计跨层类型**：服务层返回 `[]dao.TopicStats`（不再是 `[]map[string]interface{}`），handler 直接读字段而不做裸类型断言；未知 topic 跳过；下游查询失败返回 `BaseResp.StatusCode=500` 且 `Stats` 为空，不能用一串 0 冒充「一切正常」
 - **状态常量一致性**：Kafka 消费成功后写入 `PROCESSED`（统计认识的集合），不是历史上的 `PROCESSED_FROM_KAFKA`；创建/消费/确认/清理/统计共用 model 中的状态常量，新增状态必须同时更新统计口径
 - **网关路径参数边界**：`topic` 路径参数只接受 `0..6`；`abc`、空串、负数、`7`、小数、超长整数全部返回 400；非法请求不得调用下游 `DeleteTopic`（否则会被当成 `DATA_COLLECTION` 删除）；合法值必须原样透传枚举，不被中间层改写
 - **网关状态码映射**：下游 `BaseResp.StatusCode=0` 映射为 HTTP 200，`1` 映射为 500，`100..599` 直通，其余值（含负数、`600`）收敛到 500；裸 `int32 code` 的 bot/billing/MCP/moderation/summary 接口走同一张映射表，`respondProtoCode` 保证响应体 `code` 与状态行一致；handler 目录的静态守卫会扫描源码，出现 `c.JSON(int(...))`、`toHTTPCode(`、`statusCode = int(resp.Code)` 等绕过写法即失败
@@ -155,6 +156,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **抽取限流降级**：缓存构造返回 nil 时放行且不 panic（单测注入内存 cache，不再连接真实 Redis）；`IncrBy` 失败放行并记 Warn；`Expire` 失败不影响本次判定
 - **抽取结果字段转换**：字段缺失返回零值且不报错；字段类型不符时错误信息带上字段名；位置字段为负数或超出 int32 范围时报错；`json.Unmarshal` 失败必须上抛，不能返回 200 + 空列表；批量列表中第 N 条坏数据时清空已拼好的结果并在错误里带上序号；缺省 `id` 仍按 `text_type` 派生
 - **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；`GetUserMemoryByKey` 报错时 `SetUserMemoryWithCategory` 返回 `ErrInternalServer`，不得走新建分支；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
+- **清空记忆是原子操作**：`DeleteAllUserMemories` 用认证身份发起**一条**批量 `DELETE`（断言 `bulkDeleteCalls == ["alice|bot-owner"]`），不得退化成逐条 `DeleteUserMemoryByID`（回归「逐条删 + `_ =` 吞错 → 部分失败仍返回成功」）；DAO 报错时返回 `ErrInternalServer`；未认证请求不触发任何删除
 - **ffmpeg 解析**：`00:01:23.45` → 83.45 秒；`02:15:30.50` 正确进位；`Duration: N/A`、缺 `Duration` 行、`abc:def:ghi`、`1.2.3`、`99` 分钟、`60` 秒、负数秒、段数不足全部报错；`1920x1080 [SAR 1:1 DAR 16:9]` 与 `1080x1920` 正确识别；`(avc1 / 0x31637661)` 不被当成分辨率；缺 `Video:` 行、`0x0`、`1920x1080i` 均报错；`ffmpeg` 不存在时 `GetVideoInfo` 返回错误且不返回半截 map
 - **视频解析降级**：元信息探测失败时 `metadata` 不含 `video_info` 且抽帧回落到默认 1s 间隔；抽帧失败时仍保留 ASR 文本；单帧 VLM 失败只跳过该帧、不产生空帧段落；全部帧描述失败时不渲染「视频帧详情」；`duration=60` 时 `FrameInterval=10`、`MaxFrames=5`；`duration=3` 时间隔被夹到 1s；调用方显式传入的 `ExtractOptions` 优先且不被就地修改
 
