@@ -154,7 +154,11 @@ func (s *moderationServiceImpl) GetModerationRecords(ctx context.Context, result
 func (s *moderationServiceImpl) doTranslate(ctx context.Context, content string, sourceLang string, targetLang string, cfg *ModelConfig) (string, error) {
 	chatModel, err := s.getChatModel(cfg)
 	if err != nil {
-		return "[翻译服务暂不可用]", nil
+		// 不能返回占位文案当译文：调用方看到的是「翻译成功」，
+		// 占位符会被展示、落库、甚至当作原文缓存下来。
+		// 翻译与审核一样采用失败关闭：宁可让调用方拿到错误。
+		logger.Error("翻译模型不可用，按失败关闭策略返回错误", logger.ErrorField(err))
+		return "", fmt.Errorf("翻译服务不可用: %w", err)
 	}
 
 	prompt := fmt.Sprintf(`请将以下%s文本翻译为%s，只输出翻译结果，不要任何解释或前缀。

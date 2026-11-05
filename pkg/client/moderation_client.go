@@ -71,6 +71,11 @@ func (c *ModerationClient) Translate(ctx context.Context, content, sourceLang, t
 	if err != nil {
 		return "", err
 	}
+	// 与 ModerateContent 同一条规则：Code != 0 表示翻译侧没有产出结果
+	// （模型不可用/调用失败），必须向上抛错，而不是把空串当成译文的成功。
+	if resp.GetCode() != 0 {
+		return "", fmt.Errorf("翻译失败(code=%d): %s", resp.GetCode(), resp.GetMessage())
+	}
 	return resp.GetTranslatedContent(), nil
 }
 
