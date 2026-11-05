@@ -49,6 +49,10 @@ type RemoteAPIVLM struct {
 
 // NewRemoteAPIVLM creates a remote-API backed VLM instance.
 func NewRemoteAPIVLM(config *Config) (*RemoteAPIVLM, error) {
+	if config == nil {
+		return nil, fmt.Errorf("VLM 配置不能为空")
+	}
+
 	baseURL := config.BaseURL
 	if baseURL == "" {
 		if config.APIKey != "" {
@@ -155,6 +159,14 @@ func (v *RemoteAPIVLM) Predict(ctx context.Context, imgData []byte, prompt strin
 				}
 			}
 		}
+	default:
+		// content 是模型返回的核心字段，类型不认识时若继续走「成功」路径，
+		// 上层只会拿到一个空字符串，和「模型什么都没说」无法区分。
+		return "", fmt.Errorf("响应中 content 字段类型不支持: %T", msgContent)
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("响应中没有可用的文本内容")
 	}
 
 	logger.Info("VLM 响应接收成功", logger.IntField("contentLength", len(content)))

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"Logos/internal/models/asr"
+	"Logos/pkg/logger"
 )
 
 type AudioParser struct {
@@ -34,7 +36,11 @@ func (p *AudioParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	}
 
 	transcript, transErr := p.asrModel.Transcribe(ctx, audioData, filename)
-	if transErr == nil && transcript != "" {
+	if transErr != nil {
+		logger.Warn("音频转写失败，降级为文件占位描述",
+			logger.StringField("file_name", filename),
+			logger.ErrorField(transErr))
+	} else if strings.TrimSpace(transcript) != "" {
 		metadata["transcript"] = transcript
 		return transcript, metadata, nil
 	}
