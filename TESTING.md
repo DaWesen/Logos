@@ -186,6 +186,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **抽取任务状态与结果落库**：`RUNNING` 落库失败时立即返回且不执行抽取；不支持的任务类型返回 `Status=4` 的结果并落库、任务状态更新为 4、`EndedAt` 非空；失败结果落库失败时错误同时包含原始抽取失败原因与落库原因（`errors.Join`）；成功路径事务失败返回错误且不返回可查询结果；成功路径写 2 条 outbox（`knowledge_extraction` 与 `vector_processing`）
 - **采集事件消费契约**：事件用 `data_source_id` 建任务（断言 `DataID == "ds-42"`、`DataType == "data_source"`），不是旧代码读的 `data_id`；缺少 `data_source_id` 时返回错误且不建任务；`status=FAILED` 的事件跳过且不建任务
 - **抽取限流降级**：缓存构造返回 nil 时放行且不 panic（单测注入内存 cache，不再连接真实 Redis）；`IncrBy` 失败放行并记 Warn；`Expire` 失败不影响本次判定
+- **突发限流写入失败**（`gateway/middleware`）：`Expire` 失败时删除计数键并记 Error，避免无 TTL 计数器造成永久封禁；封禁键 `Set` 失败时当前请求仍拒绝、后续请求因计数超阈值继续拒绝；`blocked` 查询失败时继续计数并放行首次请求，不误伤全部流量
 - **抽取结果字段转换**：字段缺失返回零值且不报错；字段类型不符时错误信息带上字段名；位置字段为负数或超出 int32 范围时报错；`json.Unmarshal` 失败必须上抛，不能返回 200 + 空列表；批量列表中第 N 条坏数据时清空已拼好的结果并在错误里带上序号；缺省 `id` 仍按 `text_type` 派生
 - **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；`GetUserMemoryByKey` 报错时 `SetUserMemoryWithCategory` 返回 `ErrInternalServer`，不得走新建分支；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
 - **清空记忆是原子操作**：`DeleteAllUserMemories` 用认证身份发起**一条**批量 `DELETE`（断言 `bulkDeleteCalls == ["alice|bot-owner"]`），不得退化成逐条 `DeleteUserMemoryByID`（回归「逐条删 + `_ =` 吞错 → 部分失败仍返回成功」）；DAO 报错时返回 `ErrInternalServer`；未认证请求不触发任何删除
