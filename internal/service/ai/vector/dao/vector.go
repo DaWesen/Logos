@@ -64,6 +64,11 @@ func (r *vectorRepository) milvusUnavailableError(op string) error {
 	return fmt.Errorf("Milvus未连接，无法执行操作: %s", op)
 }
 
+// collectionMetadataRollbackTimeout 是创建集合失败后补偿删除 Milvus 集合的
+// 独立预算。请求 ctx 可能已经取消（写库失败常常正是因为超时），补偿必须
+// 用 WithoutCancel 派生，同时保留一个上限，避免回滚本身把请求挂住。
+const collectionMetadataRollbackTimeout = 10 * time.Second
+
 func milvusIndexType(indexType model.IndexType) string {
 	switch indexType {
 	case model.IVF_FLAT:
@@ -150,7 +155,24 @@ func (r *vectorRepository) CreateCollection(ctx context.Context, collection *mod
 	if r.db != nil {
 		rec := collectionToRecord(collection)
 		if createErr := r.db.WithContext(ctx).Create(rec).Error; createErr != nil {
-			logger.Warn("保存集合元信息到数据库失败", logger.ErrorField(createErr))
+			// 元数据写不进去，Milvus 里就留下一个没有归属、列表也查不到的
+			// 孤儿集合：用户重试会撞上同名集合，管理员也无从定位。
+			// 刚创建的集合必然是空的，补偿删除比留下不可见状态更安全。
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), collectionMetadataRollbackTimeout)
+			defer cancel()
+			rollbackErr := r.milvus.DropCollection(rollbackCtx, collectionName)
+			if rollbackErr != nil {
+				logger.Error("保存集合元信息失败，回滚 Milvus 集合也失败",
+					logger.StringField("id", collection.ID),
+					logger.ErrorField(createErr),
+					logger.ErrorField(rollbackErr))
+				return fmt.Errorf("保存集合元信息失败: %w（回滚 Milvus 集合失败: %v，需人工清理 %s）",
+					createErr, rollbackErr, collectionName)
+			}
+			logger.Warn("保存集合元信息失败，已回滚 Milvus 集合",
+				logger.StringField("id", collection.ID),
+				logger.ErrorField(createErr))
+			return fmt.Errorf("保存集合元信息失败: %w", createErr)
 		}
 	}
 
@@ -302,7 +324,18 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string, user
 	// 校验所有权
 	if userID != "" && r.db != nil {
 		var count int64
-		r.db.WithContext(ctx).Model(&model.VectorCollectionRecord{}).Where("id = ? AND user_id = ?", id, userID).Count(&count)
+		if countErr := r.db.WithContext(ctx).
+			Model(&model.VectorCollectionRecord{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Count(&count).Error; countErr != nil {
+			// 计数失败时 count 恒为 0，旧实现会把它报成「不存在或无权操作」：
+			// 用户以为集合没了，运维也看不到数据库故障。归属校验失败必须
+			// 单独成一种事实，且仍然拒绝删除（fail closed）。
+			logger.Error("校验集合归属失败",
+				logger.StringField("id", id),
+				logger.ErrorField(countErr))
+			return fmt.Errorf("校验集合归属失败: %w", countErr)
+		}
 		if count == 0 {
 			return fmt.Errorf("集合不存在或无权操作")
 		}
@@ -312,12 +345,23 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string, user
 		logger.StringField("id", id))
 
 	collectionName := "vector_" + id
-	err := r.milvus.DropCollection(ctx, collectionName)
+
+	// 先探测再删除，让「删除」可重试：如果上一次已经删掉 Milvus 集合、
+	// 只在清理元数据时失败，重试不能因为集合不存在而永远卡住。
+	has, err := r.milvus.HasCollection(ctx, collectionName)
 	if err != nil {
-		logger.Error("删除Milvus集合失败",
+		logger.Error("检查Milvus集合是否存在失败",
 			logger.StringField("id", id),
 			logger.ErrorField(err))
 		return err
+	}
+	if has {
+		if dropErr := r.milvus.DropCollection(ctx, collectionName); dropErr != nil {
+			logger.Error("删除Milvus集合失败",
+				logger.StringField("id", id),
+				logger.ErrorField(dropErr))
+			return dropErr
+		}
 	}
 
 	if r.db != nil {
@@ -326,7 +370,10 @@ func (r *vectorRepository) DeleteCollection(ctx context.Context, id string, user
 			delQuery = delQuery.Where("user_id = ?", userID)
 		}
 		if delErr := delQuery.Delete(&model.VectorCollectionRecord{}).Error; delErr != nil {
-			logger.Warn("删除集合数据库记录失败", logger.StringField("id", id), logger.ErrorField(delErr))
+			// 数据已经删了、记录还在：读接口会返回一个指向空集合的幽灵配置。
+			// 上抛错误让调用方重试，重试会因为 has=false 直接走到这里补删记录。
+			logger.Error("删除集合数据库记录失败", logger.StringField("id", id), logger.ErrorField(delErr))
+			return fmt.Errorf("Milvus 集合已删除，但清理集合元信息失败（可重试）: %w", delErr)
 		}
 	}
 
@@ -346,16 +393,7 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string, userID 
 		lookupErr := query.First(&rec).Error
 		if lookupErr == nil {
 			coll := recordToModel(&rec)
-			collectionName := "vector_" + id
-			if r.milvus != nil {
-				if stats, statErr := r.milvus.GetCollectionStats(ctx, collectionName); statErr == nil {
-					if rowCount, ok := stats["row_count"]; ok {
-						if s, err := parseStatInt(rowCount); err == nil {
-							coll.Size = s
-						}
-					}
-				}
-			}
+			coll.Size = r.collectionSize(ctx, id)
 			return coll, nil
 		}
 		// 数据库故障不能降级成「集合不存在」：调用方会据此提示用户
@@ -387,13 +425,7 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string, userID 
 		return nil, nil
 	}
 	collection := &model.VectorCollection{ID: id, Name: collectionName}
-	if stats, statErr := r.milvus.GetCollectionStats(ctx, collectionName); statErr == nil {
-		if rowCount, ok := stats["row_count"]; ok {
-			if s, err := parseStatInt(rowCount); err == nil {
-				collection.Size = s
-			}
-		}
-	}
+	collection.Size = r.collectionSize(ctx, id)
 	return collection, nil
 }
 
@@ -409,27 +441,29 @@ func (r *vectorRepository) ListCollections(ctx context.Context, userID string) (
 			var collections []*model.VectorCollection
 			for i := range records {
 				coll := recordToModel(&records[i])
-				collectionName := "vector_" + coll.ID
-				if r.milvus != nil {
-					if stats, statErr := r.milvus.GetCollectionStats(ctx, collectionName); statErr == nil {
-						if rowCount, ok := stats["row_count"]; ok {
-							if s, err := parseStatInt(rowCount); err == nil {
-								coll.Size = s
-							}
-						}
-					}
-				}
+				coll.Size = r.collectionSize(ctx, coll.ID)
 				collections = append(collections, coll)
 			}
 			logger.Info("列出向量集合完成", logger.IntField("count", len(collections)), logger.StringField("user_id", userID))
 			return collections, nil
 		}
-		// DB查询出错，记录日志后继续尝试Milvus
+
+		// 带归属的列表绝不能回退到 Milvus：探测结果只有 ID 和名称，没有
+		// user_id。数据库故障时回退，等于把全库集合返回给任意登录用户。
+		if userID != "" {
+			logger.Error("查询集合列表失败，拒绝回退到无归属信息的 Milvus 探测",
+				logger.StringField("user_id", userID),
+				logger.ErrorField(err))
+			return nil, fmt.Errorf("查询集合列表失败: %w", err)
+		}
+
+		// 内部调用（userID 为空）才允许回退，回退结果仅用于运维视角。
 		logger.Warn("数据库查询集合列表失败，尝试Milvus回退", logger.ErrorField(err))
 	}
 	if r.milvus == nil {
-		logger.Warn("Milvus未连接，返回空集合列表")
-		return []*model.VectorCollection{}, nil
+		// 两套存储都读不到时，空列表会被调用方当成「该用户没有任何集合」，
+		// 与「服务不可用」混为一谈。与 TextSearch 保持一致：报错，不返回空。
+		return nil, r.milvusUnavailableError("ListCollections")
 	}
 	logger.Info("列出所有向量集合(Milvus回退)")
 	collectionNames, err := r.milvus.ListCollections(ctx)
@@ -444,17 +478,58 @@ func (r *vectorRepository) ListCollections(ctx context.Context, userID string) (
 		}
 		id := strings.TrimPrefix(name, "vector_")
 		collection := &model.VectorCollection{ID: id, Name: name}
-		if stats, statErr := r.milvus.GetCollectionStats(ctx, name); statErr == nil {
-			if rowCount, ok := stats["row_count"]; ok {
-				if s, err := parseStatInt(rowCount); err == nil {
-					collection.Size = s
-				}
-			}
-		}
+		collection.Size = r.collectionSize(ctx, id)
 		collections = append(collections, collection)
 	}
 	logger.Info("列出向量集合完成", logger.IntField("count", len(collections)))
 	return collections, nil
+}
+
+// collectionSize 读取集合行数，仅用于展示。
+//
+// 统计失败不影响集合本身可用，所以不向上抛错；但必须留下带集合名的日志。
+// 旧实现把「stats 调用失败」「结果缺 row_count」「row_count 解析失败」三层
+// 全部写成 `if err == nil` 静默跳过，前端只能看到「0 条向量」，无法区分
+// 「集合真的是空的」和「统计根本读不出来」。
+func (r *vectorRepository) collectionSize(ctx context.Context, collectionID string) int64 {
+	if r.milvus == nil {
+		return 0
+	}
+
+	collectionName := "vector_" + collectionID
+	stats, err := r.milvus.GetCollectionStats(ctx, collectionName)
+	if err != nil {
+		logger.Warn("读取集合统计失败，按 0 条展示",
+			logger.StringField("collection", collectionName),
+			logger.ErrorField(err))
+		return 0
+	}
+
+	size, err := parseCollectionSize(stats)
+	if err != nil {
+		logger.Warn("解析集合统计失败，按 0 条展示",
+			logger.StringField("collection", collectionName),
+			logger.ErrorField(err))
+		return 0
+	}
+	return size
+}
+
+// parseCollectionSize 从统计结果里取出 row_count。
+// 缺字段与格式错误都要报出来，不能把「没有统计」当成「0 条」。
+func parseCollectionSize(stats map[string]string) (int64, error) {
+	raw, ok := stats["row_count"]
+	if !ok {
+		return 0, errors.New("统计结果缺少 row_count 字段")
+	}
+	size, err := parseStatInt(raw)
+	if err != nil {
+		return 0, fmt.Errorf("解析 row_count=%q 失败: %w", raw, err)
+	}
+	if size < 0 {
+		return 0, fmt.Errorf("row_count 不能为负数: %d", size)
+	}
+	return size, nil
 }
 
 func parseStatInt(val interface{}) (int64, error) {
@@ -466,9 +541,14 @@ func parseStatInt(val interface{}) (int64, error) {
 	case float64:
 		return int64(v), nil
 	case string:
-		var i int64
-		_, err := fmt.Sscanf(v, "%d", &i)
-		return i, err
+		// 不能用 fmt.Sscanf：它会接受 "12abc" 这样的前缀并静默返回 12，
+		// 把「数据格式不对」变成「恰好看起来合理的数字」。ParseInt 要求
+		// 整个字符串都是数字，非法输入会明确报错。
+		i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return i, nil
 	default:
 		return 0, fmt.Errorf("unexpected type %T", val)
 	}
@@ -709,8 +789,10 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 
 func (r *vectorRepository) Search(ctx context.Context, collectionID string, queryVector []float64, topK int, threshold float64, filter map[string]string) ([]*model.SearchResultItem, error) {
 	if r.milvus == nil {
-		logger.Warn("Milvus未连接，搜索返回空结果")
-		return []*model.SearchResultItem{}, nil
+		// 空结果是「确实没搜到」这一业务事实，不能拿来表示「向量库不可用」。
+		// 调用方（RAG、推荐）会把空结果当成「没有资料」继续降级，
+		// 真正的配置/依赖故障就此消失。
+		return nil, r.milvusUnavailableError("Search")
 	}
 	logger.Info("向量搜索",
 		logger.StringField("collection_id", collectionID),
@@ -756,8 +838,7 @@ func (r *vectorRepository) Search(ctx context.Context, collectionID string, quer
 func (r *vectorRepository) TextSearch(ctx context.Context, collectionID string, text string, topK int, threshold float64, filter map[string]string) ([]*model.SearchResultItem, error) {
 	startAll := time.Now()
 	if r.milvus == nil {
-		logger.Warn("Milvus未连接，文本搜索返回空结果")
-		return []*model.SearchResultItem{}, nil
+		return nil, r.milvusUnavailableError("TextSearch")
 	}
 	logger.Info("文本搜索",
 		logger.StringField("collection_id", collectionID),

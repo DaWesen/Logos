@@ -439,3 +439,108 @@ func TestSaveCollectionMetadataPersistsParameters(t *testing.T) {
 		}
 	}
 }
+
+// newVectorFailingDBRepository 返回一个「每次查询都失败」的仓库，用来模拟
+// 数据库故障。GORM 不做 DryRun，Find/Count 会真正走 stubConnPool 并拿到错误。
+func newVectorFailingDBRepository(t *testing.T) *vectorRepository {
+	t.Helper()
+
+	db, err := gorm.Open(
+		postgres.New(postgres.Config{Conn: stubConnPool{}}),
+		&gorm.Config{DisableAutomaticPing: true},
+	)
+	if err != nil {
+		t.Fatalf("初始化故障数据库失败: %v", err)
+	}
+	return &vectorRepository{db: db}
+}
+
+func TestListCollectionsRefusesOwnerlessFallback(t *testing.T) {
+	repo := newVectorFailingDBRepository(t)
+
+	collections, err := repo.ListCollections(context.Background(), "alice")
+	if err == nil {
+		t.Fatalf("数据库故障时不能回退成 Milvus 全量列表，实际返回 %d 条", len(collections))
+	}
+	if collections != nil {
+		t.Fatalf("失败时不应返回半截结果: %v", collections)
+	}
+	if !strings.Contains(err.Error(), "查询集合列表失败") {
+		t.Fatalf("错误应说明数据库查询失败，实际: %v", err)
+	}
+}
+
+func TestListCollectionsWithoutStoreReturnsError(t *testing.T) {
+	cases := map[string]*vectorRepository{
+		"数据库故障且 Milvus 未连接": newVectorFailingDBRepository(t),
+		"两套存储都未初始化":         {},
+	}
+
+	for name, repo := range cases {
+		t.Run(name, func(t *testing.T) {
+			collections, err := repo.ListCollections(context.Background(), "")
+			if err == nil {
+				t.Fatalf("读不到集合时应报错而不是返回空列表，实际 %d 条", len(collections))
+			}
+			if collections != nil {
+				t.Fatalf("失败时不应返回半截结果: %v", collections)
+			}
+		})
+	}
+}
+
+func TestParseCollectionSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		stats   map[string]string
+		want    int64
+		wantErr string
+	}{
+		{name: "正常值", stats: map[string]string{"row_count": "42"}, want: 42},
+		{name: "带空白", stats: map[string]string{"row_count": " 7 "}, want: 7},
+		{name: "缺少字段", stats: map[string]string{"other": "1"}, wantErr: "row_count"},
+		{name: "空 map", stats: map[string]string{}, wantErr: "row_count"},
+		{name: "数字后缀垃圾", stats: map[string]string{"row_count": "12abc"}, wantErr: "解析"},
+		{name: "负数", stats: map[string]string{"row_count": "-1"}, wantErr: "负数"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseCollectionSize(tt.stats)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("应返回错误，实际得到 %d", got)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("错误信息应包含 %q，实际: %v", tt.wantErr, err)
+				}
+				if got != 0 {
+					t.Fatalf("解析失败时应返回 0，实际 %d", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("不应失败: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("期望 %d，实际 %d", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestSearchAndTextSearchReportMissingMilvus(t *testing.T) {
+	repo := &vectorRepository{}
+
+	if _, err := repo.Search(context.Background(), "col-1", []float64{0.1}, 5, 0, nil); err == nil {
+		t.Fatal("Milvus 未连接时 Search 必须报错，不能返回空结果")
+	} else if !strings.Contains(err.Error(), "Milvus未连接") {
+		t.Fatalf("错误应说明 Milvus 未连接，实际: %v", err)
+	}
+
+	if _, err := repo.TextSearch(context.Background(), "col-1", "hello", 5, 0, nil); err == nil {
+		t.Fatal("Milvus 未连接时 TextSearch 必须报错，不能返回空结果")
+	} else if !strings.Contains(err.Error(), "Milvus未连接") {
+		t.Fatalf("错误应说明 Milvus 未连接，实际: %v", err)
+	}
+}
