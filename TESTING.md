@@ -102,6 +102,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **快速路径并发**：槽位满时立即返回不阻塞（降级慢路径）；任务完成后槽位释放；异步任务持有事件深拷贝，修改原事件不影响异步侧
 - **快速路径隔离**：后台任务 panic 被 recover 并记录，不退出进程且槽位必定释放
 - **Kafka 跳过语义**：`ErrSkipMessage` 只处理一次并提交 offset，不重试、不进死信；普通错误仍就地重试，达上限后转死信
+- **用户活动事件契约**（`ai/collection/service`）：`user_id`/`action` 齐全时正常处理；`action` 缺失/非字符串/空串、`user_id` 为 `null`/数字/空白、`target_type` 类型错误、生产端只发通用信封（三个契约字段全缺）都返回 `ErrSkipMessage` 且零副作用；整包 JSON 为 `null` 同样跳过；非法 JSON 不跳过，保留重试/死信路径以便留存原始载荷；合法事件的首尾空白会被裁剪
 - **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
 - **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
 - **快速路径补偿**：可恢复失败（panic、Bot 调用失败、空响应、回复完全发不出去）生成 `bot_recovery` 事件；成功与「未绑定 Bot」不补偿；补偿事件换新 ID、撤销 `qq_direct_bot`、保留 QQ 地址与 Bot 提及、不携带接收者；Chat Service 只补跑 Bot，不重复落库/推送；缺少补偿标记的事件安静忽略
