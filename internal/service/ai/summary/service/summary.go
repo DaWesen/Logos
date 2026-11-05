@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"Logos/internal/service/ai/summary/dao"
@@ -62,13 +63,25 @@ type summaryServiceImpl struct {
 	repo        dao.SummaryRepository
 	einoClient  *eino.EinoManager
 	chatService ChatService
+	// newChatModel 是模型构造的唯一入口：生产环境走 buildChatModel，
+	// 测试注入脚本化模型，避免为了写单测去 mock 整个 EinoManager。
+	newChatModel func(cfg *ModelConfig) (einomodel.BaseChatModel, error)
 }
 
 func NewSummaryService(repo dao.SummaryRepository, einoClient *eino.EinoManager, chatService ChatService) SummaryService {
-	return &summaryServiceImpl{repo: repo, einoClient: einoClient, chatService: chatService}
+	s := &summaryServiceImpl{repo: repo, einoClient: einoClient, chatService: chatService}
+	s.newChatModel = s.buildChatModel
+	return s
 }
 
 func (s *summaryServiceImpl) getChatModel(cfg *ModelConfig) (einomodel.BaseChatModel, error) {
+	if s.newChatModel != nil {
+		return s.newChatModel(cfg)
+	}
+	return s.buildChatModel(cfg)
+}
+
+func (s *summaryServiceImpl) buildChatModel(cfg *ModelConfig) (einomodel.BaseChatModel, error) {
 	if cfg != nil && cfg.ApiKey != "" && cfg.Model != "" {
 		baseURL := cfg.BaseUrl
 		if baseURL == "" {
@@ -125,6 +138,44 @@ func (s *summaryServiceImpl) getMessageHistoryWithTimeout(ctx context.Context, c
 	return s.chatService.GetMessageHistory(historyCtx, chatID, limit, nil)
 }
 
+// loadMessageText 统一拉取并格式化最近历史。
+//
+// 这里刻意不做「拉取失败就用聊天 ID 占位」的降级：占位串会让模型生成一份
+// 看起来正常、实际没有任何依据的摘要，而调用方拿到的是 200 成功。
+// 历史为空同样返回错误——没有内容的总结没有业务意义。
+func (s *summaryServiceImpl) loadMessageText(ctx context.Context, chatID string, limit int, requestedIDs []string) (string, error) {
+	if len(requestedIDs) > 0 {
+		// Chat 服务没有提供按 ID 批量取消息的接口，显式记录降级原因，
+		// 避免「传了 message_ids 却总结最近历史」被当成正常行为。
+		logger.Warn("暂不支持按消息 ID 取内容，回退到最近历史",
+			logger.StringField("chat_id", chatID),
+			logger.IntField("requested_id_count", len(requestedIDs)))
+	}
+
+	msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, limit)
+	if err != nil {
+		return "", fmt.Errorf("拉取消息历史失败: %w", err)
+	}
+
+	var builder strings.Builder
+	used := 0
+	for _, msg := range msgs {
+		if msg == nil || strings.TrimSpace(msg.Content) == "" {
+			continue
+		}
+		builder.WriteString(fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content))
+		used++
+	}
+	if used == 0 {
+		return "", fmt.Errorf("聊天 %s 没有可用的消息内容（最近 %d 条为空）", chatID, limit)
+	}
+
+	logger.Info("加载总结上下文完成",
+		logger.StringField("chat_id", chatID),
+		logger.IntField("message_count", used))
+	return builder.String(), nil
+}
+
 func (s *summaryServiceImpl) SummarizeMessages(ctx context.Context, chatID string, chatType string, messageIDs []string, includeTodos bool, includeCandidates bool, msgCount int, cfg *ModelConfig) (*summarymodel.SummaryRecord, []TodoItem, []ReplyCandidate, []string, []string, error) {
 	logger.Info("总结消息", logger.StringField("chat_id", chatID))
 
@@ -133,20 +184,9 @@ func (s *summaryServiceImpl) SummarizeMessages(ctx context.Context, chatID strin
 		limit = msgCount
 	}
 
-	var messagesText string
-	if len(messageIDs) == 0 {
-		msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, limit)
-		if err != nil {
-			logger.Warn("获取消息历史失败", logger.ErrorField(err))
-		} else {
-			for _, msg := range msgs {
-				messagesText += fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content)
-			}
-		}
-	}
-
-	if messagesText == "" {
-		messagesText = fmt.Sprintf("聊天ID: %s (类型: %s)", chatID, chatType)
+	messagesText, err := s.loadMessageText(ctx, chatID, limit, messageIDs)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
 	}
 
 	chatModel, err := s.getChatModel(cfg)
@@ -159,41 +199,69 @@ func (s *summaryServiceImpl) SummarizeMessages(ctx context.Context, chatID strin
 		return nil, nil, nil, nil, nil, fmt.Errorf("生成摘要失败: %w", err)
 	}
 
-	var keyPoints []string
-	kp, err := s.extractKeyPointsWithModel(ctx, chatModel, messagesText)
-	if err == nil {
-		keyPoints = kp
+	keyPoints, kpErr := s.extractKeyPointsWithModel(ctx, chatModel, messagesText)
+	if kpErr != nil {
+		// 要点是锦上添花：保留摘要本体，但必须把降级原因写进日志，
+		// 不能让「模型/解析故障」和「确实没有要点」看起来一样。
+		logger.Error("提取关键要点失败，本次结果不含要点",
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(kpErr))
+		keyPoints = nil
 	}
 
-	var participants []string
-	parts, err := s.extractParticipantsWithModel(ctx, chatModel, messagesText)
-	if err == nil {
-		participants = parts
+	participants, pErr := s.extractParticipantsWithModel(ctx, chatModel, messagesText)
+	if pErr != nil {
+		logger.Error("提取参与者失败，本次结果不含参与者",
+			logger.StringField("chat_id", chatID),
+			logger.ErrorField(pErr))
+		participants = nil
 	}
 
 	var todos []TodoItem
 	if includeTodos {
-		todos, _ = s.extractTodosFromTextWithModel(ctx, chatModel, messagesText)
+		todos, err = s.extractTodosFromTextWithModel(ctx, chatModel, messagesText)
+		if err != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("提取待办事项失败: %w", err)
+		}
 	}
 
 	var candidates []ReplyCandidate
 	if includeCandidates {
-		candidates, _ = s.generateCandidatesWithModel(ctx, chatModel, messagesText, 3, "friendly")
+		candidates, err = s.generateCandidatesWithModel(ctx, chatModel, messagesText, 3, "friendly")
+		if err != nil {
+			return nil, nil, nil, nil, nil, fmt.Errorf("生成回复候选失败: %w", err)
+		}
 	}
 
 	record := &summarymodel.SummaryRecord{
-		ID:           uuid.New().String(),
-		ChatID:       chatID,
-		ChatType:     chatType,
-		Summary:      summary,
-		KeyPoints:    mustMarshal(keyPoints),
-		Participants: mustMarshal(participants),
-		Todos:        mustMarshal(todos),
-		MessageIDs:   mustMarshal(messageIDs),
+		ID:       uuid.New().String(),
+		ChatID:   chatID,
+		ChatType: chatType,
+		Summary:  summary,
+	}
+
+	fields := []struct {
+		name  string
+		value interface{}
+		dst   *string
+	}{
+		{"key_points", keyPoints, &record.KeyPoints},
+		{"participants", participants, &record.Participants},
+		{"todos", todos, &record.Todos},
+		{"message_ids", messageIDs, &record.MessageIDs},
+	}
+	for _, field := range fields {
+		encoded, err := marshalField(field.name, field.value)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		*field.dst = encoded
 	}
 
 	if err := s.repo.CreateSummary(ctx, record); err != nil {
-		logger.Error("保存摘要记录失败", logger.ErrorField(err))
+		// 记录没落库就不能返回成功：否则调用方拿着摘要去展示，
+		// 摘要历史里却查不到这条记录，事后无法复盘。
+		return nil, nil, nil, nil, nil, fmt.Errorf("保存摘要记录失败: %w", err)
 	}
 
 	return record, todos, candidates, keyPoints, participants, nil
@@ -202,16 +270,9 @@ func (s *summaryServiceImpl) SummarizeMessages(ctx context.Context, chatID strin
 func (s *summaryServiceImpl) GenerateReplyCandidates(ctx context.Context, chatID string, chatType string, contextMessageIDs []string, candidateCount int, tone string, cfg *ModelConfig) ([]ReplyCandidate, error) {
 	logger.Info("生成回复候选", logger.StringField("chat_id", chatID))
 
-	var contextText string
-	msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, 20)
-	if err == nil {
-		for _, msg := range msgs {
-			contextText += fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content)
-		}
-	}
-
-	if contextText == "" {
-		contextText = fmt.Sprintf("聊天ID: %s (类型: %s)", chatID, chatType)
+	contextText, err := s.loadMessageText(ctx, chatID, 20, contextMessageIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	chatModel, err := s.getChatModel(cfg)
@@ -219,7 +280,11 @@ func (s *summaryServiceImpl) GenerateReplyCandidates(ctx context.Context, chatID
 		return nil, fmt.Errorf("获取ChatModel失败: %w", err)
 	}
 
-	return s.generateCandidatesWithModel(ctx, chatModel, contextText, candidateCount, tone)
+	candidates, err := s.generateCandidatesWithModel(ctx, chatModel, contextText, candidateCount, tone)
+	if err != nil {
+		return nil, fmt.Errorf("生成回复候选失败: %w", err)
+	}
+	return candidates, nil
 }
 
 func (s *summaryServiceImpl) ExtractTodos(ctx context.Context, chatID string, chatType string, messageIDs []string, msgCount int, cfg *ModelConfig) ([]TodoItem, error) {
@@ -230,16 +295,9 @@ func (s *summaryServiceImpl) ExtractTodos(ctx context.Context, chatID string, ch
 		limit = msgCount
 	}
 
-	var messagesText string
-	msgs, err := s.getMessageHistoryWithTimeout(ctx, chatID, limit)
-	if err == nil {
-		for _, msg := range msgs {
-			messagesText += fmt.Sprintf("[%s]: %s\n", msg.SenderID, msg.Content)
-		}
-	}
-
-	if messagesText == "" {
-		messagesText = fmt.Sprintf("聊天ID: %s (类型: %s)", chatID, chatType)
+	messagesText, err := s.loadMessageText(ctx, chatID, limit, messageIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	chatModel, err := s.getChatModel(cfg)
@@ -295,8 +353,7 @@ func (s *summaryServiceImpl) extractParticipantsWithModel(ctx context.Context, c
 
 	var participants []string
 	if err := s.parseStructured(ctx, chatModel, "summary", `["user1","user2"]`, response, &participants); err != nil {
-		logger.Warn("参与者解析失败，返回空列表", logger.ErrorField(err))
-		return []string{}, nil
+		return nil, err
 	}
 	return participants, nil
 }
@@ -322,8 +379,7 @@ func (s *summaryServiceImpl) extractTodosFromTextWithModel(ctx context.Context, 
 	if err := s.parseStructured(ctx, chatModel, "summary",
 		`[{"id":"...","content":"...","assignee":"...","deadline":"...","status":"pending|in_progress|completed"}]`,
 		response, &todos); err != nil {
-		logger.Warn("待办事项解析失败，返回空列表", logger.ErrorField(err))
-		return []TodoItem{}, nil
+		return nil, err
 	}
 	return todos, nil
 }
@@ -354,8 +410,7 @@ func (s *summaryServiceImpl) generateCandidatesWithModel(ctx context.Context, ch
 	if err := s.parseStructured(ctx, chatModel, "summary",
 		`[{"id":"...","content":"...","confidence":0.0,"type":"..."}]`,
 		response, &candidates); err != nil {
-		logger.Warn("回复候选解析失败，返回空列表", logger.ErrorField(err))
-		return []ReplyCandidate{}, nil
+		return nil, err
 	}
 	return candidates, nil
 }
@@ -373,7 +428,10 @@ func (s *summaryServiceImpl) parseStructured(
 	return err
 }
 
-func mustMarshal(v interface{}) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+func marshalField(name string, v interface{}) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", fmt.Errorf("序列化 %s 失败: %w", name, err)
+	}
+	return string(b), nil
 }
