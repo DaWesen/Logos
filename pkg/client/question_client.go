@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"Logos/config"
 	pb "Logos/proto_gen/question"
@@ -63,11 +64,21 @@ func (c *QuestionClient) GetRecommendedQuestions(ctx context.Context, userID int
 	if err != nil {
 		return nil, err
 	}
-	var questions []string
-	if resp != nil && resp.StatusMessage != "" {
-		_ = json.Unmarshal([]byte(resp.StatusMessage), &questions)
+	if resp == nil || resp.StatusMessage == "" {
+		return nil, nil
 	}
-	return questions, nil
+
+	// 下游把推荐结果放在 BaseResp.StatusMessage 的 JSON 里，形状是
+	// {"questions": [...]} 而不是裸数组。旧实现按 []string 解析并把错误
+	// 丢掉，结果恒为空切片——调用方无法区分「模型没生成」和「契约变了」。
+	var payload struct {
+		Questions []string `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(resp.StatusMessage), &payload); err != nil {
+		return nil, fmt.Errorf("解析推荐问题响应失败: %w", err)
+	}
+
+	return payload.Questions, nil
 }
 
 func (c *QuestionClient) Close() error {
