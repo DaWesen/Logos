@@ -1124,12 +1124,12 @@ func InitServiceMeters(serviceName string) *ServiceMeters {
 
 	m.RequestCount, _ = meter.Int64Counter(
 		"logos.grpc.request.count",
-		metric.WithDescription("Total number of gRPC requests"),
+		metric.WithDescription("真实进入 handler 的 gRPC 请求数（method, code）"),
 	)
 
 	m.RequestDuration, _ = meter.Float64Histogram(
 		"logos.grpc.request.duration",
-		metric.WithDescription("Duration of gRPC requests in seconds"),
+		metric.WithDescription("gRPC handler 处理耗时（method, code）"),
 		metric.WithUnit("s"),
 	)
 
@@ -1194,13 +1194,22 @@ func InitServiceMeters(serviceName string) *ServiceMeters {
 	return m
 }
 
-// RecordRequest records a gRPC request with its duration.
-func (m *ServiceMeters) RecordRequest(ctx context.Context, method string, durationSeconds float64) {
+// RecordRequest 记录一次真实进入 handler 的 gRPC 请求。
+//
+// code 取 gRPC codes.Code 的字符串形式（OK/InvalidArgument/Internal...）。
+// 不带 code 标签时，失败请求会被算进同一个总量，成功率只能靠日志估算，
+// 而生产日志通常并不完整；失败延迟与成功延迟混在同一个直方图里，
+// 也会让 P99 无法区分「慢」和「一直在报错」。
+func (m *ServiceMeters) RecordRequest(ctx context.Context, method, code string, durationSeconds float64) {
+	attrs := metric.WithAttributes(
+		attribute.String("method", method),
+		attribute.String("code", code),
+	)
 	if m.RequestCount != nil {
-		m.RequestCount.Add(ctx, 1, metric.WithAttributes(attribute.String("method", method)))
+		m.RequestCount.Add(ctx, 1, attrs)
 	}
 	if m.RequestDuration != nil {
-		m.RequestDuration.Record(ctx, durationSeconds, metric.WithAttributes(attribute.String("method", method)))
+		m.RequestDuration.Record(ctx, durationSeconds, attrs)
 	}
 }
 
