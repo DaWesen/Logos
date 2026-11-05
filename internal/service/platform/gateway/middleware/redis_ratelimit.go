@@ -234,6 +234,7 @@ type burstCache interface {
 	IncrBy(ctx context.Context, key string, value int64) (int64, error)
 	Expire(ctx context.Context, key string, expiration time.Duration) error
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	Delete(ctx context.Context, key string) error
 }
 
 type burstGuard struct {
@@ -266,7 +267,13 @@ func (g *burstGuard) allow(ctx context.Context, ip string) (allowed, degraded bo
 	burstKey := fmt.Sprintf("burst:%s", ip)
 	blockedKey := fmt.Sprintf("blocked:%s", ip)
 
-	if blocked, err := g.cache.Exists(ctx, blockedKey); err == nil && blocked {
+	blocked, err := g.cache.Exists(ctx, blockedKey)
+	if err != nil {
+		// 无法确认封禁状态时继续走计数（Redis 大概率整体不可用，会落入单机兜底），
+		// 但不能把查询失败静默当成「没有被封」。
+		logger.Warn("burst protection blocked-state lookup failed",
+			logger.StringField("ip", ip), logger.ErrorField(err))
+	} else if blocked {
 		return false, false
 	}
 
@@ -280,12 +287,29 @@ func (g *burstGuard) allow(ctx context.Context, ip string) (allowed, degraded bo
 	if current == 1 {
 		// 封禁状态必须独立于请求生命周期：请求取消后仍要落盘，
 		// 否则攻击者可以用「发起即断开」绕过封禁。
-		_ = g.cache.Expire(context.Background(), burstKey, g.cooldown)
+		//
+		// Expire 失败会让计数键永远没有 TTL：计数一旦越过阈值，这个 IP
+		// 就会被永久拒绝，只能人工清 key。此时退化为删键重开窗口——
+		// 宁可少挡一轮，也不制造永久封禁。
+		ctxBg := context.Background()
+		if err := g.cache.Expire(ctxBg, burstKey, g.cooldown); err != nil {
+			logger.Error("burst counter expire failed, reset window",
+				logger.StringField("ip", ip), logger.ErrorField(err))
+			if delErr := g.cache.Delete(ctxBg, burstKey); delErr != nil {
+				logger.Error("burst counter cleanup failed",
+					logger.StringField("ip", ip), logger.ErrorField(delErr))
+			}
+		}
 	}
 
 	if current > int64(g.threshold) {
 		// 封禁时长为窗口的两倍：让攻击者在计数窗口过期后仍被挡一段时间。
-		_ = g.cache.Set(context.Background(), blockedKey, "1", g.cooldown*2)
+		// 写失败时当前请求仍然拒绝，后续请求也会因计数超阈值继续被拒，
+		// 但封禁会提前失效，必须记录而不是静默。
+		if err := g.cache.Set(context.Background(), blockedKey, "1", g.cooldown*2); err != nil {
+			logger.Error("burst protection block write failed",
+				logger.StringField("ip", ip), logger.ErrorField(err))
+		}
 		return false, false
 	}
 	return true, false

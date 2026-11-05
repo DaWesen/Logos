@@ -9,12 +9,15 @@ import (
 )
 
 type fakeBurstCache struct {
-	mu        sync.Mutex
-	values    map[string]int64
-	ttls      map[string]time.Duration
-	incrErr   error
-	existsErr error
-	incrCalls int
+	mu          sync.Mutex
+	values      map[string]int64
+	ttls        map[string]time.Duration
+	incrErr     error
+	existsErr   error
+	expireErr   error
+	setErr      error
+	incrCalls   int
+	deleteCalls int
 }
 
 func newFakeBurstCache() *fakeBurstCache {
@@ -48,6 +51,9 @@ func (f *fakeBurstCache) IncrBy(_ context.Context, key string, value int64) (int
 func (f *fakeBurstCache) Expire(_ context.Context, key string, expiration time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.expireErr != nil {
+		return f.expireErr
+	}
 	f.ttls[key] = expiration
 	return nil
 }
@@ -55,8 +61,20 @@ func (f *fakeBurstCache) Expire(_ context.Context, key string, expiration time.D
 func (f *fakeBurstCache) Set(_ context.Context, key string, _ interface{}, expiration time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.setErr != nil {
+		return f.setErr
+	}
 	f.values[key] = 1
 	f.ttls[key] = expiration
+	return nil
+}
+
+func (f *fakeBurstCache) Delete(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleteCalls++
+	delete(f.values, key)
+	delete(f.ttls, key)
 	return nil
 }
 
@@ -160,5 +178,62 @@ func TestBurstGuard_SetsBurstTTL(t *testing.T) {
 	}
 	if got := fake.ttl("burst:10.0.0.5"); got != 5*time.Minute {
 		t.Fatalf("burst TTL = %s, want 5m", got)
+	}
+}
+
+// TestBurstGuard_ExpireFailureResetsCounterKey 计数键没有 TTL 会从「短期封禁」
+// 退化成「永久封禁」：Expire 失败后必须删键重开窗口，而不是留下无过期计数器。
+func TestBurstGuard_ExpireFailureResetsCounterKey(t *testing.T) {
+	fake := newFakeBurstCache()
+	fake.expireErr = errors.New("redis down")
+	g := newBurstGuard(fake, 3, time.Minute)
+
+	allowed, degraded := g.allow(context.Background(), "10.0.0.6")
+	if !allowed || degraded {
+		t.Fatalf("首次请求应放行且不降级，实际 allowed=%v degraded=%v", allowed, degraded)
+	}
+	if fake.deleteCalls != 1 {
+		t.Fatalf("Expire 失败后必须删除计数键，Delete 调用 %d 次", fake.deleteCalls)
+	}
+	if _, ok := fake.values["burst:10.0.0.6"]; ok {
+		t.Fatal("删除后计数键不应残留，否则仍可能永久累积")
+	}
+}
+
+// TestBurstGuard_BlockWriteFailureKeepsDenying 封禁键写失败时当前请求仍要拒绝；
+// 只要计数还超阈值，后续请求继续被拒，不能因为写失败就放行。
+func TestBurstGuard_BlockWriteFailureKeepsDenying(t *testing.T) {
+	fake := newFakeBurstCache()
+	fake.setErr = errors.New("redis down")
+	g := newBurstGuard(fake, 2, time.Minute)
+
+	for i := 0; i < 2; i++ {
+		if allowed, _ := g.allow(context.Background(), "10.0.0.7"); !allowed {
+			t.Fatalf("第 %d 次请求未超过阈值，应放行", i+1)
+		}
+	}
+	if allowed, _ := g.allow(context.Background(), "10.0.0.7"); allowed {
+		t.Fatal("超过阈值必须拒绝，即使封禁键写入失败")
+	}
+	if _, ok := fake.values["blocked:10.0.0.7"]; ok {
+		t.Fatal("Set 失败不应留下封禁键")
+	}
+	if allowed, _ := g.allow(context.Background(), "10.0.0.7"); allowed {
+		t.Fatal("计数仍超阈值时后续请求应继续拒绝")
+	}
+}
+
+// TestBurstGuard_BlockedLookupFailureFallsThrough 封禁状态查询失败不能中断
+// 计数路径，也不能把错误当成「已封禁」误伤所有流量。
+func TestBurstGuard_BlockedLookupFailureFallsThrough(t *testing.T) {
+	fake := newFakeBurstCache()
+	fake.existsErr = errors.New("redis down")
+	g := newBurstGuard(fake, 2, time.Minute)
+
+	if allowed, _ := g.allow(context.Background(), "10.0.0.8"); !allowed {
+		t.Fatal("封禁状态查询失败时应继续走计数并放行首次请求")
+	}
+	if got := fake.ttl("burst:10.0.0.8"); got != time.Minute {
+		t.Fatalf("计数值仍应正常写入并带 TTL，实际 %s", got)
 	}
 }
