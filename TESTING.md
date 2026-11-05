@@ -82,6 +82,10 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 
 - **可靠性链路**：`pkg/outbox` 退避序列与 `FetchPending` 生成 SQL（`FOR UPDATE SKIP LOCKED`、状态与退避过滤、先进先出）；`pkg/mq` 死信信封构造（合法 JSON 原样保留、非法负载包装）、毒丸消息连续失败计数
 - **越权防护**：`internal/service/ai/bot/service` 用内存 stub repo 验证 Bot / 对话 / 提示词的归属校验（非所有者按“不存在”处理、公开与预设提示词的可见性规则），并验证删除 Bot 时同步清理 `qq:bot_bind:` 路由缓存
+- **空身份不得触达 DAO**：`CreateBot` / `CreateConversation` / `CreatePrompt` / `GetUserMemory` / `SetUserMemory` / `DeleteUserMemory` / `DeleteAllUserMemories` 在缺少 metadata 身份时返回 `ErrUnauthenticated`，且 stub repo 的 `createdBots` / `convsQueried` / `promptsQueried` / `memoriesQueried` / `setMemories` / `deletedMemories` 保持为空（回归「空 userID → DAO 不加过滤 → 全库泄露」）；`ListConversations` / `ListPrompts` 同样在触库前拒绝
+- **请求体身份不能覆盖认证身份**：`userCtx("alice")` 搭配请求体 `user_id="bob"` 时拒绝并记 Warn；`ListConversations` 下发给 DAO 的过滤条件必须是 `|alice`（botID 为空 + 认证身份），被拒请求不得再查库
+- **会话必须挂在自己的 Bot 上**：alice 用自己的身份 + `bot-other`（bob 的 Bot）建会话返回 `ErrBotNotFound` 且不落库；`bot-owner` 建会话成功且 `UserID=alice`、`BotID=bot-owner`
+- **Bot handler 未认证映射 401**：`statusCodeForError` 对 `service.ErrUnauthenticated` 返回 401，其余返回 1；网关 `mapStatusCode` 对 `100..599` 直通，未认证不会再被伪装成 500
 - **限流分档**：`gateway/middleware` 验证各接口阈值互不相同（登录 5 / 问答 30 / 消息 50 / 默认 600），避免四层同值导致限流失效
 - **突发封禁**：已封禁 IP 在自增计数前直接拒绝；超限后写入 `blocked` 键且 TTL 为窗口 2 倍；模拟 burst 计数窗口过期后仍继续拒绝（回归「只写不读」缺陷）；Redis 故障时退化为单机窗口且超限仍拒绝；首次自增设置 burst TTL
 - **令牌桶补充**：高频请求（100ms 一次、rate=1/s）20s 内至少放行 20 次，证明分数令牌没有被丢弃；补充量不超过容量上限；时钟回拨既不补充也不扣减；Lua 脚本中不得出现 `math.floor` 作用于补充量；`rate/capacity <= 0` 归一化为 1；桶键 TTL 不短于补满耗时；Lua `tostring` 产生的科学计数法时间戳可被解析，缺少时间时不会按 `now-0` 把桶补满
@@ -150,7 +154,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **采集事件消费契约**：事件用 `data_source_id` 建任务（断言 `DataID == "ds-42"`、`DataType == "data_source"`），不是旧代码读的 `data_id`；缺少 `data_source_id` 时返回错误且不建任务；`status=FAILED` 的事件跳过且不建任务
 - **抽取限流降级**：缓存构造返回 nil 时放行且不 panic（单测注入内存 cache，不再连接真实 Redis）；`IncrBy` 失败放行并记 Warn；`Expire` 失败不影响本次判定
 - **抽取结果字段转换**：字段缺失返回零值且不报错；字段类型不符时错误信息带上字段名；位置字段为负数或超出 int32 范围时报错；`json.Unmarshal` 失败必须上抛，不能返回 200 + 空列表；批量列表中第 N 条坏数据时清空已拼好的结果并在错误里带上序号；缺省 `id` 仍按 `text_type` 派生
-- **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
+- **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；`GetUserMemoryByKey` 报错时 `SetUserMemoryWithCategory` 返回 `ErrInternalServer`，不得走新建分支；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
 - **ffmpeg 解析**：`00:01:23.45` → 83.45 秒；`02:15:30.50` 正确进位；`Duration: N/A`、缺 `Duration` 行、`abc:def:ghi`、`1.2.3`、`99` 分钟、`60` 秒、负数秒、段数不足全部报错；`1920x1080 [SAR 1:1 DAR 16:9]` 与 `1080x1920` 正确识别；`(avc1 / 0x31637661)` 不被当成分辨率；缺 `Video:` 行、`0x0`、`1920x1080i` 均报错；`ffmpeg` 不存在时 `GetVideoInfo` 返回错误且不返回半截 map
 - **视频解析降级**：元信息探测失败时 `metadata` 不含 `video_info` 且抽帧回落到默认 1s 间隔；抽帧失败时仍保留 ASR 文本；单帧 VLM 失败只跳过该帧、不产生空帧段落；全部帧描述失败时不渲染「视频帧详情」；`duration=60` 时 `FrameInterval=10`、`MaxFrames=5`；`duration=3` 时间隔被夹到 1s；调用方显式传入的 `ExtractOptions` 优先且不被就地修改
 
