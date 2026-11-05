@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"Logos/internal/service/ai/mcp/model"
 	"Logos/internal/service/ai/mcp/service"
@@ -70,7 +71,16 @@ func (s *MCPServiceImpl) RegisterTool(ctx context.Context, req *pb.RegisterToolR
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelToolToProtoTool(tool)
+	data, convErr := convertModelToolToProtoTool(tool)
+	if convErr != nil {
+		logger.Error("转换工具信息失败",
+			logger.StringField("id", tool.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -97,7 +107,17 @@ func (s *MCPServiceImpl) ListTools(ctx context.Context, req *pb.ListToolsRequest
 	resp.Message = "success"
 	resp.Total = int32(total)
 	for _, tool := range tools {
-		resp.Tools = append(resp.Tools, convertModelToolToProtoTool(tool))
+		protoTool, convErr := convertModelToolToProtoTool(tool)
+		if convErr != nil {
+			logger.Error("转换工具信息失败",
+				logger.StringField("id", tool.ID),
+				logger.ErrorField(convErr))
+			resp.Code = 1
+			resp.Message = convErr.Error()
+			resp.Tools = nil
+			return resp, nil
+		}
+		resp.Tools = append(resp.Tools, protoTool)
 	}
 	return resp, nil
 }
@@ -120,7 +140,16 @@ func (s *MCPServiceImpl) GetTool(ctx context.Context, req *pb.GetToolRequest) (*
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelToolToProtoTool(tool)
+	data, convErr := convertModelToolToProtoTool(tool)
+	if convErr != nil {
+		logger.Error("转换工具信息失败",
+			logger.StringField("id", tool.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -148,7 +177,16 @@ func (s *MCPServiceImpl) UpdateTool(ctx context.Context, req *pb.UpdateToolReque
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelToolToProtoTool(tool)
+	data, convErr := convertModelToolToProtoTool(tool)
+	if convErr != nil {
+		logger.Error("转换工具信息失败",
+			logger.StringField("id", tool.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -167,14 +205,16 @@ func (s *MCPServiceImpl) DeleteTool(ctx context.Context, req *pb.DeleteToolReque
 	return resp, nil
 }
 
-func convertModelToolToProtoTool(tool *model.Tool) *pb.Tool {
+func convertModelToolToProtoTool(tool *model.Tool) (*pb.Tool, error) {
 	if tool == nil {
-		return nil
+		return nil, nil
 	}
 
 	var config map[string]string
 	if tool.Config != "" {
-		json.Unmarshal([]byte(tool.Config), &config)
+		if err := json.Unmarshal([]byte(tool.Config), &config); err != nil {
+			return nil, fmt.Errorf("工具 %s 的配置 JSON 损坏: %w", tool.ID, err)
+		}
 	}
 
 	return &pb.Tool{
@@ -186,7 +226,7 @@ func convertModelToolToProtoTool(tool *model.Tool) *pb.Tool {
 		Enabled:     tool.Enabled,
 		CreatedAt:   timestamppb.New(tool.CreatedAt),
 		UpdatedAt:   timestamppb.New(tool.UpdatedAt),
-	}
+	}, nil
 }
 
 func (s *MCPServiceImpl) CreateMCPService(ctx context.Context, req *pb.CreateMCPServiceRequest) (*pb.CreateMCPServiceResponse, error) {
@@ -202,7 +242,16 @@ func (s *MCPServiceImpl) CreateMCPService(ctx context.Context, req *pb.CreateMCP
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelMCPServiceToProto(svc)
+	data, convErr := convertModelMCPServiceToProto(svc)
+	if convErr != nil {
+		logger.Error("转换MCP服务信息失败",
+			logger.StringField("id", svc.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -224,7 +273,16 @@ func (s *MCPServiceImpl) GetMCPService(ctx context.Context, req *pb.GetMCPServic
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelMCPServiceToProto(svc)
+	data, convErr := convertModelMCPServiceToProto(svc)
+	if convErr != nil {
+		logger.Error("转换MCP服务信息失败",
+			logger.StringField("id", svc.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -245,13 +303,16 @@ func (s *MCPServiceImpl) ListMCPServices(ctx context.Context, req *pb.ListMCPSer
 	resp.Message = "success"
 	resp.Total = int32(total)
 	for _, svc := range services {
-		protoSvc := convertModelMCPServiceToProto(svc)
-		logger.Info("ListMCPServices返回服务",
-			logger.StringField("id", protoSvc.Id),
-			logger.StringField("name", protoSvc.Name),
-			logger.StringField("url", protoSvc.Url),
-			logger.AnyField("headers", protoSvc.Headers),
-			logger.AnyField("auth_config", protoSvc.AuthConfig))
+		protoSvc, convErr := convertModelMCPServiceToProto(svc)
+		if convErr != nil {
+			logger.Error("转换MCP服务信息失败",
+				logger.StringField("id", svc.ID),
+				logger.ErrorField(convErr))
+			resp.Code = 1
+			resp.Message = convErr.Error()
+			resp.Services = nil
+			return resp, nil
+		}
 		resp.Services = append(resp.Services, protoSvc)
 	}
 	return resp, nil
@@ -270,7 +331,16 @@ func (s *MCPServiceImpl) UpdateMCPService(ctx context.Context, req *pb.UpdateMCP
 
 	resp.Code = 0
 	resp.Message = "success"
-	resp.Data = convertModelMCPServiceToProto(svc)
+	data, convErr := convertModelMCPServiceToProto(svc)
+	if convErr != nil {
+		logger.Error("转换MCP服务信息失败",
+			logger.StringField("id", svc.ID),
+			logger.ErrorField(convErr))
+		resp.Code = 1
+		resp.Message = convErr.Error()
+		return resp, nil
+	}
+	resp.Data = data
 	return resp, nil
 }
 
@@ -304,24 +374,22 @@ func (s *MCPServiceImpl) TestMCPService(ctx context.Context, req *pb.TestMCPServ
 	return resp, nil
 }
 
-func convertModelMCPServiceToProto(svc *model.MCPService) *pb.MCPServiceInfo {
+func convertModelMCPServiceToProto(svc *model.MCPService) (*pb.MCPServiceInfo, error) {
 	if svc == nil {
-		return nil
+		return nil, nil
 	}
 
-	var headers map[string]string
-	if svc.Headers != "" {
-		json.Unmarshal([]byte(svc.Headers), &headers)
+	headers, err := decodeMCPServiceMap(svc.ID, "headers", svc.Headers)
+	if err != nil {
+		return nil, err
 	}
-
-	var authConfig map[string]string
-	if svc.AuthConfig != "" {
-		json.Unmarshal([]byte(svc.AuthConfig), &authConfig)
+	authConfig, err := decodeMCPServiceMap(svc.ID, "auth_config", svc.AuthConfig)
+	if err != nil {
+		return nil, err
 	}
-
-	var advancedConfig map[string]string
-	if svc.AdvancedConfig != "" {
-		json.Unmarshal([]byte(svc.AdvancedConfig), &advancedConfig)
+	advancedConfig, err := decodeMCPServiceMap(svc.ID, "advanced_config", svc.AdvancedConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.MCPServiceInfo{
@@ -336,5 +404,16 @@ func convertModelMCPServiceToProto(svc *model.MCPService) *pb.MCPServiceInfo {
 		AdvancedConfig: advancedConfig,
 		CreatedAt:      timestamppb.New(svc.CreatedAt),
 		UpdatedAt:      timestamppb.New(svc.UpdatedAt),
+	}, nil
+}
+
+func decodeMCPServiceMap(serviceID, field, raw string) (map[string]string, error) {
+	if raw == "" {
+		return nil, nil
 	}
+	var result map[string]string
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, fmt.Errorf("MCP服务 %s 的 %s JSON 损坏: %w", serviceID, field, err)
+	}
+	return result, nil
 }

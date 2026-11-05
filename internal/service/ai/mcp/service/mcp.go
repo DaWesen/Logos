@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"Logos/internal/mcp"
 	"Logos/internal/mcp_server"
@@ -30,6 +31,22 @@ type ToolParameter struct {
 	Description  string `json:"description"`
 	Required     bool   `json:"required"`
 	DefaultValue string `json:"default_value"`
+}
+
+func validateToolType(toolType int) error {
+	if toolType < 1 || toolType > 5 {
+		return fmt.Errorf("不支持的工具类型: %d（有效范围 1-5）", toolType)
+	}
+	return nil
+}
+
+func validateTransportType(transportType string) error {
+	switch transportType {
+	case "", "sse", "http-streamable":
+		return nil
+	default:
+		return fmt.Errorf("不支持的传输类型: %s（仅支持 sse / http-streamable）", transportType)
+	}
 }
 
 type mcpServiceImpl struct {
@@ -207,7 +224,7 @@ func (s *mcpServiceImpl) executeFileSystem(ctx context.Context, _ *model.Tool, p
 
 func (s *mcpServiceImpl) executeCustomTool(ctx context.Context, tool *model.Tool, params map[string]string) (string, map[string]string, error) {
 	if s.einoClient == nil || !s.einoClient.HasChatModel() {
-		return "自定义工具执行暂不可用", map[string]string{"status": "unavailable"}, nil
+		return "", nil, fmt.Errorf("自定义工具执行不可用：未配置可用的聊天模型")
 	}
 
 	systemPrompt := tool.Description
@@ -233,13 +250,30 @@ func (s *mcpServiceImpl) executeCustomTool(ctx context.Context, tool *model.Tool
 func (s *mcpServiceImpl) RegisterTool(ctx context.Context, name string, description string, toolType int, parameters []ToolParameter, config map[string]string, userID string) (*model.Tool, error) {
 	logger.Info("注册工具", logger.StringField("name", name))
 
-	existing, _ := s.repo.GetToolByName(ctx, name, userID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("工具名称不能为空")
+	}
+	if err := validateToolType(toolType); err != nil {
+		return nil, err
+	}
+
+	existing, err := s.repo.GetToolByName(ctx, name, userID)
+	if err != nil {
+		return nil, fmt.Errorf("查询工具名称是否重复失败: %w", err)
+	}
 	if existing != nil {
 		return nil, fmt.Errorf("工具名称已存在: %s", name)
 	}
 
-	paramBytes, _ := json.Marshal(parameters)
-	configBytes, _ := json.Marshal(config)
+	paramBytes, err := json.Marshal(parameters)
+	if err != nil {
+		return nil, fmt.Errorf("序列化工具参数失败: %w", err)
+	}
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("序列化工具配置失败: %w", err)
+	}
 
 	tool := &model.Tool{
 		ID:          uuid.New().String(),
@@ -278,18 +312,32 @@ func (s *mcpServiceImpl) UpdateTool(ctx context.Context, toolID string, name str
 		return nil, fmt.Errorf("工具不存在")
 	}
 
-	if name != "" {
+	name = strings.TrimSpace(name)
+	if name != "" && name != tool.Name {
+		existing, lookupErr := s.repo.GetToolByName(ctx, name, tool.UserID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("查询工具名称是否重复失败: %w", lookupErr)
+		}
+		if existing != nil && existing.ID != tool.ID {
+			return nil, fmt.Errorf("工具名称已存在: %s", name)
+		}
 		tool.Name = name
 	}
 	if description != "" {
 		tool.Description = description
 	}
 	if parameters != nil {
-		paramBytes, _ := json.Marshal(parameters)
+		paramBytes, marshalErr := json.Marshal(parameters)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("序列化工具参数失败: %w", marshalErr)
+		}
 		tool.Parameters = string(paramBytes)
 	}
 	if config != nil {
-		configBytes, _ := json.Marshal(config)
+		configBytes, marshalErr := json.Marshal(config)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("序列化工具配置失败: %w", marshalErr)
+		}
 		tool.Config = string(configBytes)
 	}
 	tool.Enabled = enabled
@@ -330,16 +378,36 @@ func NewMCPServiceService(svcRepo dao.MCPServiceRepository, clientMgr *mcp.MCPCl
 func (s *mcpServiceServiceImpl) CreateService(ctx context.Context, name, description, transportType, url string, headers, authConfig, advancedConfig map[string]string, enabled bool, userID string) (*model.MCPService, error) {
 	logger.Info("创建MCP服务", logger.StringField("name", name))
 
-	existing, _ := s.svcRepo.GetServiceByName(ctx, name, userID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("MCP服务名称不能为空")
+	}
+	if err := validateTransportType(transportType); err != nil {
+		return nil, err
+	}
+
+	existing, err := s.svcRepo.GetServiceByName(ctx, name, userID)
+	if err != nil {
+		return nil, fmt.Errorf("查询MCP服务名称是否重复失败: %w", err)
+	}
 	if existing != nil {
 		return nil, fmt.Errorf("服务名称已存在: %s", name)
 	}
 
 	mergedHeaders := mergeHeadersWithAuthConfig(headers, authConfig)
 
-	headersBytes, _ := json.Marshal(mergedHeaders)
-	authConfigBytes, _ := json.Marshal(authConfig)
-	advancedConfigBytes, _ := json.Marshal(advancedConfig)
+	headersBytes, err := json.Marshal(mergedHeaders)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求头失败: %w", err)
+	}
+	authConfigBytes, err := json.Marshal(authConfig)
+	if err != nil {
+		return nil, fmt.Errorf("序列化认证配置失败: %w", err)
+	}
+	advancedConfigBytes, err := json.Marshal(advancedConfig)
+	if err != nil {
+		return nil, fmt.Errorf("序列化高级配置失败: %w", err)
+	}
 
 	svc := &model.MCPService{
 		ID:             uuid.New().String(),
@@ -384,13 +452,24 @@ func (s *mcpServiceServiceImpl) UpdateService(ctx context.Context, id string, na
 		return nil, fmt.Errorf("MCP服务不存在")
 	}
 
-	if name != "" {
+	name = strings.TrimSpace(name)
+	if name != "" && name != svc.Name {
+		existing, lookupErr := s.svcRepo.GetServiceByName(ctx, name, svc.UserID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("查询MCP服务名称是否重复失败: %w", lookupErr)
+		}
+		if existing != nil && existing.ID != svc.ID {
+			return nil, fmt.Errorf("服务名称已存在: %s", name)
+		}
 		svc.Name = name
 	}
 	if description != "" {
 		svc.Description = description
 	}
 	if transportType != "" {
+		if err := validateTransportType(transportType); err != nil {
+			return nil, err
+		}
 		svc.TransportType = transportType
 	}
 	if url != "" {
@@ -400,15 +479,24 @@ func (s *mcpServiceServiceImpl) UpdateService(ctx context.Context, id string, na
 	var mergedHeaders map[string]string
 	if headers != nil {
 		mergedHeaders = mergeHeadersWithAuthConfig(headers, authConfig)
-		headersBytes, _ := json.Marshal(mergedHeaders)
+		headersBytes, marshalErr := json.Marshal(mergedHeaders)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("序列化请求头失败: %w", marshalErr)
+		}
 		svc.Headers = string(headersBytes)
 	}
 	if authConfig != nil {
-		authConfigBytes, _ := json.Marshal(authConfig)
+		authConfigBytes, marshalErr := json.Marshal(authConfig)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("序列化认证配置失败: %w", marshalErr)
+		}
 		svc.AuthConfig = string(authConfigBytes)
 	}
 	if advancedConfig != nil {
-		advancedConfigBytes, _ := json.Marshal(advancedConfig)
+		advancedConfigBytes, marshalErr := json.Marshal(advancedConfig)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("序列化高级配置失败: %w", marshalErr)
+		}
 		svc.AdvancedConfig = string(advancedConfigBytes)
 	}
 	svc.Enabled = enabled
