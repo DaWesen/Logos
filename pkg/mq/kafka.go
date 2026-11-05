@@ -231,43 +231,110 @@ const (
 	TopicDocumentProcessed   = "document_processed"
 )
 
+const topicCreateMaxAttempts = 3
+
+// errKafkaBrokerUnreachable 标记「连不上 broker」，与「broker 拒绝了 topic 配置」区分：
+// 前者对同一个地址重试剩余 topic 只会重复同一个失败，后者其他 topic 仍可能成功。
+var errKafkaBrokerUnreachable = errors.New("kafka broker unreachable")
+
+// topicAdmin 是创建主题所需的最小连接能力，*kafka.Conn 天然满足。
+type topicAdmin interface {
+	CreateTopics(...kafka.TopicConfig) error
+	Close() error
+}
+
+type topicAdminDialer func(addr string) (topicAdmin, error)
+
+func dialTopicAdmin(addr string) (topicAdmin, error) {
+	return kafka.Dial("tcp", addr)
+}
+
+// topicRetryWait 是建主题重试的等待实现，返回 false 表示 ctx 已取消。
+// 与 Consumer.retryWait 同一思路：独立成可替换实现，单测不必真的 sleep。
+var topicRetryWait = func(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 func (m *KafkaManager) CreateTopic(topic string) error {
 	if m == nil {
 		return fmt.Errorf("kafka manager is nil")
 	}
+	if strings.TrimSpace(topic) == "" {
+		return fmt.Errorf("topic 不能为空")
+	}
+	if len(m.brokers) == 0 {
+		// 零值 KafkaManager 曾在这里直接 m.brokers[0] panic。
+		return fmt.Errorf("kafka brokers 为空，无法创建主题 %s", topic)
+	}
 
-	kafkaConfig := config.GetConfig().Kafka
+	return createTopicWithRetry(
+		context.Background(), dialTopicAdmin, topicRetryWait,
+		m.brokers[0], config.GetConfig().Kafka, topic,
+	)
+}
+
+func createTopicWithRetry(
+	ctx context.Context,
+	dial topicAdminDialer,
+	wait func(context.Context, time.Duration) bool,
+	addr string,
+	cfg config.Kafka,
+	topic string,
+) error {
+	if dial == nil {
+		dial = dialTopicAdmin
+	}
+	if wait == nil {
+		wait = topicRetryWait
+	}
+
 	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		conn, err := kafka.Dial("tcp", m.brokers[0])
+	for attempt := 1; attempt <= topicCreateMaxAttempts; attempt++ {
+		conn, err := dial(addr)
 		if err != nil {
-			lastErr = fmt.Errorf("连接Kafka失败: %w", err)
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
-			continue
-		}
-
-		err = conn.CreateTopics(kafka.TopicConfig{
-			Topic:             topic,
-			NumPartitions:     kafkaPartitions(kafkaConfig),
-			ReplicationFactor: kafkaReplicationFactor(kafkaConfig),
-		})
-		conn.Close()
-
-		if err != nil {
+			lastErr = fmt.Errorf("%w: %w", errKafkaBrokerUnreachable, err)
+			logger.Warn("连接Kafka失败",
+				logger.StringField("topic", topic),
+				logger.IntField("attempt", attempt),
+				logger.ErrorField(err))
+		} else {
+			err = conn.CreateTopics(kafka.TopicConfig{
+				Topic:             topic,
+				NumPartitions:     kafkaPartitions(cfg),
+				ReplicationFactor: kafkaReplicationFactor(cfg),
+			})
+			_ = conn.Close()
+			if err == nil {
+				logger.Info("创建Kafka主题成功", logger.StringField("topic", topic))
+				return nil
+			}
 			lastErr = err
 			logger.Warn("创建主题失败",
 				logger.StringField("topic", topic),
 				logger.IntField("attempt", attempt),
 				logger.ErrorField(err))
-			time.Sleep(time.Duration(attempt) * 2 * time.Second)
-			continue
 		}
 
-		logger.Info("创建Kafka主题成功", logger.StringField("topic", topic))
-		return nil
+		// 最后一次失败后不再白等一个退避周期：启动路径上的 2s/4s 会直接变成
+		// 首个请求的延迟。ctx 取消时立即返回，不再消耗剩余尝试。
+		if attempt == topicCreateMaxAttempts {
+			break
+		}
+		if !wait(ctx, time.Duration(attempt)*2*time.Second) {
+			return errors.Join(
+				fmt.Errorf("创建主题 %s 时被取消", topic),
+				lastErr,
+				ctx.Err(),
+			)
+		}
 	}
 
-	return lastErr
+	return fmt.Errorf("创建主题 %s 失败（已尝试 %d 次）: %w", topic, topicCreateMaxAttempts, lastErr)
 }
 
 func (p *Producer) SendUserEvent(ctx context.Context, key string, value []byte) error {
@@ -762,9 +829,18 @@ func CreateTopics(ctx context.Context) error {
 		return nil
 	}
 
-	// 分区数与副本数统一从配置读取：分区数决定出站并行度上限，副本数决定 broker 容灾能力。
-	partitions := kafkaPartitions(kafkaConfig)
-	replication := kafkaReplicationFactor(kafkaConfig)
+	return createTopics(ctx, kafkaConfig, dialTopicAdmin, topicRetryWait)
+}
+
+// createTopics 逐个创建主题并聚合失败原因。
+// 单个 topic 失败不阻断其余 topic（它们可能配置正确），但错误必须返回给调用方——
+// 旧实现无论如何都返回 nil，调用方看到的「初始化成功」和真实状态无关。
+func createTopics(
+	ctx context.Context,
+	kafkaConfig config.Kafka,
+	dial topicAdminDialer,
+	wait func(context.Context, time.Duration) bool,
+) error {
 	topicNames := []string{
 		"user_events",
 		"knowledge_events",
@@ -776,55 +852,35 @@ func CreateTopics(ctx context.Context) error {
 		TopicDocumentProcessed,
 		"bot_events",
 	}
-	topicConfigs := make([]kafka.TopicConfig, 0, len(topicNames))
-	for _, name := range topicNames {
-		topicConfigs = append(topicConfigs, kafka.TopicConfig{
-			Topic:             name,
-			NumPartitions:     partitions,
-			ReplicationFactor: replication,
-		})
-	}
 
-	for _, tc := range topicConfigs {
-		logger.Info("尝试创建主题", logger.StringField("topic", tc.Topic))
-
-		var lastErr error
-		for attempt := 1; attempt <= 3; attempt++ {
-			// 每个 topic 独立建立连接，避免连接复用导致断开
-			conn, err := kafka.Dial("tcp", kafkaConfig.Brokers[0])
-			if err != nil {
-				lastErr = err
-				logger.Warn("连接Kafka失败",
-					logger.IntField("attempt", attempt),
-					logger.ErrorField(err))
-				time.Sleep(time.Duration(attempt) * 2 * time.Second)
-				continue
-			}
-
-			err = conn.CreateTopics(tc)
-			conn.Close()
-
-			if err != nil {
-				lastErr = err
-				logger.Warn("创建主题失败",
-					logger.StringField("topic", tc.Topic),
-					logger.IntField("attempt", attempt),
-					logger.ErrorField(err))
-				time.Sleep(time.Duration(attempt) * 2 * time.Second)
-				continue
-			}
-
-			logger.Info("主题创建成功", logger.StringField("topic", tc.Topic))
-			lastErr = nil
+	var errs []error
+	for i, name := range topicNames {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			errs = append(errs, fmt.Errorf("创建 Kafka 主题被取消: %w", ctxErr))
 			break
 		}
 
-		if lastErr != nil {
-			logger.Warn("主题最终创建失败，Kafka可能已自动创建",
-				logger.StringField("topic", tc.Topic),
-				logger.ErrorField(lastErr))
+		logger.Info("尝试创建主题", logger.StringField("topic", name))
+		err := createTopicWithRetry(ctx, dial, wait, kafkaConfig.Brokers[0], kafkaConfig, name)
+		if err == nil {
+			continue
+		}
+		errs = append(errs, err)
+		if errors.Is(err, errKafkaBrokerUnreachable) {
+			// 同一个 broker 连不上，剩下 8 个主题只会重复同样的 2s+4s。
+			// 旧实现在这里会对每个 topic 各重试 3 次，最坏把首个请求拖住近两分钟。
+			logger.Error("Kafka broker 不可达，停止创建剩余主题",
+				logger.StringField("topic", name),
+				logger.IntField("remaining", len(topicNames)-i-1))
+			break
 		}
 	}
 
+	if len(errs) > 0 {
+		logger.Error("Kafka 主题初始化未全部成功", logger.IntField("failed", len(errs)))
+		return errors.Join(errs...)
+	}
+
+	logger.Info("Kafka 主题全部就绪", logger.IntField("topics", len(topicNames)))
 	return nil
 }

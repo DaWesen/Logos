@@ -43,9 +43,15 @@ func main() {
 	kafkaManager, err = mq.NewKafkaManager(cfg.Kafka.Brokers)
 	if err != nil {
 		log.Printf("Failed to init kafka, will continue without kafka: %v", err)
+	} else if err := kafkaManager.CreateTopic(mq.TopicDataCollection); err != nil {
+		// data_collection 的消费者是 extraction 服务：这个 topic 建不出来时，
+		// outbox relay 仍可能在首次发送时触发 broker 自动建主题（默认 1 分区），
+		// 抽取链路的并行度就被悄悄锁死。初始化失败必须留下 Error，不能再打印成功。
+		logger.Error("创建 data_collection 主题失败，抽取链路可能不可用",
+			logger.StringField("topic", mq.TopicDataCollection),
+			logger.ErrorField(err))
 	} else {
-		_ = kafkaManager.CreateTopic(mq.TopicDataCollection)
-		log.Println("Kafka initialized with data_collection topic")
+		logger.Info("Kafka 主题已就绪", logger.StringField("topic", mq.TopicDataCollection))
 	}
 
 	repo := dao.NewCollectionRepository(db)
