@@ -85,10 +85,28 @@ func NewExtractionService(repo dao.ExtractionRepository, einoClient *eino.EinoMa
 	}
 }
 
+func validateTaskType(taskType int32) error {
+	switch int(taskType) {
+	case model.TaskTypeEntityRecognition,
+		model.TaskTypeRelationExtraction,
+		model.TaskTypeTripleExtraction,
+		model.TaskTypeKeyphraseExtraction:
+		return nil
+	case model.TaskTypeSummarization:
+		return errors.New("摘要任务尚未实现")
+	default:
+		return fmt.Errorf("不支持的抽取任务类型: %d", taskType)
+	}
+}
+
 func (s *extractionServiceImpl) CreateTask(ctx context.Context, taskType int32, dataID, dataType string, parameters map[string]string, scheduledTime *string) (*model.ExtractionTask, error) {
 	logger.Info("创建抽取任务",
 		logger.StringField("data_id", dataID),
 		logger.IntField("type", int(taskType)))
+
+	if err := validateTaskType(taskType); err != nil {
+		return nil, err
+	}
 
 	task := &model.ExtractionTask{
 		ID:        uuid.New().String(),
@@ -133,6 +151,9 @@ func (s *extractionServiceImpl) UpdateTask(ctx context.Context, id string, taskT
 	}
 
 	if taskType != nil {
+		if err := validateTaskType(*taskType); err != nil {
+			return nil, err
+		}
 		task.Type = int(*taskType)
 	}
 	if parameters != nil {
@@ -256,13 +277,13 @@ func (s *extractionServiceImpl) runClaimedTask(ctx context.Context, task *model.
 	var extractErr error
 
 	switch task.Type {
-	case 1:
+	case model.TaskTypeEntityRecognition:
 		extractErr = s.executeEntityRecognition(ctx, task, result)
-	case 2:
+	case model.TaskTypeRelationExtraction:
 		extractErr = s.executeRelationExtraction(ctx, task, result)
-	case 3:
+	case model.TaskTypeTripleExtraction:
 		extractErr = s.executeTripleExtraction(ctx, task, result)
-	case 5:
+	case model.TaskTypeKeyphraseExtraction:
 		extractErr = s.executeKeyphraseExtraction(ctx, task, result)
 	default:
 		extractErr = fmt.Errorf("不支持的任务类型: %d", task.Type)
@@ -403,13 +424,13 @@ func (s *extractionServiceImpl) ExtractFromText(ctx context.Context, text string
 	}
 
 	switch taskType {
-	case 1:
+	case model.TaskTypeEntityRecognition:
 		entities, err = s.recognizeEntities(ctx, text, parameters)
-	case 2:
+	case model.TaskTypeRelationExtraction:
 		relations, err = s.extractRelations(ctx, text, parameters)
-	case 3:
+	case model.TaskTypeTripleExtraction:
 		triples, err = s.extractTriples(ctx, text, parameters)
-	case 5:
+	case model.TaskTypeKeyphraseExtraction:
 		keyphrases, err = s.extractKeyphrases(ctx, text, parameters)
 	default:
 		err = fmt.Errorf("不支持的抽取类型: %d", taskType)

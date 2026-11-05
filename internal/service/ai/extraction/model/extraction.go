@@ -14,6 +14,17 @@ const (
 	TaskStatusCancelled = 5
 )
 
+// 任务类型在存储层是 1 基，且 4 预留给尚未实现的摘要任务。
+// 与 proto 枚举（0 基，SUMMARIZATION=3、KEYPHRASE=4）不是简单 ±1，
+// 跨层转换必须走显式映射。
+const (
+	TaskTypeEntityRecognition   = 1
+	TaskTypeRelationExtraction  = 2
+	TaskTypeTripleExtraction    = 3
+	TaskTypeSummarization       = 4
+	TaskTypeKeyphraseExtraction = 5
+)
+
 // 结果状态沿用任务状态的取值：成功落 3、失败落 4。
 const (
 	ResultStatusSucceeded = TaskStatusSucceeded

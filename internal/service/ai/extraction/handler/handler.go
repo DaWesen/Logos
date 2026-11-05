@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"Logos/internal/service/ai/extraction/model"
 	"Logos/internal/service/ai/extraction/service"
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/extraction"
@@ -22,13 +23,20 @@ func (s *KnowledgeExtractionServiceImpl) CreateTask(ctx context.Context, req *pb
 		BaseResp: &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 	}
 
+	taskType, typeErr := taskTypeFromProto(req.Type)
+	if typeErr != nil {
+		resp.BaseResp.StatusCode = 400
+		resp.BaseResp.StatusMessage = typeErr.Error()
+		return resp, nil
+	}
+
 	var scheduledTime *string
 	if req.ScheduledTime != nil {
 		scheduledTime = req.ScheduledTime
 	}
 
 	task, err := s.ExtractionService.CreateTask(ctx,
-		int32(req.Type),
+		taskType,
 		req.DataId,
 		req.DataType,
 		req.Parameters,
@@ -40,7 +48,13 @@ func (s *KnowledgeExtractionServiceImpl) CreateTask(ctx context.Context, req *pb
 		return resp, nil
 	}
 
-	resp.Task = extractionToProto(task)
+	protoTask, convErr := extractionToProto(task)
+	if convErr != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = convErr.Error()
+		return resp, nil
+	}
+	resp.Task = protoTask
 	return resp, nil
 }
 
@@ -52,8 +66,13 @@ func (s *KnowledgeExtractionServiceImpl) UpdateTask(ctx context.Context, req *pb
 
 	var taskType *int32
 	if req.Type != nil {
-		t := int32(*req.Type)
-		taskType = &t
+		mapped, typeErr := taskTypeFromProto(*req.Type)
+		if typeErr != nil {
+			resp.BaseResp.StatusCode = 400
+			resp.BaseResp.StatusMessage = typeErr.Error()
+			return resp, nil
+		}
+		taskType = &mapped
 	}
 
 	task, updateErr := s.ExtractionService.UpdateTask(ctx,
@@ -68,7 +87,13 @@ func (s *KnowledgeExtractionServiceImpl) UpdateTask(ctx context.Context, req *pb
 		return resp, nil
 	}
 
-	resp.Task = extractionToProto(task)
+	protoTask, convErr := extractionToProto(task)
+	if convErr != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = convErr.Error()
+		return resp, nil
+	}
+	resp.Task = protoTask
 	return resp, nil
 }
 
@@ -101,7 +126,13 @@ func (s *KnowledgeExtractionServiceImpl) GetTask(ctx context.Context, req *pb.Ge
 		return resp, nil
 	}
 
-	resp.Task = extractionToProto(task)
+	protoTask, convErr := extractionToProto(task)
+	if convErr != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = convErr.Error()
+		return resp, nil
+	}
+	resp.Task = protoTask
 	return resp, nil
 }
 
@@ -118,8 +149,15 @@ func (s *KnowledgeExtractionServiceImpl) ListTasks(ctx context.Context, req *pb.
 		return resp, nil
 	}
 
-	for _, t := range tasks {
-		resp.Tasks = append(resp.Tasks, extractionToProto(t))
+	for i, t := range tasks {
+		protoTask, convErr := extractionToProto(t)
+		if convErr != nil {
+			resp.Tasks = nil
+			resp.BaseResp.StatusCode = 500
+			resp.BaseResp.StatusMessage = fmt.Sprintf("第 %d 个任务: %v", i+1, convErr)
+			return resp, nil
+		}
+		resp.Tasks = append(resp.Tasks, protoTask)
 	}
 	return resp, nil
 }
@@ -134,6 +172,14 @@ func (s *KnowledgeExtractionServiceImpl) ExecuteTask(ctx context.Context, req *p
 	if execErr != nil {
 		resp.BaseResp.StatusCode = 500
 		resp.BaseResp.StatusMessage = execErr.Error()
+		// ExecuteTask 失败时可能没有结果行（任务被并发抢占、限流、
+		// 任务不存在等）。此时继续转 nil 结果会触发空指针 panic。
+		return resp, nil
+	}
+	if result == nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = "抽取任务未返回结果"
+		return resp, nil
 	}
 
 	protoResult, convertErr := resultToProto(result)
@@ -217,10 +263,17 @@ func (s *KnowledgeExtractionServiceImpl) ExtractFromText(ctx context.Context, re
 		BaseResp: &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 	}
 
+	taskType, typeErr := taskTypeFromProto(req.Type)
+	if typeErr != nil {
+		resp.BaseResp.StatusCode = 400
+		resp.BaseResp.StatusMessage = typeErr.Error()
+		return resp, nil
+	}
+
 	entities, relations, triples, keyphrases, extractErr := s.ExtractionService.ExtractFromText(
 		ctx,
 		req.Text,
-		int32(req.Type),
+		taskType,
 		req.Parameters,
 	)
 	if extractErr != nil {
@@ -259,6 +312,61 @@ func (s *KnowledgeExtractionServiceImpl) ExtractFromText(ctx context.Context, re
 	return resp, nil
 }
 
+// taskTypeFromProto 把 proto 的 0 基枚举映射到存储层的 1 基类型。
+// 两套枚举不是简单 ±1：proto 的 SUMMARIZATION 占 3，而存储层的
+// 3 是三元组、4 才是摘要、5 是关键短语。直接强转会让实体识别（0）
+// 进入「不支持的类型」分支，接口却已经返回创建成功。
+func taskTypeFromProto(t pb.ExtractionTaskType) (int32, error) {
+	switch t {
+	case pb.ExtractionTaskType_ENTITY_RECOGNITION:
+		return model.TaskTypeEntityRecognition, nil
+	case pb.ExtractionTaskType_RELATION_EXTRACTION:
+		return model.TaskTypeRelationExtraction, nil
+	case pb.ExtractionTaskType_TRIPLE_EXTRACTION:
+		return model.TaskTypeTripleExtraction, nil
+	case pb.ExtractionTaskType_KEYPHRASE_EXTRACTION:
+		return model.TaskTypeKeyphraseExtraction, nil
+	case pb.ExtractionTaskType_SUMMARIZATION:
+		return 0, fmt.Errorf("摘要任务尚未实现")
+	default:
+		return 0, fmt.Errorf("未知的抽取任务类型: %d", int32(t))
+	}
+}
+
+func taskTypeToProto(t int) (pb.ExtractionTaskType, error) {
+	switch t {
+	case model.TaskTypeEntityRecognition:
+		return pb.ExtractionTaskType_ENTITY_RECOGNITION, nil
+	case model.TaskTypeRelationExtraction:
+		return pb.ExtractionTaskType_RELATION_EXTRACTION, nil
+	case model.TaskTypeTripleExtraction:
+		return pb.ExtractionTaskType_TRIPLE_EXTRACTION, nil
+	case model.TaskTypeSummarization:
+		return pb.ExtractionTaskType_SUMMARIZATION, nil
+	case model.TaskTypeKeyphraseExtraction:
+		return pb.ExtractionTaskType_KEYPHRASE_EXTRACTION, nil
+	default:
+		return pb.ExtractionTaskType_ENTITY_RECOGNITION, fmt.Errorf("任务类型 %d 无法映射到 proto 枚举", t)
+	}
+}
+
+func taskStatusToProto(s int) (pb.TaskStatus, error) {
+	switch s {
+	case model.TaskStatusPending:
+		return pb.TaskStatus_PENDING, nil
+	case model.TaskStatusRunning:
+		return pb.TaskStatus_RUNNING, nil
+	case model.TaskStatusSucceeded:
+		return pb.TaskStatus_SUCCESS, nil
+	case model.TaskStatusFailed:
+		return pb.TaskStatus_FAILED, nil
+	case model.TaskStatusCancelled:
+		return pb.TaskStatus_CANCELLED, nil
+	default:
+		return pb.TaskStatus_PENDING, fmt.Errorf("任务状态 %d 无法映射到 proto 枚举", s)
+	}
+}
+
 func extractionToProto(t interface {
 	GetID() string
 	GetType() int
@@ -268,22 +376,33 @@ func extractionToProto(t interface {
 	GetParameters() string
 	GetCreatedAt() time.Time
 	GetUpdatedAt() time.Time
-}) *pb.ExtractionTask {
+}) (*pb.ExtractionTask, error) {
 	parameters := make(map[string]string)
 	if t.GetParameters() != "" {
-		json.Unmarshal([]byte(t.GetParameters()), &parameters)
+		if err := json.Unmarshal([]byte(t.GetParameters()), &parameters); err != nil {
+			return nil, fmt.Errorf("解析任务参数失败: %w", err)
+		}
+	}
+
+	taskType, err := taskTypeToProto(t.GetType())
+	if err != nil {
+		return nil, err
+	}
+	status, err := taskStatusToProto(t.GetStatus())
+	if err != nil {
+		return nil, err
 	}
 
 	return &pb.ExtractionTask{
 		Id:         t.GetID(),
-		Type:       pb.ExtractionTaskType(t.GetType()),
+		Type:       taskType,
 		DataId:     t.GetDataID(),
 		DataType:   t.GetDataType(),
-		Status:     pb.TaskStatus(t.GetStatus()),
+		Status:     status,
 		Parameters: parameters,
 		CreatedAt:  t.GetCreatedAt().Unix(),
 		UpdatedAt:  t.GetUpdatedAt().Unix(),
-	}
+	}, nil
 }
 
 func resultToProto(r interface {
@@ -342,10 +461,15 @@ func resultToProto(r interface {
 		}
 	}
 
+	status, err := taskStatusToProto(r.GetStatus())
+	if err != nil {
+		return nil, err
+	}
+
 	return &pb.ExtractionResult{
 		Id:           r.GetID(),
 		TaskId:       r.GetTaskID(),
-		Status:       pb.TaskStatus(r.GetStatus()),
+		Status:       status,
 		Entities:     entities,
 		Relations:    relations,
 		Triples:      triples,
