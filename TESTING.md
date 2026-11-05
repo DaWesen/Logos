@@ -162,6 +162,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **视频解析降级**：元信息探测失败时 `metadata` 不含 `video_info` 且抽帧回落到默认 1s 间隔；抽帧失败时仍保留 ASR 文本；单帧 VLM 失败只跳过该帧、不产生空帧段落；全部帧描述失败时不渲染「视频帧详情」；`duration=60` 时 `FrameInterval=10`、`MaxFrames=5`；`duration=3` 时间隔被夹到 1s；调用方显式传入的 `ExtractOptions` 优先且不被就地修改
 
 - **转发目标类型解析**：`GetGroupByID` 返回错误时 `ForwardMessage` 原样上抛且不写任何消息（即使前一个目标已解析成功）；已有群会话按群聊类型落库（`ChatType=Group`、`ChatID=目标群`），不能按私聊建出幽灵会话
+- **私聊拉黑拦截**：对方拉黑或自己拉黑都返回 `ErrChatBlocked`，且拦截发生在建会话/落库之前（`privateConvCalls == 0`）；关系服务查询失败返回 `ErrChatRelationshipUnavailable`（失败关闭）而不是放行；无拉黑时正常放行且双向各查一次；`system` / `bot_` 发送者与 `bot_` 目标跳过联系人查询；适配器在 TTL 内只回源一次、过期后取到最新拉黑状态、上游故障时**不**返回过期缓存；`CheckFriendship` 无记录返回 200/false/false，数据库故障返回 500，拉黑状态原样回传
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
