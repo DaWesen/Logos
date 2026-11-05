@@ -84,11 +84,34 @@ type stubChatRepo struct {
 	// transferOwnerCalls / transferOwnerErr 验证群主转让失败会中止退出。
 	transferOwnerCalls []string
 	transferOwnerErr   error
+	// muteCalls / roleCalls 记录禁言与角色写入，验证目标不存在时零写入。
+	muteCalls []muteCall
+	muteErr   error
+	roleCalls []roleCall
+	roleErr   error
+	// addMemberCalls 记录加入群组的直接写入，验证判重查询失败时不插入。
+	addMemberCalls []*model.GroupMember
+	addMemberErr   error
+	// participantCalls / memberCountCalls 记录加入群组的后续写入。
+	participantCalls []*model.ConversationParticipant
+	memberCountCalls []string
 }
 
 type leaveCall struct {
 	groupID string
 	userID  string
+}
+
+type muteCall struct {
+	groupID  string
+	userID   string
+	muteType model.MuteType
+}
+
+type roleCall struct {
+	groupID string
+	userID  string
+	role    model.GroupMemberRole
 }
 
 type inviteCall struct {
@@ -151,6 +174,38 @@ func (r *stubChatRepo) InviteGroupMembers(_ context.Context, groupID string, mem
 func (r *stubChatRepo) RemoveGroupMemberAndConversation(_ context.Context, groupID, userID string) error {
 	r.leaveCalls = append(r.leaveCalls, leaveCall{groupID: groupID, userID: userID})
 	return r.leaveErr
+}
+
+func (r *stubChatRepo) UpdateGroupMemberMute(_ context.Context, groupID, userID string, muteType model.MuteType, _ time.Time) error {
+	r.muteCalls = append(r.muteCalls, muteCall{groupID: groupID, userID: userID, muteType: muteType})
+	return r.muteErr
+}
+
+func (r *stubChatRepo) UpdateGroupMemberRole(_ context.Context, groupID, userID string, role model.GroupMemberRole) error {
+	r.roleCalls = append(r.roleCalls, roleCall{groupID: groupID, userID: userID, role: role})
+	return r.roleErr
+}
+
+func (r *stubChatRepo) AddGroupMember(_ context.Context, member *model.GroupMember) error {
+	r.addMemberCalls = append(r.addMemberCalls, member)
+	if r.addMemberErr != nil {
+		return r.addMemberErr
+	}
+	if r.members == nil {
+		r.members = make(map[string]*model.GroupMember)
+	}
+	r.members[member.GroupID+"|"+member.UserID] = member
+	return nil
+}
+
+func (r *stubChatRepo) AddConversationParticipant(_ context.Context, p *model.ConversationParticipant) error {
+	r.participantCalls = append(r.participantCalls, p)
+	return nil
+}
+
+func (r *stubChatRepo) UpdateGroupMemberCount(_ context.Context, groupID string) error {
+	r.memberCountCalls = append(r.memberCountCalls, groupID)
+	return nil
 }
 
 func (r *stubChatRepo) DeleteGroup(_ context.Context, groupID string) error {

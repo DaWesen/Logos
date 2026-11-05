@@ -2134,7 +2134,11 @@ func checkMuted(member *model.GroupMember, now time.Time) error {
 func (s *ChatServiceImpl) MuteGroupMember(groupID, operatorID, userID string, muteType model.MuteType, muteUntil time.Time) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
@@ -2143,7 +2147,17 @@ func (s *ChatServiceImpl) MuteGroupMember(groupID, operatorID, userID string, mu
 		return fmt.Errorf("没有权限禁言")
 	}
 
-	if _, err := s.repo.GetGroupMember(s.ctx, groupID, userID); err != nil {
+	target, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
+	if err != nil {
+		logger.Error("查询目标群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("target_user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询目标成员身份失败: %w", err)
+	}
+	if target == nil {
+		// GORM 的 Update 对 0 行命中也返回 nil，不先确认目标存在的话，
+		// 禁言一个不在群里的人会“成功”，实际上什么都没写。
 		return fmt.Errorf("目标用户不在群中")
 	}
 
@@ -2165,7 +2179,11 @@ func (s *ChatServiceImpl) MuteGroupMember(groupID, operatorID, userID string, mu
 func (s *ChatServiceImpl) TransferGroupOwner(groupID, operatorID, newOwnerID string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
@@ -2174,7 +2192,17 @@ func (s *ChatServiceImpl) TransferGroupOwner(groupID, operatorID, newOwnerID str
 		return fmt.Errorf("只有群主可以转让")
 	}
 
-	if _, err := s.repo.GetGroupMember(s.ctx, groupID, newOwnerID); err != nil {
+	newOwner, err := s.repo.GetGroupMember(s.ctx, groupID, newOwnerID)
+	if err != nil {
+		logger.Error("查询新群主成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("new_owner_id", newOwnerID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询新群主身份失败: %w", err)
+	}
+	if newOwner == nil {
+		// 转让事务会直接把 groups.owner_id 指过去；目标不是成员时必须
+		// 提前拒绝，否则群主字段会指向一个永远无法管理该群的人。
 		return fmt.Errorf("新群主不在群中")
 	}
 
@@ -2195,7 +2223,11 @@ func (s *ChatServiceImpl) TransferGroupOwner(groupID, operatorID, newOwnerID str
 func (s *ChatServiceImpl) UpdateGroupAnnouncement(groupID, operatorID, announcement string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
@@ -2226,7 +2258,11 @@ func (s *ChatServiceImpl) UpdateGroupAnnouncement(groupID, operatorID, announcem
 func (s *ChatServiceImpl) UpdateGroupAvatar(groupID, operatorID, avatar string) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
@@ -2251,13 +2287,31 @@ func (s *ChatServiceImpl) UpdateGroupAvatar(groupID, operatorID, avatar string) 
 func (s *ChatServiceImpl) SetGroupAdmin(groupID, operatorID, userID string, isAdmin bool) error {
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
 	}
 	if operator.Role != model.GroupMemberRoleOwner {
 		return fmt.Errorf("只有群主可以设置管理员")
+	}
+
+	target, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
+	if err != nil {
+		logger.Error("查询目标群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("target_user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询目标成员身份失败: %w", err)
+	}
+	if target == nil {
+		// UpdateGroupMemberRole 对不存在的成员同样返回 nil，
+		// 不校验就会把“设置成功”返回给一个根本不在群里的用户。
+		return fmt.Errorf("目标用户不在群中")
 	}
 
 	role := model.GroupMemberRoleMember
@@ -2309,7 +2363,16 @@ func (s *ChatServiceImpl) JoinGroup(groupID, userID string) error {
 	}
 
 	existing, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
-	if err == nil && existing != nil {
+	if err != nil {
+		// 判重查询失败不能当成「不在群里」继续插入：数据库抖动时
+		// 会把已在群里的用户再插一遍，最终以唯一约束错误收场。
+		logger.Error("查询群成员身份失败，拒绝加入",
+			logger.StringField("group_id", groupID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
+	}
+	if existing != nil {
 		return fmt.Errorf("已在群组中")
 	}
 
