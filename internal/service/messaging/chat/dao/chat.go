@@ -138,6 +138,9 @@ type ChatRepository interface {
 	// 会话列表里却没有这个群；成员数更新失败则会让群资料长期显示旧人数。
 	InviteGroupMembers(ctx context.Context, groupID string, members []*model.GroupMember, participants []*model.ConversationParticipant) error
 	RemoveGroupMember(ctx context.Context, groupID, userID string) error
+	// RemoveGroupMemberAndConversation 在单个事务内移除群成员、删除其会话
+	// 参与者并重算群成员数，保证「退出/踢出」不会留下半截状态。
+	RemoveGroupMemberAndConversation(ctx context.Context, groupID, userID string) error
 	GetGroupMembers(ctx context.Context, groupID string, page, pageSize int) ([]*model.GroupMember, int64, error)
 	GetGroupMember(ctx context.Context, groupID, userID string) (*model.GroupMember, error)
 	UpdateGroupMemberRole(ctx context.Context, groupID, userID string, role model.GroupMemberRole) error
@@ -849,6 +852,33 @@ func (r *chatRepositoryImpl) RemoveGroupMember(ctx context.Context, groupID, use
 	return r.db.WithContext(ctx).
 		Where("group_id = ? AND user_id = ?", groupID, userID).
 		Delete(&model.GroupMember{}).Error
+}
+
+// RemoveGroupMemberAndConversation 在单个事务内完成「退出/踢出」的全部写入。
+//
+// 旧实现分三次独立写入：成员删除成功后，参与者删除和成员数更新只打 Warn。
+// 参与者删失败会让用户「已经不在成员列表里，会话列表却一直显示这个群」；
+// 而且再次退出时查不到成员会被当成非成员，这条脏数据永远修不好。
+func (r *chatRepositoryImpl) RemoveGroupMemberAndConversation(ctx context.Context, groupID, userID string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("group_id = ? AND user_id = ?", groupID, userID).
+			Delete(&model.GroupMember{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("conversation_id = ? AND user_id = ?", groupID, userID).
+			Delete(&model.ConversationParticipant{}).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&model.GroupMember{}).
+			Where("group_id = ?", groupID).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Group{}).
+			Where("id = ?", groupID).
+			Update("member_count", int(count)).Error
+	})
 }
 
 func (r *chatRepositoryImpl) GetGroupMembers(ctx context.Context, groupID string, page, pageSize int) ([]*model.GroupMember, int64, error) {

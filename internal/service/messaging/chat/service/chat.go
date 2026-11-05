@@ -2016,7 +2016,13 @@ func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) er
 		logger.StringField("target_user_id", userID))
 	operator, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		// 查询失败不等于没有权限：报「您不是群成员」会掩盖数据库故障，
+		// 让真正的运维问题看起来只是用户操作不当。
+		logger.Error("查询操作者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
 	}
 	if operator == nil {
 		return fmt.Errorf("您不是群成员")
@@ -2027,7 +2033,11 @@ func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) er
 
 	target, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
 	if err != nil {
-		return fmt.Errorf("目标用户不在群中")
+		logger.Error("查询目标群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("target_user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询目标成员失败: %w", err)
 	}
 	if target == nil {
 		return fmt.Errorf("目标用户不在群中")
@@ -2041,25 +2051,25 @@ func (s *ChatServiceImpl) KickGroupMember(groupID, operatorID, userID string) er
 		return fmt.Errorf("管理员不能互踢")
 	}
 
-	if err := s.repo.RemoveGroupMember(s.ctx, groupID, userID); err != nil {
-		logger.Error("踢出群成员失败", logger.ErrorField(err))
+	if err := s.repo.RemoveGroupMemberAndConversation(s.ctx, groupID, userID); err != nil {
+		logger.Error("踢出群成员失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("target_user_id", userID),
+			logger.ErrorField(err))
 		return err
-	}
-
-	if err := s.repo.DeleteConversationForUser(s.ctx, groupID, userID); err != nil {
-		logger.Warn("删除会话参与者失败", logger.ErrorField(err))
-	}
-
-	if err := s.repo.UpdateGroupMemberCount(s.ctx, groupID); err != nil {
-		logger.Warn("更新群组成员数失败", logger.ErrorField(err))
 	}
 
 	remainingMemberIDs, err := s.repo.GetAllGroupMemberIDs(s.ctx, groupID)
 	if err != nil {
-		logger.Warn("获取剩余群成员失败", logger.ErrorField(err))
-	}
-
-	if len(remainingMemberIDs) == 0 {
+		// 成员已经从库里删掉了，但「群里还剩谁」读不出来。此时绝不能
+		// 按空列表解散群：一次读故障会连坐删除剩余所有成员。
+		// 踢人本身已成功，返回错误只会让调用方重试并得到「目标不在群中」，
+		// 所以记录 Error 后跳过自动解散，继续尝试发系统提示。
+		logger.Error("获取剩余群成员失败，跳过自动解散",
+			logger.StringField("group_id", groupID),
+			logger.StringField("target_user_id", userID),
+			logger.ErrorField(err))
+	} else if len(remainingMemberIDs) == 0 {
 		if err := s.repo.DeleteGroup(s.ctx, groupID); err != nil {
 			logger.Error("解散群组失败", logger.ErrorField(err))
 		} else {
@@ -2344,16 +2354,39 @@ func (s *ChatServiceImpl) LeaveGroup(groupID, userID string) error {
 	}
 
 	member, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
-	if err != nil || member == nil {
+	if err != nil {
+		// 查询失败不是「不是成员」：把数据库故障回答成权限问题，
+		// 用户会反复重试，日志里却看不到真正的错误。
+		logger.Error("查询退出者群成员身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员身份失败: %w", err)
+	}
+	if member == nil {
 		return fmt.Errorf("您不是该群组成员")
 	}
 
 	memberIDs, err := s.repo.GetAllGroupMemberIDs(s.ctx, groupID)
 	if err != nil {
-		logger.Warn("获取群成员失败", logger.ErrorField(err))
+		// 这里绝不能降级：下面用 len(memberIDs) 判断是否最后一人，
+		// 查询失败时列表为空，会把「读失败」当成「群里只剩我」，
+		// 于是一次普通的退出请求会直接删掉整个群。
+		logger.Error("获取群成员列表失败，拒绝退出以避免误解散群",
+			logger.StringField("group_id", groupID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
+		return fmt.Errorf("查询群成员列表失败: %w", err)
 	}
 
-	isLastMember := len(memberIDs) <= 1
+	// 只有明确读到「成员列表就是退出者本人」才解散群；空列表说明读到的
+	// 数据不可信，按普通退出处理，宁可留一个空群也不能误删整个群。
+	isLastMember := len(memberIDs) == 1 && memberIDs[0] == userID
+	if len(memberIDs) == 0 {
+		logger.Warn("群成员列表为空，跳过自动解散",
+			logger.StringField("group_id", groupID),
+			logger.StringField("user_id", userID))
+	}
 
 	if isLastMember {
 		if err := s.repo.DeleteGroup(s.ctx, groupID); err != nil {
@@ -2376,28 +2409,30 @@ func (s *ChatServiceImpl) LeaveGroup(groupID, userID string) error {
 		}
 		if newOwnerID != "" {
 			if err := s.repo.TransferGroupOwner(s.ctx, groupID, newOwnerID); err != nil {
-				logger.Warn("自动转让群主失败", logger.ErrorField(err))
-			} else {
-				logger.Info("📋 [群组-退出] 群主退出，自动转让群主",
+				// 转让失败还继续退出，群主会指向一个已经不在群里的用户，
+				// 之后没人能管理这个群。必须在移除成员前中止。
+				logger.Error("自动转让群主失败，中止退出",
 					logger.StringField("group_id", groupID),
 					logger.StringField("old_owner", userID),
-					logger.StringField("new_owner", newOwnerID))
-				newOwnerName := s.resolveUserName(newOwnerID)
-				s.sendGroupSystemMessage(groupID, fmt.Sprintf("群主已退出，%s 已成为新群主", newOwnerName))
+					logger.StringField("new_owner", newOwnerID),
+					logger.ErrorField(err))
+				return fmt.Errorf("转让群主失败: %w", err)
 			}
+			logger.Info("📋 [群组-退出] 群主退出，自动转让群主",
+				logger.StringField("group_id", groupID),
+				logger.StringField("old_owner", userID),
+				logger.StringField("new_owner", newOwnerID))
+			newOwnerName := s.resolveUserName(newOwnerID)
+			s.sendGroupSystemMessage(groupID, fmt.Sprintf("群主已退出，%s 已成为新群主", newOwnerName))
 		}
 	}
 
-	if err := s.repo.RemoveGroupMember(s.ctx, groupID, userID); err != nil {
+	if err := s.repo.RemoveGroupMemberAndConversation(s.ctx, groupID, userID); err != nil {
+		logger.Error("退出群组写入失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("user_id", userID),
+			logger.ErrorField(err))
 		return err
-	}
-
-	if err := s.repo.UpdateGroupMemberCount(s.ctx, groupID); err != nil {
-		logger.Warn("更新群组成员数失败", logger.ErrorField(err))
-	}
-
-	if err := s.repo.DeleteConversationForUser(s.ctx, groupID, userID); err != nil {
-		logger.Warn("删除会话参与者失败", logger.ErrorField(err))
 	}
 
 	if group.OwnerID != userID {

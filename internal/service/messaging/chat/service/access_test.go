@@ -75,6 +75,19 @@ type stubChatRepo struct {
 	groupMemberErrFor map[string]error
 	// invites 记录批量邀请写入，便于断言输入去重与整批拒绝。
 	invites []inviteCall
+	// leaveCalls 记录「退出/踢出」事务写入，验证成员/参与者/成员数收敛为一次调用。
+	leaveCalls []leaveCall
+	leaveErr   error
+	// deleteGroupCalls 记录解散群，防止成员列表查询失败时误删整个群。
+	deleteGroupCalls []string
+	// transferOwnerCalls / transferOwnerErr 验证群主转让失败会中止退出。
+	transferOwnerCalls []string
+	transferOwnerErr   error
+}
+
+type leaveCall struct {
+	groupID string
+	userID  string
 }
 
 type inviteCall struct {
@@ -132,6 +145,21 @@ func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string)
 func (r *stubChatRepo) InviteGroupMembers(_ context.Context, groupID string, members []*model.GroupMember, participants []*model.ConversationParticipant) error {
 	r.invites = append(r.invites, inviteCall{groupID: groupID, members: members, participants: participants})
 	return nil
+}
+
+func (r *stubChatRepo) RemoveGroupMemberAndConversation(_ context.Context, groupID, userID string) error {
+	r.leaveCalls = append(r.leaveCalls, leaveCall{groupID: groupID, userID: userID})
+	return r.leaveErr
+}
+
+func (r *stubChatRepo) DeleteGroup(_ context.Context, groupID string) error {
+	r.deleteGroupCalls = append(r.deleteGroupCalls, groupID)
+	return nil
+}
+
+func (r *stubChatRepo) TransferGroupOwner(_ context.Context, groupID, newOwnerID string) error {
+	r.transferOwnerCalls = append(r.transferOwnerCalls, groupID+"|"+newOwnerID)
+	return r.transferOwnerErr
 }
 
 func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64, error) {
