@@ -171,6 +171,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **群管理写接口失败关闭**：禁言/设置管理员/转让群主在目标成员查询失败或目标不存在时上抛错误且零写入（回归 GORM `Update` 命中 0 行仍返回 `nil`，导致「禁言成功」但什么都没写）；操作者查询失败在禁言/转让/公告/头像/设置管理员五个入口统一返回「查询群成员身份失败」；`JoinGroup` 判重查询失败必须拒绝加入且不插入（回归查询失败被当成「不在群里」重复插入撞唯一约束）；正常路径分别写入一次禁言/角色/转让/成员，验证校验没有误伤合法请求
 - **撤回/编辑事件接收者降级可观测**：群成员查询失败时 `editRecipients` 必须返回 error，接收者列表退化为仅发送者；调用方记录「降级为仅通知发送者」而不把已落库的撤回/编辑判为失败（回归 `recipientIDs, _ = ...` 静默吞错，其他成员永远停在旧内容且无日志）；正常路径仍覆盖群全体成员并包含发送者本人
 - **建群原子性与入参去重**：`member_ids` 含群主本人/重复 ID 时按首次出现顺序去重且不改调用方切片；群、会话、成员、参与者、成员数走 `CreateGroupWithMembers` 单事务，任一步失败整体上抛且不写系统消息；Bot 只写 `group_members` 不写 `conversation_participants`；空群主返回 `ErrChatBadRequest` 且零写入
+- **监控服务状态契约漂移可观测**：`ListServiceStatuses` 在 nil client / RPC 失败 / 非法 JSON / 空数组 / 缺 `data` / 顶层非对象时回退本地探测，且 `data` 必须是非 nil 空数组（端口配置为 0 时不发起真实拨号）；合法列表原样透传、长度不变；不可识别条目（非对象、缺 `service_name`、`status` 非字符串）保留在输出中而不被静默丢弃；`GetServiceStatus` 在非法 JSON / 顶层非对象 / 空 message 时返回 500 `invalid monitoring response` 且不携带 `data`，合法响应解包 `data` 字段，RPC 失败与下游业务错误码分别映射到 500
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
