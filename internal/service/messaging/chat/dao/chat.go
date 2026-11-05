@@ -130,6 +130,10 @@ type ChatRepository interface {
 	AddConversationParticipants(ctx context.Context, ps []*model.ConversationParticipant) error
 
 	CreateGroup(ctx context.Context, group *model.Group) error
+	// CreateGroupWithMembers 在单个事务内创建群、会话、群成员、会话参与者并重算成员数。
+	// 建群是用户可见的组合状态：群已存在但会话缺失时，成员能查到群却不出现在会话列表；
+	// 成员已写入但参与者缺失时，被拉进群的人收不到任何会话入口。任何一步失败整体回滚。
+	CreateGroupWithMembers(ctx context.Context, group *model.Group, conv *model.Conversation, members []*model.GroupMember, participants []*model.ConversationParticipant) error
 	GetGroupByID(ctx context.Context, groupID string) (*model.Group, error)
 	AddGroupMember(ctx context.Context, member *model.GroupMember) error
 	AddGroupMembers(ctx context.Context, members []*model.GroupMember) error
@@ -803,6 +807,43 @@ func (r *chatRepositoryImpl) AddConversationParticipants(ctx context.Context, ps
 
 func (r *chatRepositoryImpl) CreateGroup(ctx context.Context, group *model.Group) error {
 	return r.db.WithContext(ctx).Create(group).Error
+}
+
+func (r *chatRepositoryImpl) CreateGroupWithMembers(ctx context.Context, group *model.Group, conv *model.Conversation, members []*model.GroupMember, participants []*model.ConversationParticipant) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(group).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(conv).Error; err != nil {
+			return err
+		}
+		if len(members) > 0 {
+			if err := tx.Create(members).Error; err != nil {
+				return err
+			}
+		}
+		if len(participants) > 0 {
+			if err := tx.Create(participants).Error; err != nil {
+				return err
+			}
+		}
+
+		// 成员数是冗余字段，必须在同一事务里按成员表重算；
+		// 事务外更新会留下「群已建好、人数还是 0」的漂移窗口。
+		var count int64
+		if err := tx.Model(&model.GroupMember{}).
+			Where("group_id = ?", group.ID).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Group{}).
+			Where("id = ?", group.ID).
+			Update("member_count", int(count)).Error; err != nil {
+			return err
+		}
+		group.MemberCount = int(count)
+		return nil
+	})
 }
 
 func (r *chatRepositoryImpl) GetGroupByID(ctx context.Context, groupID string) (*model.Group, error) {

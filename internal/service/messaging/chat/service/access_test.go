@@ -95,6 +95,16 @@ type stubChatRepo struct {
 	// participantCalls / memberCountCalls 记录加入群组的后续写入。
 	participantCalls []*model.ConversationParticipant
 	memberCountCalls []string
+	// groupCreations 记录建群的单事务载荷，err 用于验证失败会整体上抛。
+	groupCreations []groupCreationCall
+	createGroupErr error
+}
+
+type groupCreationCall struct {
+	group        *model.Group
+	conv         *model.Conversation
+	members      []*model.GroupMember
+	participants []*model.ConversationParticipant
 }
 
 type leaveCall struct {
@@ -155,6 +165,24 @@ func (r *stubChatRepo) CreateMessage(_ context.Context, msg *model.Message) erro
 }
 
 func (r *stubChatRepo) UpdateConversationLastMessage(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (r *stubChatRepo) CreateGroupWithMembers(_ context.Context, group *model.Group, conv *model.Conversation, members []*model.GroupMember, participants []*model.ConversationParticipant) error {
+	if r.createGroupErr != nil {
+		return r.createGroupErr
+	}
+	r.groupCreations = append(r.groupCreations, groupCreationCall{
+		group:        group,
+		conv:         conv,
+		members:      members,
+		participants: participants,
+	})
+	if r.groups == nil {
+		r.groups = make(map[string]*model.Group)
+	}
+	group.MemberCount = len(members)
+	r.groups[group.ID] = group
 	return nil
 }
 

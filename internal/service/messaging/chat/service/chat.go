@@ -1788,6 +1788,9 @@ func checkPrivateChatAccess(chatID, userID string) error {
 }
 
 func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, metadata map[string]string) (*model.Group, error) {
+	if ownerID == "" {
+		return nil, types.ErrChatBadRequest
+	}
 	now := time.Now()
 	groupID := uuid.New().String()
 
@@ -1799,11 +1802,6 @@ func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, 
 		UpdatedAt: now,
 	}
 
-	if err := s.repo.CreateGroup(s.ctx, group); err != nil {
-		logger.Error("创建群组失败", logger.ErrorField(err))
-		return nil, err
-	}
-
 	conv := &model.Conversation{
 		ID:        groupID,
 		ChatID:    groupID,
@@ -1812,14 +1810,32 @@ func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, 
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := s.repo.CreateConversation(s.ctx, conv); err != nil {
-		logger.Warn("创建会话记录失败", logger.ErrorField(err))
+
+	// 客户端可能把群主本人也放进 member_ids，也可能重复传同一个人。
+	// 直接 append(ownerID) 会向 (group_id, user_id) 唯一索引插入重复行，
+	// 整个建群事务回滚，调用方只能看到一句「建群失败」，看不出是参数重复。
+	// 这里按首次出现顺序去重，并保证群主一定在列表里。
+	normalizedIDs := make([]string, 0, len(memberIDs)+1)
+	seen := make(map[string]struct{}, len(memberIDs)+1)
+	addMemberID := func(uid string) {
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			return
+		}
+		if _, ok := seen[uid]; ok {
+			return
+		}
+		seen[uid] = struct{}{}
+		normalizedIDs = append(normalizedIDs, uid)
+	}
+	addMemberID(ownerID)
+	for _, uid := range memberIDs {
+		addMemberID(uid)
 	}
 
-	members := make([]*model.GroupMember, 0, len(memberIDs)+1)
-	memberIDs = append(memberIDs, ownerID)
-
-	for _, uid := range memberIDs {
+	members := make([]*model.GroupMember, 0, len(normalizedIDs))
+	participants := make([]*model.ConversationParticipant, 0, len(normalizedIDs))
+	for _, uid := range normalizedIDs {
 		role := model.GroupMemberRoleMember
 		if uid == ownerID {
 			role = model.GroupMemberRoleOwner
@@ -1839,39 +1855,27 @@ func (s *ChatServiceImpl) CreateGroup(name, ownerID string, memberIDs []string, 
 			UpdatedAt: now,
 		}
 		members = append(members, member)
-	}
 
-	if err := s.repo.AddGroupMembers(s.ctx, members); err != nil {
-		logger.Error("添加群成员失败", logger.ErrorField(err))
-		return nil, err
-	}
-
-	// 更新群组成员数
-	if err := s.repo.UpdateGroupMemberCount(s.ctx, groupID); err != nil {
-		logger.Warn("更新群组成员数失败", logger.ErrorField(err))
-	}
-
-	// 添加 ConversationParticipant 记录，这样群成员才能在会话列表里看到
-	participants := make([]*model.ConversationParticipant, 0, len(memberIDs))
-	for _, uid := range memberIDs {
+		// Bot 不是真实会话参与者：给它写 participant 会让会话列表出现
+		// 一个无法登录、也无法读取会话的「用户」。
 		if strings.HasPrefix(uid, "bot_") {
 			continue
 		}
-		p := &model.ConversationParticipant{
+		participants = append(participants, &model.ConversationParticipant{
 			ConversationID: groupID,
 			UserID:         uid,
 			LastReadAt:     now,
 			JoinedAt:       now,
 			CreatedAt:      now,
 			UpdatedAt:      now,
-		}
-		participants = append(participants, p)
-		logger.Info("[DEBUG] Will add participant", logger.StringField("user_id", uid), logger.StringField("group_id", groupID))
+		})
 	}
-	if err := s.repo.AddConversationParticipants(s.ctx, participants); err != nil {
-		logger.Warn("添加会话参与者失败", logger.ErrorField(err))
-	} else {
-		logger.Info("[DEBUG] Successfully added participants", logger.StringField("group_id", groupID), logger.AnyField("participants", participants))
+
+	// 群、会话、成员、参与者、成员数必须同事务落库：早先每一步失败只打 Warn，
+	// 会出现「群建好了但成员会话列表里没有它」「成员数永远是 0」的半成品。
+	if err := s.repo.CreateGroupWithMembers(s.ctx, group, conv, members, participants); err != nil {
+		logger.Error("创建群组失败", logger.ErrorField(err))
+		return nil, err
 	}
 
 	sysMsg := &model.Message{
