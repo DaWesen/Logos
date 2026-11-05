@@ -414,7 +414,14 @@ func (s *ChatServiceImpl) authorizeIncomingMessage(event *types.MessageEvent) bo
 	case types.ChatTypeGroup:
 		member, err := s.repo.GetGroupMember(s.ctx, event.ChatID, event.SenderID)
 		if err != nil {
-			logger.Warn("检查群成员身份失败", logger.ErrorField(err))
+			// 失败关闭：无法确认发送者身份时丢弃这条事件，不能因为查询失败
+			// 就把任意人放进群聊。事件由 MQ 重投还是丢弃取决于上层策略，
+			// 但鉴权层必须先给出明确的拒绝。
+			logger.Error("检查群成员身份失败，已拒绝该消息事件",
+				logger.StringField("sender_id", event.SenderID),
+				logger.StringField("chat_id", event.ChatID),
+				logger.ErrorField(err))
+			return false
 		}
 		if member == nil {
 			logger.Warn("非群组成员尝试发送消息，已拒绝",
@@ -1153,7 +1160,14 @@ func (s *ChatServiceImpl) SendMessage(senderID, chatID string, chatType model.Ch
 	if chatType == model.ChatTypeGroup {
 		member, err := s.repo.GetGroupMember(s.ctx, actualChatID, senderID)
 		if err != nil {
-			logger.Warn("检查群成员身份失败", logger.ErrorField(err))
+			// 查询失败 ≠ 不是成员：前者应返回可重试的服务错误，
+			// 后者才是 403。混为一谈会掩盖数据库故障，也容易在
+			// DAO 返回零值指针时被误判为“成员”而放行。
+			logger.Error("检查群成员身份失败，拒绝发送",
+				logger.StringField("sender_id", senderID),
+				logger.StringField("chat_id", actualChatID),
+				logger.ErrorField(err))
+			return nil, nil, false, types.ErrChatMembershipUnavailable
 		}
 		if member == nil {
 			return nil, nil, false, fmt.Errorf("您不是该群组成员，无法发送消息")

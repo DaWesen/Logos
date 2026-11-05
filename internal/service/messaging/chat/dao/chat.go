@@ -811,7 +811,12 @@ func (r *chatRepositoryImpl) GetGroupByID(ctx context.Context, groupID string) (
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &group, err
+	if err != nil {
+		// 查询失败必须返回 nil：返回零值指针会让调用方的
+		// `if group == nil` 判断失效，把数据库故障当成「群存在但字段为空」。
+		return nil, err
+	}
+	return &group, nil
 }
 
 func (r *chatRepositoryImpl) AddGroupMember(ctx context.Context, member *model.GroupMember) error {
@@ -909,7 +914,12 @@ func (r *chatRepositoryImpl) GetGroupMember(ctx context.Context, groupID, userID
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &member, err
+	if err != nil {
+		// 同上：权限判断依赖 nil 表示「不是成员」。若错误时仍返回零值指针，
+		// 调用方会拿到一个 Role/MuteType 全为零的“成员”，等价于放行。
+		return nil, err
+	}
+	return &member, nil
 }
 
 func (r *chatRepositoryImpl) UpdateGroupMemberRole(ctx context.Context, groupID, userID string, role model.GroupMemberRole) error {
@@ -966,6 +976,10 @@ func (r *chatRepositoryImpl) GetAllGroupMemberIDs(ctx context.Context, groupID s
 	var userIDs []string
 	err := r.db.WithContext(ctx).Model(&model.GroupMember{}).
 		Where("group_id = ?", groupID).
+		// 群主退出时会把群转让给列表中的第一个剩余成员；没有排序时
+		// 数据库返回顺序不确定，同一个群每次可能转给不同的人。
+		Order("joined_at ASC").
+		Order("user_id ASC").
 		Pluck("user_id", &userIDs).Error
 	return userIDs, err
 }

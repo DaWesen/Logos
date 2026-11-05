@@ -83,6 +83,9 @@ var (
 	// ErrChatRelationshipUnavailable 关系服务不可用，无法确认拉黑状态。
 	// 拉黑是用户明确表达的安全语义，状态未知时失败关闭，不能用「查不到」冒充「没拉黑」。
 	ErrChatRelationshipUnavailable = &MessagingError{Code: 50503, Message: "消息服务暂时不可用，请稍后重试"}
+	// ErrChatMembershipUnavailable 群成员关系查询失败，无法确认请求者或目标用户是否在群内。
+	// 与「不是群成员」严格区分：前者是可重试的服务故障（503），后者是权限拒绝（403）。
+	ErrChatMembershipUnavailable = &MessagingError{Code: 50504, Message: "群成员身份查询失败，请稍后重试"}
 )
 
 type MessagingError struct {

@@ -40,6 +40,8 @@ func chatErrorCode(err error) (int32, string) {
 			return 403, me.Message
 		case types.ErrChatRelationshipUnavailable.Code:
 			return 503, me.Message
+		case types.ErrChatMembershipUnavailable.Code:
+			return 503, me.Message
 		}
 	}
 	return 500, err.Error()

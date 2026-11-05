@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,9 @@ func (r *stubChatRepo) GetAllGroupMemberIDs(_ context.Context, groupID string) (
 			ids = append(ids, strings.TrimPrefix(key, prefix))
 		}
 	}
+	// 真实 DAO 按 joined_at、user_id 排序；桩也必须稳定，
+	// 否则“群主自动转让给第一个剩余成员”的用例会随机命中 u2/u3。
+	sort.Strings(ids)
 	return ids, nil
 }
 
