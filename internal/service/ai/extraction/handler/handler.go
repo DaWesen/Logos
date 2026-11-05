@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"Logos/internal/service/ai/extraction/service"
@@ -135,7 +136,13 @@ func (s *KnowledgeExtractionServiceImpl) ExecuteTask(ctx context.Context, req *p
 		resp.BaseResp.StatusMessage = execErr.Error()
 	}
 
-	resp.Result = resultToProto(result)
+	protoResult, convertErr := resultToProto(result)
+	if convertErr != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = convertErr.Error()
+		return resp, nil
+	}
+	resp.Result = protoResult
 	return resp, nil
 }
 
@@ -168,7 +175,13 @@ func (s *KnowledgeExtractionServiceImpl) GetExtractionResult(ctx context.Context
 		return resp, nil
 	}
 
-	resp.Result = resultToProto(result)
+	protoResult, convertErr := resultToProto(result)
+	if convertErr != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = convertErr.Error()
+		return resp, nil
+	}
+	resp.Result = protoResult
 	return resp, nil
 }
 
@@ -185,8 +198,15 @@ func (s *KnowledgeExtractionServiceImpl) ListExtractionResults(ctx context.Conte
 		return resp, nil
 	}
 
-	for _, r := range results {
-		resp.Results = append(resp.Results, resultToProto(r))
+	for i, r := range results {
+		protoResult, convertErr := resultToProto(r)
+		if convertErr != nil {
+			resp.BaseResp.StatusCode = 500
+			resp.BaseResp.StatusMessage = fmt.Sprintf("第 %d 条结果: %v", i+1, convertErr)
+			resp.Results = nil
+			return resp, nil
+		}
+		resp.Results = append(resp.Results, protoResult)
 	}
 	return resp, nil
 }
@@ -209,80 +229,28 @@ func (s *KnowledgeExtractionServiceImpl) ExtractFromText(ctx context.Context, re
 		return resp, nil
 	}
 
-	for _, e := range entities {
-		id, _ := e["id"].(string)
-		text, _ := e["text"].(string)
-		typ, _ := e["type"].(string)
-		confidence := 0.0
-		if c, ok := e["confidence"].(float64); ok {
-			confidence = c
-		} else if c, ok := e["confidence"].(float32); ok {
-			confidence = float64(c)
-		}
-		startPos := int32(0)
-		if sp, ok := e["startPos"].(float64); ok {
-			startPos = int32(sp)
-		}
-		endPos := int32(0)
-		if ep, ok := e["endPos"].(float64); ok {
-			endPos = int32(ep)
-		}
-		if id == "" {
-			id = text + "_" + typ
-		}
-		resp.Entities = append(resp.Entities, &pb.ExtractedEntity{
-			Id:         id,
-			Text:       text,
-			Type:       typ,
-			Confidence: confidence,
-			StartPos:   startPos,
-			EndPos:     endPos,
-		})
+	protoEntities, err := entitiesToProto(entities)
+	if err != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = fmt.Sprintf("实体结果格式错误: %v", err)
+		return resp, nil
+	}
+	protoRelations, err := relationsToProto(relations)
+	if err != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = fmt.Sprintf("关系结果格式错误: %v", err)
+		return resp, nil
+	}
+	protoTriples, err := triplesToProto(triples)
+	if err != nil {
+		resp.BaseResp.StatusCode = 500
+		resp.BaseResp.StatusMessage = fmt.Sprintf("三元组结果格式错误: %v", err)
+		return resp, nil
 	}
 
-	for _, r := range relations {
-		id, _ := r["id"].(string)
-		typ, _ := r["type"].(string)
-		sourceID, _ := r["sourceId"].(string)
-		targetID, _ := r["targetId"].(string)
-		confidence := 0.0
-		if c, ok := r["confidence"].(float64); ok {
-			confidence = c
-		}
-		textVal, _ := r["text"].(string)
-		if id == "" {
-			id = sourceID + "_" + typ + "_" + targetID
-		}
-		resp.Relations = append(resp.Relations, &pb.ExtractedRelation{
-			Id:         id,
-			Type:       typ,
-			SourceId:   sourceID,
-			TargetId:   targetID,
-			Confidence: confidence,
-			Text:       textVal,
-		})
-	}
-
-	for _, t := range triples {
-		id, _ := t["id"].(string)
-		subject, _ := t["subject"].(string)
-		predicate, _ := t["predicate"].(string)
-		object, _ := t["object"].(string)
-		confidence := 0.0
-		if c, ok := t["confidence"].(float64); ok {
-			confidence = c
-		}
-		if id == "" {
-			id = subject + "_" + predicate + "_" + object
-		}
-		resp.Triples = append(resp.Triples, &pb.Triple{
-			Id:         id,
-			Subject:    subject,
-			Predicate:  predicate,
-			Object:     object,
-			Confidence: confidence,
-		})
-	}
+	resp.Entities = protoEntities
+	resp.Relations = protoRelations
+	resp.Triples = protoTriples
 
 	if len(keyphrases) > 0 {
 		resp.Keyphrases = keyphrases
@@ -330,75 +298,48 @@ func resultToProto(r interface {
 	GetErrorMsg() *string
 	GetStartTime() int64
 	GetEndTime() int64
-}) *pb.ExtractionResult {
-	var entities []*pb.ExtractedEntity
+}) (*pb.ExtractionResult, error) {
+	var entityList []map[string]interface{}
 	if r.GetEntities() != "" {
-		var entityList []map[string]interface{}
-		json.Unmarshal([]byte(r.GetEntities()), &entityList)
-		for _, e := range entityList {
-			id, _ := e["id"].(string)
-			text, _ := e["text"].(string)
-			typ, _ := e["type"].(string)
-			confidence := 0.0
-			if c, ok := e["confidence"].(float64); ok {
-				confidence = c
-			}
-			sp := int32(0)
-			if v, ok := e["startPos"].(float64); ok {
-				sp = int32(v)
-			}
-			ep := int32(0)
-			if v, ok := e["endPos"].(float64); ok {
-				ep = int32(v)
-			}
-			entities = append(entities, &pb.ExtractedEntity{
-				Id: id, Text: text, Type: typ, Confidence: confidence, StartPos: sp, EndPos: ep,
-			})
+		// 落库的 JSON 理论上由本服务写入，但历史数据/手工修库都可能
+		// 留下坏行。反序列化失败必须报错，不能返回一个空列表让调用方
+		// 以为「这次没抽到实体」。
+		if err := json.Unmarshal([]byte(r.GetEntities()), &entityList); err != nil {
+			return nil, fmt.Errorf("解析实体结果失败: %w", err)
 		}
 	}
+	entities, err := entitiesToProto(entityList)
+	if err != nil {
+		return nil, fmt.Errorf("解析实体结果失败: %w", err)
+	}
 
-	var relations []*pb.ExtractedRelation
+	var relationList []map[string]interface{}
 	if r.GetRelations() != "" {
-		var relationList []map[string]interface{}
-		json.Unmarshal([]byte(r.GetRelations()), &relationList)
-		for _, rel := range relationList {
-			id, _ := rel["id"].(string)
-			typ, _ := rel["type"].(string)
-			sourceID, _ := rel["sourceId"].(string)
-			targetID, _ := rel["targetId"].(string)
-			confidence := 0.0
-			if c, ok := rel["confidence"].(float64); ok {
-				confidence = c
-			}
-			textVal, _ := rel["text"].(string)
-			relations = append(relations, &pb.ExtractedRelation{
-				Id: id, Type: typ, SourceId: sourceID, TargetId: targetID, Confidence: confidence, Text: textVal,
-			})
+		if err := json.Unmarshal([]byte(r.GetRelations()), &relationList); err != nil {
+			return nil, fmt.Errorf("解析关系结果失败: %w", err)
 		}
 	}
+	relations, err := relationsToProto(relationList)
+	if err != nil {
+		return nil, fmt.Errorf("解析关系结果失败: %w", err)
+	}
 
-	var triples []*pb.Triple
+	var tripleList []map[string]interface{}
 	if r.GetTriples() != "" {
-		var tripleList []map[string]interface{}
-		json.Unmarshal([]byte(r.GetTriples()), &tripleList)
-		for _, t := range tripleList {
-			id, _ := t["id"].(string)
-			subject, _ := t["subject"].(string)
-			predicate, _ := t["predicate"].(string)
-			obj, _ := t["object"].(string)
-			confidence := 0.0
-			if c, ok := t["confidence"].(float64); ok {
-				confidence = c
-			}
-			triples = append(triples, &pb.Triple{
-				Id: id, Subject: subject, Predicate: predicate, Object: obj, Confidence: confidence,
-			})
+		if err := json.Unmarshal([]byte(r.GetTriples()), &tripleList); err != nil {
+			return nil, fmt.Errorf("解析三元组结果失败: %w", err)
 		}
+	}
+	triples, err := triplesToProto(tripleList)
+	if err != nil {
+		return nil, fmt.Errorf("解析三元组结果失败: %w", err)
 	}
 
 	var keyphrases []string
 	if r.GetKeyphrases() != nil {
-		json.Unmarshal([]byte(*r.GetKeyphrases()), &keyphrases)
+		if err := json.Unmarshal([]byte(*r.GetKeyphrases()), &keyphrases); err != nil {
+			return nil, fmt.Errorf("解析关键词结果失败: %w", err)
+		}
 	}
 
 	return &pb.ExtractionResult{
@@ -413,5 +354,5 @@ func resultToProto(r interface {
 		ErrorMessage: r.GetErrorMsg(),
 		StartTime:    r.GetStartTime(),
 		EndTime:      r.GetEndTime(),
-	}
+	}, nil
 }
