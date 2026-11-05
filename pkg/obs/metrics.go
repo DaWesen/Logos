@@ -27,6 +27,7 @@ var (
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
 	outboxAbortNum       metric.Int64Counter
+	safegoPanicCounter   metric.Int64Counter
 )
 
 func initReliabilityMetrics() {
@@ -78,6 +79,10 @@ func initReliabilityMetrics() {
 		"logos.outbox.dispatch.abort.count",
 		metric.WithDescription("Outbox 单轮投递因连续失败提前熔断的次数"),
 	)
+	safegoPanicCounter, _ = meter.Int64Counter(
+		"logos.safego.panic.count",
+		metric.WithDescription("后台任务中被恢复的 panic 次数（按固定任务名）"),
+	)
 }
 
 // RecordKafkaConsume 记录一条消息的处理结果与耗时。
@@ -92,6 +97,17 @@ func RecordKafkaConsume(ctx context.Context, topic, result string, durationSecon
 	}
 	if kafkaConsumeDuration != nil {
 		kafkaConsumeDuration.Record(ctx, durationSeconds, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// RecordBackgroundPanic 记录一次被 safego 隔离的后台 panic。
+//
+// 指标标签只接受调用方传入的固定任务名，不携带 panic 值：
+// panic 文本可能包含用户输入或地址，放进标签既会撑爆基数，也可能泄露数据。
+func RecordBackgroundPanic(ctx context.Context, task string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if safegoPanicCounter != nil {
+		safegoPanicCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("task", task)))
 	}
 }
 

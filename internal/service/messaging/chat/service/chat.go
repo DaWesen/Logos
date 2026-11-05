@@ -10,6 +10,7 @@ import (
 	"Logos/pkg/mq"
 	"Logos/pkg/obs"
 	"Logos/pkg/pagination"
+	"Logos/pkg/safego"
 	"context"
 	"encoding/json"
 	"errors"
@@ -311,17 +312,23 @@ func (s *ChatServiceImpl) HandleMessageEvent(msg *mq.Message) error {
 			return err
 		}
 
-		// 3️⃣ 异步处理尽力而为的后续逻辑（审核、翻译、Bot 回复、离线推送）
-		// 这些失败不影响消息可靠性，因此不阻塞 offset 提交
-		go func() {
-			if s.moderationClient != nil {
+		// 3️⃣ 异步处理尽力而为的后续逻辑（审核、Bot 回复、离线推送）
+		// 这些失败不影响消息可靠性，因此不阻塞 offset 提交。
+		// 每个子任务独立隔离 panic：审核崩了不应连带跳过 Bot 回复和离线推送；
+		// 单个 goroutine 的未恢复 panic 会终止整个进程，不只是这一次异步处理。
+		if s.moderationClient != nil {
+			safego.Go("chat.moderation", func() {
 				s.moderateMessage(event)
-			}
-			if s.botClient != nil && event.SenderID != "system" {
+			})
+		}
+		if s.botClient != nil && event.SenderID != "system" {
+			safego.Go("chat.bot_mentions", func() {
 				s.handleBotMentions(event)
-			}
+			})
+		}
+		safego.Go("chat.offline_notification", func() {
 			s.pushOfflineNotification(event)
-		}()
+		})
 
 	default:
 		logger.Warn("未知事件类型", logger.StringField("event_type", string(eventType)))
@@ -608,7 +615,8 @@ func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs 
 	}
 
 	for _, rawID := range botIDs {
-		go func() {
+		// 指标标签固定为 chat.bot_invoke：botID 是无界值，不能进标签。
+		safego.Go("chat.bot_invoke", func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
 
@@ -697,7 +705,7 @@ func (s *ChatServiceImpl) invokeBotForMention(event *types.MessageEvent, botIDs 
 				logger.StringField("bot_id", botID),
 				logger.StringField("chat_id", event.ChatID),
 				logger.StringField("reply_to", event.ID))
-		}()
+		})
 	}
 }
 
@@ -3009,9 +3017,23 @@ const (
 // 不能像墓碑那样按某个用户的 cleared_seq 删除（别人可能还需要补拉），只能按时间保留期回收。
 // message_idempotency 则是发送侧的短期去重记录，过期后同样按时间回收。
 func (s *ChatServiceImpl) startRetentionCleanup() {
+	// 两段清理互相独立：任何一段 panic 都只跳过本轮，不影响另一段，
+	// 也不会让清理 goroutine 永久退出（否则表会一直涨到重启为止）。
+	cleanup := func(now time.Time) {
+		if err := safego.Run("chat.retention_changes", func() {
+			s.purgeExpiredChanges(now)
+		}); err != nil {
+			logger.Error("变更日志保留期清理 panic，已跳过本轮", logger.ErrorField(err))
+		}
+		if err := safego.Run("chat.retention_idempotency", func() {
+			s.purgeExpiredIdempotency(now)
+		}); err != nil {
+			logger.Error("幂等键保留期清理 panic，已跳过本轮", logger.ErrorField(err))
+		}
+	}
+
 	go func() {
-		s.purgeExpiredChanges(time.Now())
-		s.purgeExpiredIdempotency(time.Now())
+		cleanup(time.Now())
 		ticker := time.NewTicker(retentionCleanupInterval)
 		defer ticker.Stop()
 		for {
@@ -3019,8 +3041,7 @@ func (s *ChatServiceImpl) startRetentionCleanup() {
 			case <-s.ctx.Done():
 				return
 			case <-ticker.C:
-				s.purgeExpiredChanges(time.Now())
-				s.purgeExpiredIdempotency(time.Now())
+				cleanup(time.Now())
 			}
 		}
 	}()
