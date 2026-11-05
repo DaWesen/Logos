@@ -500,16 +500,15 @@ func TestGetMessageStats_FillsAllTopicsAndPropagatesError(t *testing.T) {
 	if len(stats) != 7 {
 		t.Fatalf("应返回 7 个 topic, got %d", len(stats))
 	}
-	byTopic := make(map[string]map[string]interface{}, len(stats))
+	byTopic := make(map[string]dao.TopicStats, len(stats))
 	for _, stat := range stats {
-		byTopic[stat["topic"].(string)] = stat
+		byTopic[stat.Topic] = stat
 	}
-	if byTopic["DATA_COLLECTION"]["total_messages"].(int64) != 0 {
+	if byTopic["DATA_COLLECTION"].Total != 0 {
 		t.Fatal("没有数据的 topic 应补零而不是缺行")
 	}
 	qa := byTopic["QA_REQUEST"]
-	if qa["total_messages"].(int64) != 5 || qa["pending_messages"].(int64) != 1 ||
-		qa["processed_messages"].(int64) != 3 || qa["error_messages"].(int64) != 1 {
+	if qa.Total != 5 || qa.Pending != 1 || qa.Processed != 3 || qa.Failed != 1 {
 		t.Fatalf("QA_REQUEST 统计错误: %+v", qa)
 	}
 

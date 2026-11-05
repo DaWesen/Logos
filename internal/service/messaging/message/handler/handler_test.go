@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"Logos/internal/service/messaging/message/dao"
 	"Logos/internal/service/messaging/message/model"
 	"Logos/internal/service/messaging/message/service"
 	pb "Logos/proto_gen/message"
@@ -13,6 +15,12 @@ type fakeMessageService struct {
 	service.MessageService
 	batchResult []*model.Message
 	batchErr    error
+	stats       []dao.TopicStats
+	statsErr    error
+}
+
+func (f *fakeMessageService) GetMessageStats(context.Context) ([]dao.TopicStats, error) {
+	return f.stats, f.statsErr
 }
 
 func (f *fakeMessageService) BatchSendMessage(context.Context, []struct {
@@ -95,5 +103,38 @@ func TestBatchSendMessage_ResponseEchoesActualTopic(t *testing.T) {
 	}
 	if resp.Responses[1].Topic != pb.Topic_SYSTEM_EVENT {
 		t.Fatalf("第二条 topic = %v, want SYSTEM_EVENT", resp.Responses[1].Topic)
+	}
+}
+
+// 统计值曾用 []map[string]interface{} 跨层传递，handler 侧靠 5 次
+// `v, _ := m[key].(int64)` 取值。断言失败时全部静默变 0，
+// 监控面板会把「有积压」显示成「一切正常」。改成结构体后类型由编译器保证。
+func TestGetMessageStats_MapsTypedCounters(t *testing.T) {
+	fake := &fakeMessageService{stats: []dao.TopicStats{
+		{Topic: "QA_REQUEST", Total: 42, Pending: 7, Processed: 30, Failed: 5},
+		{Topic: "UNKNOWN_TOPIC", Total: 9},
+	}}
+	svc := &MessageServiceImpl{MessageService: fake}
+
+	resp, err := svc.GetMessageStats(context.Background(), &pb.EmptyReq{})
+	if err != nil {
+		t.Fatalf("统计不应报错: %v", err)
+	}
+	if len(resp.Stats) != 1 {
+		t.Fatalf("未知 topic 应被跳过, got %d 条", len(resp.Stats))
+	}
+	got := resp.Stats[0]
+	if got.Topic != pb.Topic_QA_REQUEST || got.TotalMessages != 42 ||
+		got.PendingMessages != 7 || got.ProcessedMessages != 30 || got.ErrorMessages != 5 {
+		t.Fatalf("统计字段映射错误: %+v", got)
+	}
+
+	fake.statsErr = errors.New("db down")
+	resp, err = svc.GetMessageStats(context.Background(), &pb.EmptyReq{})
+	if err != nil {
+		t.Fatalf("gRPC 层不应把业务错误变成传输错误: %v", err)
+	}
+	if resp.BaseResp.StatusCode != 500 || len(resp.Stats) != 0 {
+		t.Fatalf("查询失败应返回 500 且不带统计, got %+v", resp.BaseResp)
 	}
 }

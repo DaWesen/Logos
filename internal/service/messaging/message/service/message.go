@@ -56,7 +56,7 @@ type MessageService interface {
 	AcknowledgeMessage(ctx context.Context, consumerGroup string, messageID string, topic int32) error
 	BatchAcknowledgeMessages(ctx context.Context, consumerGroup string, messageIDs []string, topic int32) error
 
-	GetMessageStats(ctx context.Context) ([]map[string]interface{}, error)
+	GetMessageStats(ctx context.Context) ([]dao.TopicStats, error)
 	CreateTopic(ctx context.Context, topic int32) error
 	DeleteTopic(ctx context.Context, topic int32) error
 	ClearMessages(ctx context.Context, topic int32) error
@@ -359,7 +359,7 @@ func dedupeNonEmpty(ids []string) []string {
 	return out
 }
 
-func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]interface{}, error) {
+func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]dao.TopicStats, error) {
 	rows, err := s.repo.GetMessageStatsByTopic(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("统计消息失败: %w", err)
@@ -371,17 +371,15 @@ func (s *messageServiceImpl) GetMessageStats(ctx context.Context) ([]map[string]
 	}
 
 	// 即使某个 topic 一条消息都没有也返回零值，客户端表格不会缺行。
-	stats := make([]map[string]interface{}, 0, 7)
+	stats := make([]dao.TopicStats, 0, 7)
 	for t := 0; t <= 6; t++ {
 		name := dao.TopicString(t)
 		row := byTopic[name]
-		stats = append(stats, map[string]interface{}{
-			"topic":              name,
-			"total_messages":     row.Total,
-			"pending_messages":   row.Pending,
-			"processed_messages": row.Processed,
-			"error_messages":     row.Failed,
-		})
+		// 用结构体而不是 map[string]interface{} 跨层传统计值：
+		// 旧写法到 handler 侧要靠 5 次裸类型断言取值，字段名拼错或类型
+		// 变化时断言失败会静默变成 0，监控面板直接显示成「没有消息」。
+		row.Topic = name
+		stats = append(stats, row)
 	}
 
 	return stats, nil

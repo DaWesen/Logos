@@ -230,23 +230,17 @@ func (s *MessageServiceImpl) GetMessageStats(ctx context.Context, req *pb.EmptyR
 	}
 
 	for _, stat := range stats {
-		topicStr, _ := stat["topic"].(string)
-		total, _ := stat["total_messages"].(int64)
-		pending, _ := stat["pending_messages"].(int64)
-		processed, _ := stat["processed_messages"].(int64)
-		failed, _ := stat["error_messages"].(int64)
-
-		topicVal, ok := topicFromInternal(topicStr)
+		topicVal, ok := topicFromInternal(stat.Topic)
 		if !ok {
 			continue
 		}
 
 		resp.Stats = append(resp.Stats, &pb.MessageStats{
 			Topic:             topicVal,
-			TotalMessages:     total,
-			PendingMessages:   pending,
-			ProcessedMessages: processed,
-			ErrorMessages:     failed,
+			TotalMessages:     stat.Total,
+			PendingMessages:   stat.Pending,
+			ProcessedMessages: stat.Processed,
+			ErrorMessages:     stat.Failed,
 		})
 	}
 	return resp, nil
