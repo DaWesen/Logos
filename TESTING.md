@@ -139,6 +139,9 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **抽取结果契约与落库**：`toExtractedEntity` 对缺失、`null`、数字、空白字段返回带字段名的错误；合法记录保留自定义属性与置信度描述（字符串置信度不得生成 `%!f` 占位符）；关系缺 `targetId`、三元组缺任一部分都被拒绝；部分记录非法时只跳过非法项、合法项照常写入，全部非法或图数据库写入失败时任务失败，不再出现「抽取成功、图谱为空」；任务参数是坏 JSON 时返回错误；`scheduled_time` 非 RFC3339 时 `CreateTask` 拒绝落库
 - **计划任务调度**：到期任务按 `scheduled_at` 升序批量执行（`limit` 有上限）；单条任务成功/失败/被其他实例领取都不影响同批剩余任务；被领取（`claimed=false`）记为 skipped 而不是 failure；扫描失败时该轮零执行且单独上报扫描失败指标；扫描取满一批时留下积压告警日志；卡死的 `RUNNING` 任务按 `started_at` 超时回收，写入的失败原因非空且 cutoff ≈ now - staleAfter；非法的 interval/batch/timeout 回退默认值而不是把 ticker 设成 0；`Start` 先立即执行一轮、失败后仍按间隔继续；`Stop` 取消后及时返回
 - **抽取任务类型/状态映射**：proto 五类任务（0..4）与存储层（1..5）逐项双向映射且往返不变；`SUMMARIZATION` 创建时被拒绝且零落库；`taskTypeToProto` 对 0、99 返回错误，`taskStatusToProto` 对 0、99 返回错误，不得猜一个「最接近」的值；`extractionToProto` 遇到非法类型/状态、或参数 JSON 损坏时返回错误而不是回包空参数；`ExecuteTask` 在服务返回错误且无结果时不 panic、透传原始错误；服务层 `validateTaskType` 接受 1/2/3/5，拒绝 0/4/99，`UpdateTask` 校验失败时零写入
+- **集合嵌入配置分类**：`collectionEmbedder` 在集合为 nil、或模型与密钥都为空时返回 nil（按约定回退全局 Embedding）；只配模型或只配密钥时返回「配置不完整」错误且不返回 embedder（回归「静默回退全局模型」）；模型与密钥齐全时返回可用 Embedder，构造过程不发起网络请求
+- **批量嵌入结果校验**：`toFloat32Vectors` 拒绝条数与输入不一致、拒绝空向量、拒绝「第 N 条维度与首条不同」；正常输入按 float32 转换且数值不变；空批次返回非 nil 空切片；`BatchVectorize` 在文本列表为空时直接拒绝，不再创建维度为 0 或 768 的空集合
+- **向量集合查询与写入降级**：`GetCollection` 只有 `gorm.ErrRecordNotFound` 允许回退 Milvus 探测；带 `userID` 的查询在 Not Found 时返回 `nil, nil`，不得用无归属信息的探测结果放行；其余数据库错误必须上抛且不调用 `HasCollection`；`Vectorize` / `BatchVectorize` / `TextSearch` 不得用 `_` 吞掉 `GetCollection` 错误；集合显式配置的嵌入模型调用失败时原样上抛，不回退全局模型；Milvus 维度与当前嵌入输出不一致时返回错误且**不调用** `DropCollection`（历史向量只能由运维显式重建）；`TextSearch` 在集合不存在、维度不一致、无可用 Embedder、全局嵌入返回空向量时返回错误而不是 200 + 空列表
 - **执行权原子性**：`ExecuteTask` 在 `MarkTaskRunning` 返回 false 时报「任务正在执行中」且不再调用模型；`RunScheduledTask` 领取报错时 `claimed=false` 且错误上抛（不能伪装成被其他实例抢走）；领取 SQL 必须同时带 `status = Pending` 与 `scheduled_at <= now` 条件，只有 `RowsAffected == 1` 才算抢到
 - **调度 SQL 守卫**：用 GORM `DryRun` + 记录型 logger 断言 `ListDueTasks` 的 SQL 含 `status = Pending`、`scheduled_at IS NOT NULL`、`scheduled_at <=`、按 `scheduled_at` 升序与 `LIMIT`；`ClaimDueTask` 的 `UPDATE` 同样带全部领取条件；`MarkTaskRunning` 只排除 `status = Running`（允许重跑完成/失败任务）；`ListStaleRunningTasks` 带 `started_at IS NOT NULL`、`started_at < cutoff` 且按 `started_at` 升序。测试不连真实数据库，任何语句真的尝试执行会立刻失败
 - **ES 同步事件契约**：`action` 缺失、非字符串或空白时返回 `mq.ErrSkipMessage`（不重试、不静默）；未知 `action` 同样进入 skipped 指标，而不是 `return nil` 悄悄提交 offset
@@ -598,6 +601,9 @@ bash script/test_api.sh
 - ✅ 通用配置自动填入
 - ✅ 集合的模型配置存入 PostgreSQL
 - ✅ 向量化时优先使用集合自定义配置
+- ✅ 集合配置的模型调用失败时接口返回错误，不会悄悄改用全局模型继续写入
+- ✅ 把集合换成不同维度的嵌入模型后再写入，返回「维度不一致」错误且**不删除**已有向量
+- ✅ 集合只配了模型名、没配密钥时，写入与检索都显式报「配置不完整」
 
 ### 集合卡片展示模型信息
 
