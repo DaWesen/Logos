@@ -3,6 +3,7 @@ package dao
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"Logos/internal/service/ai/knowledge/model"
 	"Logos/pkg/graph"
@@ -219,30 +220,23 @@ func (r *knowledgeRepository) CreateRelation(ctx context.Context, relation *mode
 		relation.ID = uuid.NewString()
 	}
 
+	// 端点类型必须在写库前解析：读取失败就整次拒绝，
+	// 否则 SQL 提交成功、Neo4j 却因为一次读失败永远缺这条边。
+	sourceType, targetType, hasEndpoints, err := r.relationEndpoints(ctx, relation.SourceID, relation.TargetID)
+	if err != nil {
+		return err
+	}
+
 	if err := r.db.WithContext(ctx).Create(relation).Error; err != nil {
 		return err
 	}
 
-	if r.neo4jManager != nil {
-		sourceEntity, _ := r.GetEntity(ctx, relation.SourceID)
-		targetEntity, _ := r.GetEntity(ctx, relation.TargetID)
-
-		if sourceEntity != nil && targetEntity != nil {
-			properties := map[string]interface{}{
-				"description":  relation.Description,
-				"collectionId": relation.CollectionID,
-				"createdAt":    relation.CreatedAt.Unix(),
-				"updatedAt":    relation.UpdatedAt.Unix(),
-			}
-			for k, v := range relation.Properties {
-				properties[k] = v
-			}
-
-			if err := r.neo4jManager.CreateRelationship(ctx, sourceEntity.Type, relation.SourceID, relation.Type, targetEntity.Type, relation.TargetID, properties); err != nil {
-				logger.Warn("同步关系到Neo4j失败",
-					logger.StringField("id", relation.ID),
-					logger.ErrorField(err))
-			}
+	if hasEndpoints {
+		properties := relationGraphProperties(relation, true)
+		if err := r.neo4jManager.CreateRelationship(ctx, sourceType, relation.SourceID, relation.Type, targetType, relation.TargetID, properties); err != nil {
+			logger.Error("关系已写入 PostgreSQL，但同步 Neo4j 失败",
+				logger.StringField("id", relation.ID),
+				logger.ErrorField(err))
 		}
 	}
 
@@ -255,39 +249,37 @@ func (r *knowledgeRepository) UpdateRelation(ctx context.Context, relation *mode
 		return err
 	}
 
+	var oldSourceType, oldTargetType string
+	var hasOldEndpoints bool
+	if oldRelation != nil {
+		oldSourceType, oldTargetType, hasOldEndpoints, err = r.relationEndpoints(ctx, oldRelation.SourceID, oldRelation.TargetID)
+		if err != nil {
+			return err
+		}
+	}
+	sourceType, targetType, hasEndpoints, err := r.relationEndpoints(ctx, relation.SourceID, relation.TargetID)
+	if err != nil {
+		return err
+	}
+
 	if err := r.db.WithContext(ctx).Save(relation).Error; err != nil {
 		return err
 	}
 
-	if r.neo4jManager != nil && oldRelation != nil {
-		sourceEntity, _ := r.GetEntity(ctx, relation.SourceID)
-		targetEntity, _ := r.GetEntity(ctx, relation.TargetID)
-		oldSourceEntity, _ := r.GetEntity(ctx, oldRelation.SourceID)
-		oldTargetEntity, _ := r.GetEntity(ctx, oldRelation.TargetID)
-
-		if oldSourceEntity != nil && oldTargetEntity != nil {
-			if err := r.neo4jManager.DeleteRelationship(ctx, oldSourceEntity.Type, oldRelation.SourceID, oldRelation.Type, oldTargetEntity.Type, oldRelation.TargetID); err != nil {
-				logger.Warn("从Neo4j删除旧关系失败",
-					logger.StringField("id", relation.ID),
-					logger.ErrorField(err))
-			}
+	if hasOldEndpoints {
+		if err := r.neo4jManager.DeleteRelationship(ctx, oldSourceType, oldRelation.SourceID, oldRelation.Type, oldTargetType, oldRelation.TargetID); err != nil {
+			logger.Error("关系已更新，但从 Neo4j 删除旧关系失败",
+				logger.StringField("id", relation.ID),
+				logger.ErrorField(err))
 		}
+	}
 
-		if sourceEntity != nil && targetEntity != nil {
-			properties := map[string]interface{}{
-				"description":  relation.Description,
-				"collectionId": relation.CollectionID,
-				"updatedAt":    relation.UpdatedAt.Unix(),
-			}
-			for k, v := range relation.Properties {
-				properties[k] = v
-			}
-
-			if err := r.neo4jManager.CreateRelationship(ctx, sourceEntity.Type, relation.SourceID, relation.Type, targetEntity.Type, relation.TargetID, properties); err != nil {
-				logger.Warn("同步更新后的关系到Neo4j失败",
-					logger.StringField("id", relation.ID),
-					logger.ErrorField(err))
-			}
+	if hasEndpoints {
+		properties := relationGraphProperties(relation, false)
+		if err := r.neo4jManager.CreateRelationship(ctx, sourceType, relation.SourceID, relation.Type, targetType, relation.TargetID, properties); err != nil {
+			logger.Error("关系已更新，但同步 Neo4j 失败",
+				logger.StringField("id", relation.ID),
+				logger.ErrorField(err))
 		}
 	}
 
@@ -299,21 +291,24 @@ func (r *knowledgeRepository) DeleteRelation(ctx context.Context, id string) err
 	if err != nil {
 		return err
 	}
+	if relation == nil {
+		return nil
+	}
+
+	sourceType, targetType, hasEndpoints, err := r.relationEndpoints(ctx, relation.SourceID, relation.TargetID)
+	if err != nil {
+		return err
+	}
 
 	if err := r.db.WithContext(ctx).Delete(&model.Relation{}, "id = ?", id).Error; err != nil {
 		return err
 	}
 
-	if r.neo4jManager != nil && relation != nil {
-		sourceEntity, _ := r.GetEntity(ctx, relation.SourceID)
-		targetEntity, _ := r.GetEntity(ctx, relation.TargetID)
-
-		if sourceEntity != nil && targetEntity != nil {
-			if err := r.neo4jManager.DeleteRelationship(ctx, sourceEntity.Type, relation.SourceID, relation.Type, targetEntity.Type, relation.TargetID); err != nil {
-				logger.Warn("从Neo4j删除关系失败",
-					logger.StringField("id", id),
-					logger.ErrorField(err))
-			}
+	if hasEndpoints {
+		if err := r.neo4jManager.DeleteRelationship(ctx, sourceType, relation.SourceID, relation.Type, targetType, relation.TargetID); err != nil {
+			logger.Error("关系已从 PostgreSQL 删除，但 Neo4j 清理失败",
+				logger.StringField("id", id),
+				logger.ErrorField(err))
 		}
 	}
 
@@ -455,18 +450,15 @@ func (r *knowledgeRepository) GetGraphStats(ctx context.Context, collectionID, u
 func (r *knowledgeRepository) GetRelatedEntities(ctx context.Context, entityId, relationType string) ([]*model.Entity, error) {
 	if r.neo4jManager != nil {
 		entity, err := r.GetEntity(ctx, entityId)
-		if err == nil && entity != nil {
+		if err != nil {
+			return nil, fmt.Errorf("读取实体 %s 失败: %w", entityId, err)
+		}
+		if entity != nil {
 			nodes, err := r.neo4jManager.GetRelatedNodes(ctx, entity.Type, entityId, relationType)
 			if err == nil {
-				var entities []*model.Entity
-				for _, node := range nodes {
-					id, _ := node["id"].(string)
-					if id != "" {
-						e, _ := r.GetEntity(ctx, id)
-						if e != nil {
-							entities = append(entities, e)
-						}
-					}
+				entities, err := hydrateGraphEntities(ctx, nodes, "关联实体", r.GetEntity)
+				if err != nil {
+					return nil, err
 				}
 				if len(entities) > 0 {
 					return entities, nil
@@ -515,27 +507,22 @@ func (r *knowledgeRepository) GetSubgraph(ctx context.Context, entityID string, 
 
 	if r.neo4jManager != nil {
 		entity, err := r.GetEntity(ctx, entityID)
-		if err == nil && entity != nil {
+		if err != nil {
+			return nil, fmt.Errorf("读取子图根实体 %s 失败: %w", entityID, err)
+		}
+		if entity != nil {
 			neo4jSubgraph, err := r.neo4jManager.GetSubgraph(ctx, entity.Type, entityID, depth)
 			if err == nil && neo4jSubgraph != nil {
-				for _, nodeProps := range neo4jSubgraph.Nodes {
-					id, _ := nodeProps["id"].(string)
-					if id != "" {
-						e, _ := r.GetEntity(ctx, id)
-						if e != nil {
-							subgraph.Nodes = append(subgraph.Nodes, e)
-						}
-					}
+				nodes, err := hydrateGraphEntities(ctx, neo4jSubgraph.Nodes, "子图节点", r.GetEntity)
+				if err != nil {
+					return nil, err
 				}
-				for _, relProps := range neo4jSubgraph.Relationships {
-					id, _ := relProps["id"].(string)
-					if id != "" {
-						rel, _ := r.GetRelation(ctx, id)
-						if rel != nil {
-							subgraph.Edges = append(subgraph.Edges, rel)
-						}
-					}
+				edges, err := hydrateGraphRelations(ctx, neo4jSubgraph.Relationships, "子图关系", r.GetRelation)
+				if err != nil {
+					return nil, err
 				}
+				subgraph.Nodes = nodes
+				subgraph.Edges = edges
 				if len(subgraph.Nodes) > 0 {
 					subgraph.NodeCount = len(subgraph.Nodes)
 					subgraph.EdgeCount = len(subgraph.Edges)
@@ -553,7 +540,10 @@ func (r *knowledgeRepository) GetSubgraph(ctx context.Context, entityID string, 
 		var nextQueue []string
 		for _, eid := range entityQueue {
 			entity, err := r.GetEntity(ctx, eid)
-			if err != nil || entity == nil {
+			if err != nil {
+				return nil, fmt.Errorf("子图遍历：读取实体 %s 失败: %w", eid, err)
+			}
+			if entity == nil {
 				continue
 			}
 			if collectionID != "" && entity.CollectionID != collectionID && entity.CollectionID != "" {
@@ -573,7 +563,7 @@ func (r *knowledgeRepository) GetSubgraph(ctx context.Context, entityID string, 
 
 			related, err := r.GetRelatedEntities(ctx, eid, "")
 			if err != nil {
-				continue
+				return nil, err
 			}
 
 			for _, relEntity := range related {
@@ -611,7 +601,9 @@ func (r *knowledgeRepository) GetSubgraph(ctx context.Context, entityID string, 
 		relationQuery = relationQuery.Where("collection_id = ? OR collection_id = ''", collectionID)
 	}
 	var allRelations []*model.Relation
-	relationQuery.Find(&allRelations)
+	if err := relationQuery.Find(&allRelations).Error; err != nil {
+		return nil, fmt.Errorf("子图遍历：读取关系失败: %w", err)
+	}
 
 	for _, rel := range allRelations {
 		if nodeIDs[rel.SourceID] && nodeIDs[rel.TargetID] {
@@ -635,32 +627,27 @@ func (r *knowledgeRepository) GetEntityPaths(ctx context.Context, sourceID, targ
 	var paths []*model.EntityPath
 
 	if r.neo4jManager != nil {
-		sourceEntity, _ := r.GetEntity(ctx, sourceID)
-		targetEntity, _ := r.GetEntity(ctx, targetID)
+		sourceEntity, sourceErr := r.GetEntity(ctx, sourceID)
+		if sourceErr != nil {
+			return nil, fmt.Errorf("读取路径起点实体 %s 失败: %w", sourceID, sourceErr)
+		}
+		targetEntity, targetErr := r.GetEntity(ctx, targetID)
+		if targetErr != nil {
+			return nil, fmt.Errorf("读取路径终点实体 %s 失败: %w", targetID, targetErr)
+		}
 		if sourceEntity != nil && targetEntity != nil {
 			neo4jPaths, err := r.neo4jManager.GetShortestPath(ctx, sourceEntity.Type, sourceID, targetEntity.Type, targetID, maxDepth)
 			if err == nil && len(neo4jPaths) > 0 {
 				for _, neo4jPath := range neo4jPaths {
-					path := &model.EntityPath{}
-					for _, nodeProps := range neo4jPath.Nodes {
-						id, _ := nodeProps["id"].(string)
-						if id != "" {
-							e, _ := r.GetEntity(ctx, id)
-							if e != nil {
-								path.Entities = append(path.Entities, e)
-							}
-						}
+					entities, err := hydrateGraphEntities(ctx, neo4jPath.Nodes, "路径节点", r.GetEntity)
+					if err != nil {
+						return nil, err
 					}
-					for _, relProps := range neo4jPath.Relationships {
-						id, _ := relProps["id"].(string)
-						if id != "" {
-							rel, _ := r.GetRelation(ctx, id)
-							if rel != nil {
-								path.Edges = append(path.Edges, rel)
-							}
-						}
+					edges, err := hydrateGraphRelations(ctx, neo4jPath.Relationships, "路径关系", r.GetRelation)
+					if err != nil {
+						return nil, err
 					}
-					path.Length = len(path.Edges)
+					path := &model.EntityPath{Entities: entities, Edges: edges, Length: len(edges)}
 					paths = append(paths, path)
 				}
 				if len(paths) > 0 {
@@ -670,7 +657,10 @@ func (r *knowledgeRepository) GetEntityPaths(ctx context.Context, sourceID, targ
 		}
 	}
 
-	path := r.findPathBFS(ctx, sourceID, targetID, maxDepth, collectionID)
+	path, err := r.findPathBFS(ctx, sourceID, targetID, maxDepth, collectionID)
+	if err != nil {
+		return nil, err
+	}
 	if path != nil {
 		paths = append(paths, path)
 	}
@@ -681,7 +671,7 @@ func (r *knowledgeRepository) GetEntityPaths(ctx context.Context, sourceID, targ
 	return paths, nil
 }
 
-func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) *model.EntityPath {
+func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetID string, maxDepth int, collectionID string) (*model.EntityPath, error) {
 	type pathNode struct {
 		entityID string
 		path     []string
@@ -702,7 +692,7 @@ func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetI
 
 		related, err := r.GetRelatedEntities(ctx, current.entityID, "")
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("路径搜索：读取 %s 的关联实体失败: %w", current.entityID, err)
 		}
 
 		for _, relEntity := range related {
@@ -716,7 +706,10 @@ func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetI
 				var entities []*model.Entity
 				var edges []*model.Relation
 				for _, eid := range fullPath {
-					e, _ := r.GetEntity(ctx, eid)
+					e, err := r.GetEntity(ctx, eid)
+					if err != nil {
+						return nil, fmt.Errorf("路径搜索：读取实体 %s 失败: %w", eid, err)
+					}
 					if e != nil {
 						entities = append(entities, e)
 					}
@@ -724,10 +717,12 @@ func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetI
 
 				for i := 0; i < len(fullPath)-1; i++ {
 					var rels []*model.Relation
-					r.db.WithContext(ctx).Model(&model.Relation{}).
+					if err := r.db.WithContext(ctx).Model(&model.Relation{}).
 						Where("(source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)",
 							fullPath[i], fullPath[i+1], fullPath[i+1], fullPath[i]).
-						Find(&rels)
+						Find(&rels).Error; err != nil {
+						return nil, fmt.Errorf("路径搜索：读取 %s 与 %s 之间的关系失败: %w", fullPath[i], fullPath[i+1], err)
+					}
 					if len(rels) > 0 {
 						edges = append(edges, rels[0])
 					}
@@ -737,7 +732,7 @@ func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetI
 					Entities: entities,
 					Edges:    edges,
 					Length:   len(edges),
-				}
+				}, nil
 			}
 
 			if !visited[relEntity.ID] {
@@ -750,7 +745,7 @@ func (r *knowledgeRepository) findPathBFS(ctx context.Context, sourceID, targetI
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (r *knowledgeRepository) WithTransaction(ctx context.Context, fn func(txRepo KnowledgeRepository) error) error {
