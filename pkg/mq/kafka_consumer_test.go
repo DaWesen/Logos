@@ -92,6 +92,12 @@ func (f *fakeSource) fetchedCount() int {
 	return f.fetched
 }
 
+func (f *fakeSource) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
 func waitCommits(t *testing.T, src *fakeSource, want int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
@@ -343,6 +349,39 @@ func TestProcessWithRetry_CancelDuringRetryLeavesUncommitted(t *testing.T) {
 	}
 	if got := src.committedOffsets(); len(got) != 0 {
 		t.Fatalf("取消时不得提交 offset，实际提交 %v", got)
+	}
+}
+
+// Subscribe 拿到已取消的 ctx 时必须在第一次拉取前退出：
+// main 里 signal.NotifyContext 取消后，消费循环不应再多拉一条消息。
+func TestSubscribe_CanceledContextStopsBeforeFetch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	src := newFakeSource(kafka.Message{Topic: "chat_messages", Offset: 1})
+	c := &Consumer{reader: src}
+
+	called := make(chan struct{}, 1)
+	if err := c.Subscribe(ctx, func(*Message) error {
+		called <- struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe error: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for !src.isClosed() {
+		select {
+		case <-called:
+			t.Fatal("ctx 已取消，不应再调用 handler")
+		case <-deadline:
+			t.Fatal("ctx 取消后消费循环未退出")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	if got := src.fetchedCount(); got != 0 {
+		t.Fatalf("ctx 已取消时不应拉取消息，实际拉取 %d 条", got)
 	}
 }
 

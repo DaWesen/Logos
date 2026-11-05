@@ -17,6 +17,8 @@ import (
 	pb "Logos/proto_gen/collection"
 	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 )
@@ -78,7 +80,11 @@ func main() {
 
 	collectionService := service.NewCollectionService(repo, knowledgeService, extractionService, outboxRepo)
 
-	if err := collectionService.StartKafkaConsumer(context.Background()); err != nil {
+	// 消费循环必须跟随进程生命周期：否则 SIGTERM 后 gRPC 已经排空退出，
+	// 后台消费者仍在拉取消息，handler 收到的 msg.Context 也永远不会取消。
+	consumerCtx, stopConsumers := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopConsumers()
+	if err := collectionService.StartKafkaConsumer(consumerCtx); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
 	}
 

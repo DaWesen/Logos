@@ -59,9 +59,9 @@ type execRepo struct {
 	updateErr error
 	// failUpdateAt > 0 时，第 N 次 UpdateTask 返回 updateErr。
 	failUpdateAt int
-	createErr error
-	txErr     error
-	markErr   error
+	createErr    error
+	txErr        error
+	markErr      error
 	// markClaimed 为 nil 时视为抢到执行权。
 	markClaimed *bool
 	markCalls   int
@@ -69,6 +69,8 @@ type execRepo struct {
 	updates []int
 	results []model.ExtractionResult
 	created []*model.ExtractionTask
+	// createCtx 记录 CreateTask 收到的 ctx，用于断言消费循环 ctx 是否透传。
+	createCtx context.Context
 }
 
 func (r *execRepo) GetTask(ctx context.Context, id string) (*model.ExtractionTask, error) {
@@ -109,6 +111,7 @@ func (r *execRepo) CreateResult(ctx context.Context, result *model.ExtractionRes
 func (r *execRepo) CreateTask(ctx context.Context, task *model.ExtractionTask) error {
 	r.created = append(r.created, task)
 	r.task = task
+	r.createCtx = ctx
 	return nil
 }
 
@@ -262,6 +265,34 @@ func TestHandleCollectionEvent_RejectsMissingDataSource(t *testing.T) {
 	}
 	if len(repo.created) != 0 {
 		t.Fatalf("不应创建无数据源的抽取任务，实际 %d 个", len(repo.created))
+	}
+}
+
+// 消费循环 ctx 必须透传到建任务/执行任务：停机时在途写入要跟着取消，
+// offset 不提交，重启后由 Kafka 重投；用 Background 会让进程退出前
+// 继续把任务写成「已完成」，而上游其实从未确认消费成功。
+func TestHandleCollectionEvent_UsesLifecycleContext(t *testing.T) {
+	withNoLimitCache(t)
+	repo := newExecRepo()
+	repo.task = nil
+	svc := &extractionServiceImpl{repo: repo, outboxRepo: &recordingOutbox{}}
+
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "lifecycle")
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"data_source_id": "ds-42",
+		"status":         "SUCCESS",
+	})
+
+	if err := svc.handleCollectionEvent(&mq.Message{Value: payload, Context: ctx}); err != nil {
+		t.Fatalf("采集成功事件应能建出抽取任务，实际 %v", err)
+	}
+	if repo.createCtx == nil {
+		t.Fatal("建任务未继承消费循环 ctx")
+	}
+	if got := repo.createCtx.Value(ctxKey{}); got != "lifecycle" {
+		t.Fatalf("消费循环 ctx 未透传，实际 %v", got)
 	}
 }
 

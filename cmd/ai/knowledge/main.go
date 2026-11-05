@@ -20,6 +20,8 @@ import (
 	pb "Logos/proto_gen/knowledge"
 	"context"
 	"log"
+	"os/signal"
+	"syscall"
 
 	"google.golang.org/grpc"
 )
@@ -84,15 +86,21 @@ func main() {
 		defer relay.Stop()
 	}
 
+	// 消费循环必须跟随进程生命周期：否则 SIGTERM 后 gRPC 已经排空退出，
+	// 后台消费者仍在拉取消息，handler 收到的 msg.Context 也永远不会取消。
+	consumerCtx, stopConsumers := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopConsumers()
+
 	if kafkaManager != nil && esManager != nil {
 		esConsumer := mq.NewConsumer("knowledge_events", "knowledge-es-consumer")
 		esSyncer := consumer.NewESConsumer(esConsumer, esManager)
-		go func() {
-			if err := esSyncer.Start(context.Background()); err != nil {
-				logger.Warn("ES消费者启动失败", logger.ErrorField(err))
-			}
-		}()
-		logger.Info("ES同步消费者已启动")
+		// Subscribe 内部已经起 goroutine 跑消费循环，不会阻塞，这里无需再包
+		// 一层 goroutine：包了之后启动错误只会进日志，主流程照样打印「已启动」。
+		if err := esSyncer.Start(consumerCtx); err != nil {
+			logger.Warn("ES消费者启动失败", logger.ErrorField(err))
+		} else {
+			logger.Info("ES同步消费者已启动")
+		}
 	}
 
 	shutdown, serverOpt, _ := obs.InitGRPCProvider("knowledge")

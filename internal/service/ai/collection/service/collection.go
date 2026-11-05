@@ -624,12 +624,12 @@ func (s *collectionServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 
 	consumer := mq.NewConsumer(mq.TopicUserActivity, "collection-group")
 
-	go func() {
-		if err := consumer.Subscribe(ctx, s.handleUserActivityEvent); err != nil {
-			logger.Error("订阅用户活动事件失败",
-				logger.ErrorField(err))
-		}
-	}()
+	// Subscribe 内部已经起 goroutine 跑消费循环，这里再包一层 goroutine 只会
+	// 把同步失败变成日志：调用方拿到 nil、以为消费者已就绪，实际上一条消息
+	// 都不会被消费。直接返回包装后的错误，启动失败才有人负责。
+	if err := consumer.Subscribe(ctx, s.handleUserActivityEvent); err != nil {
+		return fmt.Errorf("订阅 %s 失败: %w", mq.TopicUserActivity, err)
+	}
 
 	logger.Info("Collection Service Kafka消费者已启动",
 		logger.StringField("topic", mq.TopicUserActivity))
