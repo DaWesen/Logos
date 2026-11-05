@@ -82,6 +82,9 @@ var (
 	ErrInsufficientBalance  = errors.New("余额不足")
 	ErrInvalidProvider      = errors.New("无效的模型提供商")
 	ErrQQNumberDuplicate    = errors.New("该QQ号已被其他Bot绑定")
+	// ErrUnauthenticated 表示调用方没有可用的登录身份。
+	// 复用 auth 的 sentinel，handler 才能用 errors.Is 统一映射成 401。
+	ErrUnauthenticated = auth.ErrMissingUser
 )
 
 // userIDFromContext 从 gRPC metadata 中取当前调用方用户 ID。
@@ -93,6 +96,30 @@ func userIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	return userID
+}
+
+// resolveCallerUserID 是用户态写入口的唯一身份来源。
+//
+// 关键点：身份必须来自 gRPC metadata（由网关认证中间件写入），而不是
+// 请求体里的 user_id。请求体是调用方可控的，只把它当作「声明」：
+// 声明为空则忽略，声明与 metadata 不一致则直接拒绝。否则任何人只要
+// 直连 gRPC 端口，就能把 user_id 换成别人，绕过归属校验。
+//
+// 空身份绝不能放行：DAO 里 ListBots/ListConversations/ListPrompts/
+// GetUserMemoriesByUser 都写成 `if userId != ""` 才追加过滤条件，
+// 空身份等于「不加过滤」，会把全库数据一起返回。
+func resolveCallerUserID(ctx context.Context, claimed string) (string, error) {
+	userID, err := auth.RequireUserID(ctx)
+	if err != nil {
+		return "", ErrUnauthenticated
+	}
+	if claimed != "" && claimed != userID {
+		logger.Warn("请求体身份与认证身份不一致，已拒绝",
+			logger.StringField("claimed", claimed),
+			logger.StringField("authenticated", userID))
+		return "", ErrUnauthenticated
+	}
+	return userID, nil
 }
 
 type BotService interface {
@@ -284,6 +311,14 @@ func truncateResult(results []planner.StepResult) string {
 }
 
 func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, description, avatar, botType, modelProvider, modelName, apiKey, baseURL, embeddingModel, systemPrompt string, config map[string]string) (*botmodel.Bot, error) {
+	// 归属列只能写认证身份：旧实现直接落库请求体里的 user_id，
+	// 缺身份时会把 Bot 归属写成空串，之后按用户过滤永远查不到它。
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	userID = ownerID
+
 	logger.Info("创建 Bot 请求", logger.StringField("name", name), logger.StringField("userID", userID), logger.StringField("avatar", avatar))
 
 	bot := &botmodel.Bot{
@@ -319,7 +354,7 @@ func (s *botServiceImpl) CreateBot(ctx context.Context, userID, name, descriptio
 		}
 	}
 
-	err := s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
+	err = s.repo.WithTransaction(ctx, func(txRepo dao.BotRepository) error {
 		if err := txRepo.CreateBot(ctx, bot); err != nil {
 			return err
 		}
@@ -618,6 +653,23 @@ func (s *botServiceImpl) ListBots(ctx context.Context, userID, botType, status s
 }
 
 func (s *botServiceImpl) CreateConversation(ctx context.Context, botID, userID, title string) (*botmodel.Conversation, error) {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	userID = ownerID
+
+	// 会话必须挂在「自己的 Bot」上：否则可以用别人的 BotID 建会话，
+	// 后续按 bot_id 聚合统计/计费时会把成本算到他人头上。
+	bot, err := s.repo.GetBot(ctx, botID)
+	if err != nil {
+		logger.Error("获取 Bot 失败", logger.ErrorField(err))
+		return nil, ErrInternalServer
+	}
+	if bot == nil || bot.UserID != userID {
+		return nil, ErrBotNotFound
+	}
+
 	logger.Info("创建对话请求", logger.StringField("botID", botID), logger.StringField("userID", userID))
 
 	id := uuid.NewString()
@@ -754,6 +806,14 @@ func (s *botServiceImpl) GetConversation(ctx context.Context, id string) (*botmo
 }
 
 func (s *botServiceImpl) ListConversations(ctx context.Context, botID, userID string, page, pageSize int) ([]*botmodel.Conversation, int64, error) {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	// 忽略请求体声明，统一用认证身份过滤；空身份已在上一步被拒绝，
+	// 不会落到 DAO 的 `if userId != ""` 分支变成「查全表」。
+	userID = ownerID
+
 	offset, pageSize := pagination.Offset(page, pageSize)
 	conversations, err := s.repo.ListConversations(ctx, botID, userID, offset, pageSize)
 	if err != nil {
@@ -1222,6 +1282,12 @@ func (s *botServiceImpl) GetHistory(ctx context.Context, botID, conversationID s
 }
 
 func (s *botServiceImpl) CreatePrompt(ctx context.Context, userID, name, description, content, promptType string, isPreset, isPublic bool, config map[string]string) (*botmodel.Prompt, error) {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	userID = ownerID
+
 	logger.Info("创建提示词请求", logger.StringField("name", name), logger.StringField("userId", userID))
 
 	prompt := &botmodel.Prompt{
@@ -1343,6 +1409,12 @@ func (s *botServiceImpl) GetPrompt(ctx context.Context, id string) (*botmodel.Pr
 }
 
 func (s *botServiceImpl) ListPrompts(ctx context.Context, userID, promptType string, isPreset, isPublic *bool, page, pageSize int) ([]*botmodel.Prompt, int64, error) {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	userID = ownerID
+
 	offset, pageSize := pagination.Offset(page, pageSize)
 	prompts, err := s.repo.ListPrompts(ctx, userID, promptType, isPreset, isPublic, offset, pageSize)
 	if err != nil {
@@ -1360,6 +1432,12 @@ func (s *botServiceImpl) ListPrompts(ctx context.Context, userID, promptType str
 }
 
 func (s *botServiceImpl) GetUserMemory(ctx context.Context, userID, botID string) ([]*botmodel.UserMemory, error) {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	userID = ownerID
+
 	return s.repo.GetUserMemory(ctx, userID, botID)
 }
 
@@ -1368,8 +1446,21 @@ func (s *botServiceImpl) SetUserMemory(ctx context.Context, userID, botID, key, 
 }
 
 func (s *botServiceImpl) SetUserMemoryWithCategory(ctx context.Context, userID, botID, key, value, category string) error {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	userID = ownerID
+
 	existing, err := s.repo.GetUserMemoryByKey(ctx, userID, botID, key)
-	if err == nil && existing != nil {
+	if err != nil {
+		// 查询失败不等于「不存在」：旧写法 `err == nil && existing != nil`
+		// 把错误吞成 nil，随后走新建分支，同一个 key 会插入第二行，
+		// 之后读取记忆时两条互相覆盖，用户看到的记忆会随机漂移。
+		logger.Error("查询用户记忆失败", logger.ErrorField(err))
+		return ErrInternalServer
+	}
+	if existing != nil {
 		existing.Value = value
 		if category != "" {
 			existing.Category = category
@@ -1389,10 +1480,22 @@ func (s *botServiceImpl) SetUserMemoryWithCategory(ctx context.Context, userID, 
 }
 
 func (s *botServiceImpl) DeleteUserMemory(ctx context.Context, userID, botID, key string) error {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	userID = ownerID
+
 	return s.repo.DeleteUserMemory(ctx, userID, botID, key)
 }
 
 func (s *botServiceImpl) DeleteAllUserMemories(ctx context.Context, userID, botID string) error {
+	ownerID, err := resolveCallerUserID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	userID = ownerID
+
 	memories, err := s.repo.GetUserMemoriesByUser(ctx, userID, botID)
 	if err != nil {
 		return err

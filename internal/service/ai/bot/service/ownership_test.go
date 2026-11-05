@@ -70,6 +70,15 @@ type stubRepo struct {
 
 	messages        []*botmodel.Message
 	messagesQueried []string
+
+	createdBots     []*botmodel.Bot
+	createdConvs    []*botmodel.Conversation
+	createdPrompts  []*botmodel.Prompt
+	convsQueried    []string
+	promptsQueried  []string
+	memoriesQueried []string
+	setMemories     []*botmodel.UserMemory
+	deletedMemories []string
 }
 
 func (r *stubRepo) GetMessages(_ context.Context, conversationID string, _ int, _ *time.Time) ([]*botmodel.Message, error) {
@@ -116,6 +125,102 @@ func (r *stubRepo) UpdatePrompt(_ context.Context, p *botmodel.Prompt) error {
 
 func (r *stubRepo) DeletePrompt(_ context.Context, id string) error {
 	r.deletedPrompts = append(r.deletedPrompts, id)
+	return nil
+}
+
+func (r *stubRepo) CreateBot(_ context.Context, bot *botmodel.Bot) error {
+	r.createdBots = append(r.createdBots, bot)
+	return nil
+}
+
+func (r *stubRepo) GetBotByQQNumber(_ context.Context, qqNumber string) (*botmodel.Bot, error) {
+	for _, bot := range r.bots {
+		if bot.QQNumber == qqNumber {
+			return bot, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *stubRepo) CreateConversation(_ context.Context, conv *botmodel.Conversation) error {
+	r.createdConvs = append(r.createdConvs, conv)
+	return nil
+}
+
+func (r *stubRepo) ListConversations(_ context.Context, botID, userID string, _, _ int) ([]*botmodel.Conversation, error) {
+	r.convsQueried = append(r.convsQueried, botID+"|"+userID)
+	var out []*botmodel.Conversation
+	for _, conv := range r.conversations {
+		if conv.UserID == userID {
+			out = append(out, conv)
+		}
+	}
+	return out, nil
+}
+
+func (r *stubRepo) CountConversations(_ context.Context, _, userID string) (int64, error) {
+	var count int64
+	for _, conv := range r.conversations {
+		if conv.UserID == userID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (r *stubRepo) CreatePrompt(_ context.Context, prompt *botmodel.Prompt) error {
+	r.createdPrompts = append(r.createdPrompts, prompt)
+	return nil
+}
+
+func (r *stubRepo) ListPrompts(_ context.Context, userID, _ string, _, _ *bool, _, _ int) ([]*botmodel.Prompt, error) {
+	r.promptsQueried = append(r.promptsQueried, userID)
+	var out []*botmodel.Prompt
+	for _, prompt := range r.prompts {
+		if prompt.UserID == userID {
+			out = append(out, prompt)
+		}
+	}
+	return out, nil
+}
+
+func (r *stubRepo) CountPrompts(_ context.Context, userID, _ string, _, _ *bool) (int64, error) {
+	var count int64
+	for _, prompt := range r.prompts {
+		if prompt.UserID == userID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (r *stubRepo) GetUserMemory(_ context.Context, userID, botID string) ([]*botmodel.UserMemory, error) {
+	r.memoriesQueried = append(r.memoriesQueried, userID+"|"+botID)
+	return nil, nil
+}
+
+func (r *stubRepo) GetUserMemoryByKey(_ context.Context, userID, botID, key string) (*botmodel.UserMemory, error) {
+	r.memoriesQueried = append(r.memoriesQueried, userID+"|"+botID+"|"+key)
+	return nil, nil
+}
+
+func (r *stubRepo) GetUserMemoriesByUser(_ context.Context, userID, botID string) ([]*botmodel.UserMemory, error) {
+	r.memoriesQueried = append(r.memoriesQueried, userID+"|"+botID)
+	return nil, nil
+}
+
+func (r *stubRepo) SetUserMemory(_ context.Context, memory *botmodel.UserMemory) error {
+	r.setMemories = append(r.setMemories, memory)
+	return nil
+}
+
+func (r *stubRepo) DeleteUserMemory(_ context.Context, userID, botID, key string) error {
+	r.deletedMemories = append(r.deletedMemories, userID+"|"+botID+"|"+key)
+	return nil
+}
+
+func (r *stubRepo) DeleteUserMemoryByID(_ context.Context, id string) error {
+	r.deletedMemories = append(r.deletedMemories, id)
 	return nil
 }
 
@@ -322,5 +427,123 @@ func TestPrompt_VisibilityRules(t *testing.T) {
 	}
 	if len(repo.updatedPrompts) != 0 || len(repo.deletedPrompts) != 0 {
 		t.Fatalf("越权提示词操作不应落库：updated=%d deleted=%d", len(repo.updatedPrompts), len(repo.deletedPrompts))
+	}
+}
+
+// 空身份在 DAO 里会退化成「不加 user_id 过滤」，直接导致全库泄露。
+// 这组用例把「拒绝发生在 service 层、且绝不触达 DAO」钉死。
+func TestUserScopedWrites_RejectMissingIdentity(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	if _, err := svc.CreateBot(context.Background(), "", "n", "", "", "", "", "", "", "", "", "", nil); err != ErrUnauthenticated {
+		t.Fatalf("空身份建 Bot 应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if len(repo.createdBots) != 0 {
+		t.Fatalf("未认证请求不应落库，实际 %d 条", len(repo.createdBots))
+	}
+
+	if _, err := svc.CreateConversation(context.Background(), "bot-owner", "", "t"); err != ErrUnauthenticated {
+		t.Fatalf("空身份建会话应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if len(repo.createdConvs) != 0 {
+		t.Fatalf("未认证请求不应建会话，实际 %d 条", len(repo.createdConvs))
+	}
+
+	if _, err := svc.CreatePrompt(context.Background(), "", "n", "", "", "", false, false, nil); err != ErrUnauthenticated {
+		t.Fatalf("空身份建提示词应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if len(repo.createdPrompts) != 0 {
+		t.Fatalf("未认证请求不应建提示词，实际 %d 条", len(repo.createdPrompts))
+	}
+
+	if _, err := svc.GetUserMemory(context.Background(), "", "bot-owner"); err != ErrUnauthenticated {
+		t.Fatalf("空身份读记忆应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if err := svc.SetUserMemoryWithCategory(context.Background(), "", "bot-owner", "k", "v", "fact"); err != ErrUnauthenticated {
+		t.Fatalf("空身份写记忆应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if err := svc.DeleteUserMemory(context.Background(), "", "bot-owner", "k"); err != ErrUnauthenticated {
+		t.Fatalf("空身份删记忆应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if err := svc.DeleteAllUserMemories(context.Background(), "", "bot-owner"); err != ErrUnauthenticated {
+		t.Fatalf("空身份清空记忆应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if len(repo.memoriesQueried) != 0 || len(repo.setMemories) != 0 || len(repo.deletedMemories) != 0 {
+		t.Fatalf("未认证请求不应触达记忆表：queried=%v set=%d deleted=%v",
+			repo.memoriesQueried, len(repo.setMemories), repo.deletedMemories)
+	}
+}
+
+// 列表接口的空身份最危险：DAO 的 `if userId != ""` 会退化成全表查询。
+func TestUserScopedLists_RejectMissingIdentity(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	if _, _, err := svc.ListConversations(context.Background(), "", "", 1, 20); err != ErrUnauthenticated {
+		t.Fatalf("空身份列会话应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if _, _, err := svc.ListPrompts(context.Background(), "", "", nil, nil, 1, 20); err != ErrUnauthenticated {
+		t.Fatalf("空身份列提示词应返回 ErrUnauthenticated，实际 %v", err)
+	}
+	if len(repo.convsQueried) != 0 || len(repo.promptsQueried) != 0 {
+		t.Fatalf("未认证列表请求不应触达 DAO：convs=%v prompts=%v", repo.convsQueried, repo.promptsQueried)
+	}
+}
+
+// 请求体里的 user_id 是调用方可控的「声明」，不能覆盖认证身份。
+func TestUserScopedWrites_RejectIdentityOverride(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	if _, err := svc.CreateConversation(userCtx("alice"), "bot-other", "bob", "t"); err != ErrUnauthenticated {
+		t.Fatalf("声明身份与认证身份不一致应拒绝，实际 %v", err)
+	}
+	if len(repo.createdConvs) != 0 {
+		t.Fatalf("身份冒充请求不应建会话，实际 %d 条", len(repo.createdConvs))
+	}
+}
+
+func TestCreateConversation_RequiresOwnBot(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	if _, err := svc.CreateConversation(userCtx("alice"), "bot-other", "alice", "t"); err != ErrBotNotFound {
+		t.Fatalf("用自己的身份挂别人的 Bot 应返回 ErrBotNotFound，实际 %v", err)
+	}
+	if len(repo.createdConvs) != 0 {
+		t.Fatalf("不应建会话，实际 %d 条", len(repo.createdConvs))
+	}
+
+	got, err := svc.CreateConversation(userCtx("alice"), "bot-owner", "alice", "t")
+	if err != nil {
+		t.Fatalf("所有者建会话应成功，实际 %v", err)
+	}
+	if got == nil || got.UserID != "alice" || got.BotID != "bot-owner" {
+		t.Fatalf("会话归属不正确：%+v", got)
+	}
+}
+
+func TestListConversations_UsesAuthenticatedIdentity(t *testing.T) {
+	svc, repo, _ := newOwnershipFixture()
+
+	convs, total, err := svc.ListConversations(userCtx("alice"), "", "alice", 1, 20)
+	if err != nil {
+		t.Fatalf("ListConversations returned error: %v", err)
+	}
+	if len(repo.convsQueried) != 1 || repo.convsQueried[0] != "|alice" {
+		t.Fatalf("必须用认证身份过滤，实际查询条件 %v", repo.convsQueried)
+	}
+	for _, conv := range convs {
+		if conv.UserID != "alice" {
+			t.Fatalf("返回了他人会话：%+v", conv)
+		}
+	}
+	if total != 2 {
+		t.Fatalf("应只统计 alice 的会话，实际 %d", total)
+	}
+
+	// 声明与认证身份不一致时直接拒绝，而不是「按声明查」。
+	if _, _, err := svc.ListConversations(userCtx("alice"), "", "bob", 1, 20); err != ErrUnauthenticated {
+		t.Fatalf("声明他人身份应拒绝，实际 %v", err)
+	}
+	if len(repo.convsQueried) != 1 {
+		t.Fatalf("被拒请求不应再查库，实际 %v", repo.convsQueried)
 	}
 }

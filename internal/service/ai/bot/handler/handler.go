@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,6 +21,18 @@ import (
 type BotServiceImpl struct {
 	pb.UnimplementedBotServiceServer
 	BotService service.BotService
+}
+
+// statusCodeForError 把服务层哨兵映射成网关能识别的业务码。
+//
+// 这里必须显式返回 401：网关 mapStatusCode 只认 0/1 和合法 HTTP 状态码，
+// 其余一律 500。未认证若继续用 code=1，前端拿到的会是「服务器内部错误」，
+// 用户既不会去重新登录，排障也会被误导到服务端故障。
+func statusCodeForError(err error) int32 {
+	if errors.Is(err, service.ErrUnauthenticated) {
+		return 401
+	}
+	return 1
 }
 
 func convertModelBotToProtoBot(mb *model.Bot) *pb.Bot {
@@ -161,7 +174,7 @@ func (s *BotServiceImpl) CreateBot(ctx context.Context, req *pb.CreateBotRequest
 	bot, err := s.BotService.CreateBot(ctx, req.UserId, req.Name, req.Description, req.Avatar, botType, provider, req.Model, req.ApiKey, req.BaseUrl, req.EmbeddingModel, req.SystemPrompt, req.Config)
 	if err != nil {
 		logger.Error("创建 Bot 失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -211,7 +224,7 @@ func (s *BotServiceImpl) CreateConversation(ctx context.Context, req *pb.CreateC
 	conversation, err := s.BotService.CreateConversation(ctx, req.BotId, req.UserId, req.Title)
 	if err != nil {
 		logger.Error("创建对话失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -260,7 +273,7 @@ func (s *BotServiceImpl) ListConversations(ctx context.Context, req *pb.ListConv
 	conversations, total, err := s.BotService.ListConversations(ctx, req.BotId, req.UserId, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("获取对话列表失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -303,7 +316,7 @@ func (s *BotServiceImpl) GetUserMemory(ctx context.Context, req *pb.GetUserMemor
 	memories, err := s.BotService.GetUserMemory(ctx, req.UserId, req.BotId)
 	if err != nil {
 		logger.Error("获取用户记忆失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -325,7 +338,7 @@ func (s *BotServiceImpl) SetUserMemory(ctx context.Context, req *pb.SetUserMemor
 	}
 	if err := s.BotService.SetUserMemoryWithCategory(ctx, req.UserId, req.BotId, req.Key, req.Value, category); err != nil {
 		logger.Error("设置用户记忆失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -346,7 +359,7 @@ func (s *BotServiceImpl) DeleteUserMemory(ctx context.Context, req *pb.DeleteUse
 
 	if err := s.BotService.DeleteUserMemory(ctx, req.UserId, req.BotId, req.Key); err != nil {
 		logger.Error("删除用户记忆失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -533,7 +546,7 @@ func (s *BotServiceImpl) CreatePrompt(ctx context.Context, req *pb.CreatePromptR
 	prompt, err := s.BotService.CreatePrompt(ctx, req.UserId, req.Name, req.Description, req.Content, req.Type, req.IsPreset, req.IsPublic, req.Config)
 	if err != nil {
 		logger.Error("创建提示词失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
@@ -610,7 +623,7 @@ func (s *BotServiceImpl) ListPrompts(ctx context.Context, req *pb.ListPromptsReq
 	prompts, total, err := s.BotService.ListPrompts(ctx, req.UserId, req.Type, req.IsPreset, req.IsPublic, int(req.Page), int(req.PageSize))
 	if err != nil {
 		logger.Error("获取提示词列表失败", logger.ErrorField(err))
-		resp.Code = 1
+		resp.Code = statusCodeForError(err)
 		resp.Message = err.Error()
 		return resp, nil
 	}
