@@ -131,7 +131,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **统计聚合语义**：一条 `GROUP BY topic` 返回全部 topic（不是 1+7 次查询）；空 topic 补零行且总数/待处理/已处理/失败字段齐全；`COALESCE` 保证空表不报错；查询失败必须上抛，不能返回空列表冒充正常
 - **状态常量一致性**：Kafka 消费成功后写入 `PROCESSED`（统计认识的集合），不是历史上的 `PROCESSED_FROM_KAFKA`；创建/消费/确认/清理/统计共用 model 中的状态常量，新增状态必须同时更新统计口径
 - **网关路径参数边界**：`topic` 路径参数只接受 `0..6`；`abc`、空串、负数、`7`、小数、超长整数全部返回 400；非法请求不得调用下游 `DeleteTopic`（否则会被当成 `DATA_COLLECTION` 删除）；合法值必须原样透传枚举，不被中间层改写
-- **网关状态码映射**：下游 `BaseResp.StatusCode=0` 映射为 HTTP 200，`1` 映射为 500，`100..599` 直通，其余值收敛到 500；不得把业务码直接当 HTTP 状态码写出
+- **网关状态码映射**：下游 `BaseResp.StatusCode=0` 映射为 HTTP 200，`1` 映射为 500，`100..599` 直通，其余值（含负数、`600`）收敛到 500；裸 `int32 code` 的 bot/billing/MCP/moderation/summary 接口走同一张映射表，`respondProtoCode` 保证响应体 `code` 与状态行一致；handler 目录的静态守卫会扫描源码，出现 `c.JSON(int(...))`、`toHTTPCode(`、`statusCode = int(resp.Code)` 等绕过写法即失败
 - **消费长轮询语义**：`timeout_ms > 0` 时空结果按 200ms 间隔重试，拿到消息立即返回，预算耗尽返回空列表且不报错；`<= 0` 只领取一次；超过 30s 收敛到 30s；客户端取消立即返回 `context.Canceled` 并停止后续领取；数据库错误始终上抛，不能被长轮询吞成空结果
 - **Milvus 启动预算**：持续连接失败时在总预算内返回而不是固定重试 60 次；单次尝试超时被剩余预算截断（预算 200ms、单次超时 10s 时仍在 1s 内返回）；首次成功立即返回且不继续重试；日志包含「预算耗尽」结论
 - **日志无配置降级**：`GetLogger` 在没有配置文件时退回 info + stdout，不 panic。单元测试、CLI 工具等未加载配置的场景仍可正常打日志
