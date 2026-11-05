@@ -112,6 +112,13 @@ func (s *vectorServiceImpl) UpdateCollection(ctx context.Context, req *model.Vec
 		return nil, ErrCollectionNotFound
 	}
 
+	// 维度决定已写入向量的语义空间，改维度等于让历史向量全部失效。
+	// 这个接口只做原地更新，必须显式拒绝，而不是记条日志后返回成功。
+	if req.Dimension > 0 && existing.Dimension > 0 && req.Dimension != existing.Dimension {
+		return nil, fmt.Errorf("不支持修改向量维度（当前 %d，请求 %d），请新建集合并重新写入向量",
+			existing.Dimension, req.Dimension)
+	}
+
 	req.UpdatedAt = time.Now()
 	if req.Name == "" {
 		req.Name = existing.Name
@@ -125,21 +132,14 @@ func (s *vectorServiceImpl) UpdateCollection(ctx context.Context, req *model.Vec
 	if req.IndexType == 0 {
 		req.IndexType = existing.IndexType
 	}
-	if req.VLM.Model == "" && req.VLM.BaseURL == "" && req.VLM.APIKey == "" {
-		req.VLM = existing.VLM
-	}
-	if req.LLM.Model == "" && req.LLM.BaseURL == "" && req.LLM.APIKey == "" {
-		req.LLM = existing.LLM
-	}
-	if req.ASR.Model == "" && req.ASR.BaseURL == "" && req.ASR.APIKey == "" {
-		req.ASR = existing.ASR
-	}
-	if req.Embedding.Model == "" && req.Embedding.BaseURL == "" && req.Embedding.APIKey == "" {
-		req.Embedding = existing.Embedding
-	}
+	req.VLM = mergeModelConfig(req.VLM, existing.VLM)
+	req.LLM = mergeModelConfig(req.LLM, existing.LLM)
+	req.ASR = mergeModelConfig(req.ASR, existing.ASR)
+	req.Embedding = mergeModelConfig(req.Embedding, existing.Embedding)
 	if req.Parameters == nil {
 		req.Parameters = existing.Parameters
 	}
+	req.UserID = existing.UserID
 	req.CreatedAt = existing.CreatedAt
 	req.Size = existing.Size
 
@@ -154,6 +154,21 @@ func (s *vectorServiceImpl) UpdateCollection(ctx context.Context, req *model.Vec
 		logger.StringField("id", req.ID))
 
 	return req, nil
+}
+
+// mergeModelConfig 按字段合并：
+// 只改 BaseURL 时不能把 Model / APIKey 一起清空。
+func mergeModelConfig(req model.ModelConfig, existing model.ModelConfig) model.ModelConfig {
+	if req.Model == "" {
+		req.Model = existing.Model
+	}
+	if req.BaseURL == "" {
+		req.BaseURL = existing.BaseURL
+	}
+	if req.APIKey == "" {
+		req.APIKey = existing.APIKey
+	}
+	return req
 }
 
 func (s *vectorServiceImpl) DeleteCollection(ctx context.Context, id string) error {

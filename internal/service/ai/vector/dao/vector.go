@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"Logos/pkg/vector"
 
 	"github.com/cloudwego/eino/components/embedding"
+	"github.com/milvus-io/milvus/client/v2/entity"
 	"go.uber.org/zap/zapcore"
 	"gorm.io/gorm"
 )
@@ -61,6 +64,52 @@ func (r *vectorRepository) milvusUnavailableError(op string) error {
 	return fmt.Errorf("Milvus未连接，无法执行操作: %s", op)
 }
 
+func milvusIndexType(indexType model.IndexType) string {
+	switch indexType {
+	case model.IVF_FLAT:
+		return "IVF_FLAT"
+	case model.HNSW:
+		return "HNSW"
+	default:
+		return "FLAT"
+	}
+}
+
+// collectionDimension 从 Milvus schema 中读出向量维度。
+// 解析失败必须报错：返回 0 会让调用方误以为「集合没有维度」，
+// 从而跳过所有维度一致性校验。
+func collectionDimension(coll *entity.Collection) (int, error) {
+	if coll == nil || coll.Schema == nil {
+		return 0, nil
+	}
+	for _, field := range coll.Schema.Fields {
+		if field == nil || field.Name != "vector" {
+			continue
+		}
+		dimStr, ok := field.TypeParams["dim"]
+		if !ok || dimStr == "" {
+			return 0, errors.New("向量字段缺少 dim 参数")
+		}
+		dim, err := strconv.Atoi(dimStr)
+		if err != nil {
+			return 0, fmt.Errorf("向量维度 %q 不是合法整数: %w", dimStr, err)
+		}
+		if dim <= 0 {
+			return 0, fmt.Errorf("向量维度必须为正数，实际为 %d", dim)
+		}
+		return dim, nil
+	}
+	return 0, nil
+}
+
+// collectionNeedsReindex 判断本次更新是否真的改变了索引。
+// 名称、模型配置的变更不应该触发 DropIndex/CreateIndex。
+func collectionNeedsReindex(existing *model.VectorCollectionRecord, coll *model.VectorCollection) bool {
+	return int(coll.IndexType) != existing.IndexType ||
+		coll.Dimension != existing.Dimension ||
+		!maps.Equal(coll.Parameters, existing.Parameters)
+}
+
 func (r *vectorRepository) CreateCollection(ctx context.Context, collection *model.VectorCollection) error {
 	if r.milvus == nil {
 		return r.milvusUnavailableError("CreateCollection")
@@ -78,15 +127,11 @@ func (r *vectorRepository) CreateCollection(ctx context.Context, collection *mod
 		return err
 	}
 
-	indexType := "FLAT"
-	switch collection.IndexType {
-	case model.IVF_FLAT:
-		indexType = "IVF_FLAT"
-	case model.HNSW:
-		indexType = "HNSW"
-	}
+	indexType := milvusIndexType(collection.IndexType)
 
-	err = r.milvus.CreateIndex(ctx, collectionName, "vector", indexType, nil)
+	// 创建时就把索引参数写进 Milvus：否则库里的 parameters 只是装饰，
+	// 后续更新又会拿这份参数去重建索引，两边永远对不上。
+	err = r.milvus.CreateIndex(ctx, collectionName, "vector", indexType, collection.Parameters)
 	if err != nil {
 		logger.Error("创建Milvus索引失败",
 			logger.StringField("id", collection.ID),
@@ -120,11 +165,39 @@ func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *mod
 	if r.milvus == nil {
 		return r.milvusUnavailableError("UpdateCollection")
 	}
+	if r.db == nil {
+		// 更新接口的价值在于「改完能读回来」。没有数据库就只能改 Milvus
+		// 索引，用户的名称/模型配置依旧会丢，所以直接拒绝。
+		return errors.New("数据库未初始化，无法持久化集合更新")
+	}
 	logger.Info("更新向量集合",
 		logger.StringField("id", collection.ID),
 		logger.StringField("name", collection.Name))
 
 	collectionName := "vector_" + collection.ID
+
+	// 先确认元信息存在，再动 Milvus。反过来的话，索引已经重建完才发现
+	// 没有可写的记录，就留下了一个不可回滚的半成品。
+	var existing model.VectorCollectionRecord
+	lookupErr := r.db.WithContext(ctx).Where("id = ?", collection.ID).First(&existing).Error
+	if lookupErr != nil {
+		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("集合元信息不存在，无法更新: %s", collection.ID)
+		}
+		return fmt.Errorf("查询集合元信息失败: %w", lookupErr)
+	}
+
+	// 未传的字段沿用库里的值。这里逐字段合并，而不是「三项全空才沿用」：
+	// 后者会让「只改 BaseURL」把模型和密钥一并清空。
+	if collection.IndexType == 0 {
+		collection.IndexType = model.IndexType(existing.IndexType)
+	}
+	if collection.Parameters == nil {
+		collection.Parameters = existing.Parameters
+	}
+	if collection.Dimension <= 0 {
+		collection.Dimension = existing.Dimension
+	}
 
 	coll, err := r.milvus.DescribeCollection(ctx, collectionName)
 	if err != nil {
@@ -134,59 +207,90 @@ func (r *vectorRepository) UpdateCollection(ctx context.Context, collection *mod
 		return fmt.Errorf("获取集合信息失败: %w", err)
 	}
 
-	currentDim := 0
-	for _, field := range coll.Schema.Fields {
-		if field.Name == "vector" && field.TypeParams != nil {
-			if dimStr, ok := field.TypeParams["dim"]; ok {
-				fmt.Sscanf(dimStr, "%d", &currentDim)
-			}
+	currentDim, err := collectionDimension(coll)
+	if err != nil {
+		logger.Error("解析集合维度失败",
+			logger.StringField("id", collection.ID),
+			logger.ErrorField(err))
+		return fmt.Errorf("解析集合维度失败: %w", err)
+	}
+
+	if currentDim > 0 {
+		if collection.Dimension <= 0 {
+			// 元数据缺失时以 Milvus 实际维度为准，顺手把库补全。
+			collection.Dimension = currentDim
+		} else if collection.Dimension != currentDim {
+			return fmt.Errorf("集合 %s 的实际向量维度为 %d，与请求的 %d 不一致：更新接口不能修改维度，请新建集合并重新写入",
+				collection.ID, currentDim, collection.Dimension)
 		}
 	}
 
-	if currentDim > 0 && currentDim != collection.Dimension {
-		logger.Warn("维度变更需要重建集合（危险操作），当前仅支持索引类型更新",
-			logger.StringField("id", collection.ID),
-			logger.IntField("old_dim", currentDim),
-			logger.IntField("new_dim", collection.Dimension))
+	// 只有索引相关字段变化时才 DropIndex/CreateIndex/LoadCollection。
+	// 改个名字就重建索引，会让集合在整个重建期间无法搜索。
+	indexType := milvusIndexType(collection.IndexType)
+	if collectionNeedsReindex(&existing, collection) {
+		err = r.milvus.DropIndex(ctx, collectionName, "vector")
+		if err != nil {
+			logger.Error("删除旧索引失败",
+				logger.StringField("id", collection.ID),
+				logger.ErrorField(err))
+			return fmt.Errorf("删除旧索引失败: %w", err)
+		}
+
+		err = r.milvus.CreateIndex(ctx, collectionName, "vector", indexType, collection.Parameters)
+		if err != nil {
+			logger.Error("创建新索引失败",
+				logger.StringField("id", collection.ID),
+				logger.StringField("index_type", indexType),
+				logger.ErrorField(err))
+			return fmt.Errorf("创建新索引失败: %w", err)
+		}
+
+		err = r.milvus.LoadCollection(ctx, collectionName, 1)
+		if err != nil {
+			logger.Error("重新加载集合失败",
+				logger.StringField("id", collection.ID),
+				logger.ErrorField(err))
+			return fmt.Errorf("重新加载集合失败: %w", err)
+		}
+	} else {
+		logger.Info("索引配置未变化，跳过索引重建",
+			logger.StringField("id", collection.ID))
 	}
 
-	indexType := "FLAT"
-	switch collection.IndexType {
-	case model.IVF_FLAT:
-		indexType = "IVF_FLAT"
-	case model.HNSW:
-		indexType = "HNSW"
-	}
-
-	err = r.milvus.DropIndex(ctx, collectionName, "vector")
-	if err != nil {
-		logger.Error("删除旧索引失败",
+	if err := r.saveCollectionMetadata(ctx, collection); err != nil {
+		logger.Error("保存集合元信息失败",
 			logger.StringField("id", collection.ID),
 			logger.ErrorField(err))
-		return fmt.Errorf("删除旧索引失败: %w", err)
-	}
-
-	err = r.milvus.CreateIndex(ctx, collectionName, "vector", indexType, collection.Parameters)
-	if err != nil {
-		logger.Error("创建新索引失败",
-			logger.StringField("id", collection.ID),
-			logger.StringField("index_type", indexType),
-			logger.ErrorField(err))
-		return fmt.Errorf("创建新索引失败: %w", err)
-	}
-
-	err = r.milvus.LoadCollection(ctx, collectionName, 1)
-	if err != nil {
-		logger.Error("重新加载集合失败",
-			logger.StringField("id", collection.ID),
-			logger.ErrorField(err))
-		return fmt.Errorf("重新加载集合失败: %w", err)
+		return err
 	}
 
 	logger.Info("更新向量集合成功",
 		logger.StringField("id", collection.ID),
 		logger.StringField("index_type", indexType))
 
+	return nil
+}
+
+// saveCollectionMetadata 只写回本接口允许修改的字段。
+// user_id / size / created_at 不在 Select 里，避免一次重命名把归属和
+// 统计信息一起覆盖掉。
+func (r *vectorRepository) saveCollectionMetadata(ctx context.Context, collection *model.VectorCollection) error {
+	rec := collectionToRecord(collection)
+	result := r.db.WithContext(ctx).
+		Model(&model.VectorCollectionRecord{}).
+		Where("id = ?", collection.ID).
+		Select(
+			"Name", "ModelType", "IndexType", "Dimension", "Parameters",
+			"VlmModel", "VlmBaseURL", "VlmApiKey",
+			"LlmModel", "LlmBaseURL", "LlmApiKey",
+			"AsrModel", "AsrBaseURL", "AsrApiKey",
+			"EmbeddingModel", "EmbeddingBaseURL", "EmbeddingApiKey",
+		).
+		Updates(rec)
+	if result.Error != nil {
+		return fmt.Errorf("保存集合元信息失败: %w", result.Error)
+	}
 	return nil
 }
 
@@ -908,12 +1012,13 @@ func (r *vectorRepository) ListVectors(ctx context.Context, collectionID string,
 
 func recordToModel(rec *model.VectorCollectionRecord) *model.VectorCollection {
 	return &model.VectorCollection{
-		ID:        rec.ID,
-		Name:      rec.Name,
-		ModelType: model.VectorModelType(rec.ModelType),
-		IndexType: model.IndexType(rec.IndexType),
-		Dimension: rec.Dimension,
-		Size:      rec.Size,
+		ID:         rec.ID,
+		Name:       rec.Name,
+		ModelType:  model.VectorModelType(rec.ModelType),
+		IndexType:  model.IndexType(rec.IndexType),
+		Dimension:  rec.Dimension,
+		Parameters: rec.Parameters,
+		Size:       rec.Size,
 		VLM: model.ModelConfig{
 			Model:   rec.VlmModel,
 			BaseURL: rec.VlmBaseURL,
@@ -947,6 +1052,7 @@ func collectionToRecord(coll *model.VectorCollection) *model.VectorCollectionRec
 		ModelType:        int(coll.ModelType),
 		IndexType:        int(coll.IndexType),
 		Dimension:        coll.Dimension,
+		Parameters:       coll.Parameters,
 		Size:             coll.Size,
 		VlmModel:         coll.VLM.Model,
 		VlmBaseURL:       coll.VLM.BaseURL,

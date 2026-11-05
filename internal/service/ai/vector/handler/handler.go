@@ -156,18 +156,27 @@ func (s *VectorServiceImpl) UpdateCollection(ctx context.Context, req *pb.Update
 		collection.Name = *req.Name
 	}
 	if req.Parameters != nil {
-		collection.Parameters = req.Parameters
-		if model, ok := req.Parameters["__embedding_model"]; ok {
-			collection.Embedding.Model = model
-			delete(collection.Parameters, "__embedding_model")
+		// 复制一份再剥离内部键：直接删调用方的 map 既会污染请求对象，
+		// 也会让「只传 __embedding_*」的请求在 service 层被当成
+		// 「显式传了空参数」，从而清空已有索引参数。
+		parameters := make(map[string]string, len(req.Parameters))
+		for key, value := range req.Parameters {
+			parameters[key] = value
 		}
-		if baseURL, ok := req.Parameters["__embedding_base_url"]; ok {
+		if embeddingModel, ok := parameters["__embedding_model"]; ok {
+			collection.Embedding.Model = embeddingModel
+			delete(parameters, "__embedding_model")
+		}
+		if baseURL, ok := parameters["__embedding_base_url"]; ok {
 			collection.Embedding.BaseURL = baseURL
-			delete(collection.Parameters, "__embedding_base_url")
+			delete(parameters, "__embedding_base_url")
 		}
-		if apiKey, ok := req.Parameters["__embedding_api_key"]; ok {
+		if apiKey, ok := parameters["__embedding_api_key"]; ok {
 			collection.Embedding.APIKey = apiKey
-			delete(collection.Parameters, "__embedding_api_key")
+			delete(parameters, "__embedding_api_key")
+		}
+		if len(parameters) > 0 {
+			collection.Parameters = parameters
 		}
 	}
 
