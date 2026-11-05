@@ -145,6 +145,10 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **HTTP 排空兜底**：`Shutdown` 在窗口内完成时在途请求正常返回；handler 超过窗口时 `Serve` 返回错误并调用 `Close` 强制断开，卡住请求的 `r.Context()` 会被取消，不会留下悬挂连接与 goroutine
 - **依赖启动探测超时**：ES Ping 一直不应答时在 100ms 测试预算内返回错误（不是永久阻塞）；健康 ES 正常返回 client；Neo4j 连通性校验与失效驱动关闭均有独立超时预算
 - **Outbox 租约**：领取同时写 `lease_owner`；续租 SQL 带 `lease_owner + status` 条件；`MarkSent` 校验 fencing token；`leaseWindow` 在任意 `sendTimeout` 下都覆盖 `size × sendTimeout`；分块条数落在 `[1, 20]` 且不超预算；空 id 列表不发 `IN ()`；`Stop` 在有界时间内返回；每个 relay 实例的 token 唯一
+- **采集任务状态与依赖顺序**：数据源不存在时返回 `ErrNotFound` 且**不写** `RUNNING`（断言 `UpdateTask` 未被调用）；数据源查询失败必须上抛而不是继续采集（回归 `ds=nil` 的 `switch ds.Type` panic）；`RUNNING` 落库失败时立即返回且不产生任何结果；知识写入失败时任务为 `FAILED`、计数只统计已落库条目（第 2 条失败时 `CollectedCount=1`）；知识服务为 nil 时不得返回 `SUCCESS`；结果事务失败时不返回成功、不写 outbox；成功路径必须写结果并发出 `data_collection` 事件
+- **抽取任务状态与结果落库**：`RUNNING` 落库失败时立即返回且不执行抽取；不支持的任务类型返回 `Status=4` 的结果并落库、任务状态更新为 4、`EndedAt` 非空；失败结果落库失败时错误同时包含原始抽取失败原因与落库原因（`errors.Join`）；成功路径事务失败返回错误且不返回可查询结果；成功路径写 2 条 outbox（`knowledge_extraction` 与 `vector_processing`）
+- **采集事件消费契约**：事件用 `data_source_id` 建任务（断言 `DataID == "ds-42"`、`DataType == "data_source"`），不是旧代码读的 `data_id`；缺少 `data_source_id` 时返回错误且不建任务；`status=FAILED` 的事件跳过且不建任务
+- **抽取限流降级**：缓存构造返回 nil 时放行且不 panic（单测注入内存 cache，不再连接真实 Redis）；`IncrBy` 失败放行并记 Warn；`Expire` 失败不影响本次判定
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
