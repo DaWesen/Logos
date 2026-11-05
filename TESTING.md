@@ -108,6 +108,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **总结服务失败关闭**（`ai/summary/service`）：脚本化 ChatModel + 内存仓储覆盖——历史拉取失败或历史为空时不调用模型、不落库并返回带阶段信息的错误；`include_todos=true` 时提取失败返回错误且半成品摘要不落库；`key_points` 失败只降级为空要点，摘要仍成功落库；`CreateSummary` 失败不返回记录；候选/待办解析失败（含一次 JSON 修复后仍失败）返回错误而不是空列表；`message_ids` 暂不支持按 ID 取内容时显式回退最近历史并原样留档；`marshalField` 对不可序列化值返回错误
 - **知识提取失败关闭**（`ai/process/service`）：实体全部创建失败、三元组全部非法、关系写入失败且没有其他产物时返回 `ErrKnowledgeExtractionAllFailed`，且非法关系零落库；坏实体不影响合法实体写入，名称会裁剪空白，字符串属性按原值保留；关系端点复用已有实体而不是重复创建；模型确实没返回实体或关系时视为成功且不触达知识服务
 - **文档 DTO 统计失败边界**（`ai/process`）：单条与批量块数查询失败都返回带「查询文档块数量失败」的错误，不返回 `chunk_count=0` 的半成品 DTO 或整页零值；正常路径按文档 ID 映射真实块数；文档不存在返回 `nil, nil`，重处理不存在文档返回 `ErrDocumentNotFound`（handler 映射 404）；静态守卫禁止 handler 再用 `dto, _ := GetDocumentDTO`
+- **翻译失败关闭**（`ai/moderation` + `pkg/client`）：无 ChatModel 时 `Translate` 返回错误、不返回记录、不写库，错误信息不含占位文案；客户端对 `TranslateResponse.Code != 0` 返回错误且不返回译文，`Code=0` 正常返回 `translated_content`
 - **向量集合读取边界**（`ai/vector/dao`）：数据库故障 + 指定 `userID` 时 `ListCollections` 必须报错且不返回任何结果（禁止回退到无归属的 Milvus 全量列表）；数据库故障且 Milvus 未连接、或两套存储都未初始化时同样报错，不能返回空切片；`row_count` 缺失、空 map、`"12abc"` 后缀垃圾、负数都让 `parseCollectionSize` 返回错误，正常值与带空白值可解析；`Search` / `TextSearch` 在 Milvus 未连接时返回「Milvus未连接」错误而不是空结果
 - **QQ 出站错误分类**：缺目标 QQ 号、缺 Bot QQ 号、缺群号、空消息、不支持的会话类型都返回 `ErrSkipMessage`；QQ 未连接是可重试错误，不能被当成不可恢复
 - **快速路径接管契约**：Bot 客户端缺失、槽位已满、小号自己发的消息、群聊消息都返回未接管；只有真正接管才写 `qq_direct_bot`，未接管时不占槽位
