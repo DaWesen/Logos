@@ -37,6 +37,10 @@ const (
 // ErrMessageNotClaimed 由 dao 透出，供 handler 映射成 404/409 而不是一律 500。
 var ErrMessageNotClaimed = dao.ErrMessageNotClaimed
 
+// newMessageConsumer 是 mq.NewConsumer 的包级工厂，测试里可替换为返回
+// 零值 Consumer 的桩，从而在不连 Kafka 的前提下验证订阅失败的返回路径。
+var newMessageConsumer = mq.NewConsumer
+
 type QuestionService interface {
 	AskQuestion(ctx context.Context, question string, userID *string) (interface{ GetID() string }, error)
 }
@@ -460,15 +464,15 @@ func (s *messageServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 	topics := []string{mq.TopicQARequest, mq.TopicRecommendation, mq.TopicSystemEvent}
 
 	for _, topic := range topics {
-		consumer := mq.NewConsumer(topic, "message-service-group")
-
-		go func(t string, c *mq.Consumer) {
-			if err := c.Subscribe(ctx, s.handleGenericMessage); err != nil {
-				logger.Error("operation",
-					logger.StringField("topic", t),
-					logger.ErrorField(err))
-			}
-		}(topic, consumer)
+		consumer := newMessageConsumer(topic, "message-service-group")
+		// 订阅失败必须同步上抛：Subscribe 内部自己起消费循环，这里再包一层
+		// goroutine 只会把初始化错误留在日志里，cmd 层的 fail-fast 永远看不到。
+		if err := consumer.Subscribe(ctx, s.handleGenericMessage); err != nil {
+			logger.Error("operation",
+				logger.StringField("topic", topic),
+				logger.ErrorField(err))
+			return fmt.Errorf("subscribe topic %s: %w", topic, err)
+		}
 
 		logger.Info("operation",
 			logger.StringField("topic", topic))
