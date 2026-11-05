@@ -296,7 +296,7 @@ func (s *knowledgeServiceImpl) GetEntity(ctx context.Context, id string) (*model
 	cacheKey := fmt.Sprintf("entity:%s", id)
 	if s.cache != nil {
 		if cached, err := s.cache.Get(ctx, cacheKey); err == nil && cached != "" {
-			if entity, ok := decodeCachedEntity(cached); ok {
+			if entity, ok := s.decodeCachedEntity(ctx, id, cached); ok {
 				logger.Info("从缓存获取实体成功", logger.StringField("id", id))
 				return entity, nil
 			}
@@ -313,7 +313,7 @@ func (s *knowledgeServiceImpl) GetEntity(ctx context.Context, id string) (*model
 	entity, shared, err := s.entityFills.Do(ctx, cacheKey, func(fill context.Context) (*model.Entity, error) {
 		if s.cache != nil {
 			if cached, cacheErr := s.cache.Get(fill, cacheKey); cacheErr == nil && cached != "" {
-				if hit, ok := decodeCachedEntity(cached); ok {
+				if hit, ok := s.decodeCachedEntity(fill, id, cached); ok {
 					return hit, nil
 				}
 			}
@@ -344,9 +344,24 @@ func (s *knowledgeServiceImpl) GetEntity(ctx context.Context, id string) (*model
 
 // decodeCachedEntity 解析缓存内容。解析失败时返回 false，让调用方走回源，
 // 而不是把损坏的缓存当作「实体不存在」。
-func decodeCachedEntity(raw string) (*model.Entity, bool) {
+// 失败必须留日志：只返回 false 的话，线上只能看到「缓存命中率莫名下降」，
+// 无法区分是格式变更、脏写还是某次发布写坏了数据。
+func (s *knowledgeServiceImpl) decodeCachedEntity(ctx context.Context, id, raw string) (*model.Entity, bool) {
 	var entity model.Entity
 	if err := json.Unmarshal([]byte(raw), &entity); err != nil {
+		logger.Warn("解析实体缓存失败，按未命中回源",
+			logger.StringField("id", id),
+			logger.IntField("rawBytes", len(raw)),
+			logger.ErrorField(err))
+		// 损坏的值在 TTL 到期前会被每个读请求重复解析失败，
+		// 直接删掉，让后续请求干净地回源。
+		if s.cache != nil {
+			if deleteErr := s.cache.Delete(ctx, fmt.Sprintf("entity:%s", id)); deleteErr != nil {
+				logger.Warn("清理损坏的实体缓存失败",
+					logger.StringField("id", id),
+					logger.ErrorField(deleteErr))
+			}
+		}
 		return nil, false
 	}
 	return &entity, true
@@ -685,6 +700,9 @@ func (s *knowledgeServiceImpl) searchEntitiesFallback(ctx context.Context, keywo
 	return entities, total, nil
 }
 
+// 抽成包级变量，测试可以注入序列化失败，验证失败路径不会污染缓存。
+var marshalCachedEntity = json.Marshal
+
 func (s *knowledgeServiceImpl) cacheEntity(ctx context.Context, entity *model.Entity) {
 	if s.cache == nil {
 		return
@@ -697,7 +715,21 @@ func (s *knowledgeServiceImpl) cacheEntity(ctx context.Context, entity *model.En
 			logger.ErrorField(err))
 	}
 	cacheKey := fmt.Sprintf("entity:%s", entity.ID)
-	entityJSON, _ := json.Marshal(entity)
+	// 序列化失败时绝不能把空串写进缓存：Set 本身会成功，key 会被占到 TTL 结束，
+	// 而读侧只会把它当成未命中，等于用一次「成功的写入」盖掉一条真实数据。
+	entityJSON, err := marshalCachedEntity(entity)
+	if err != nil {
+		logger.Error("序列化实体失败，跳过写缓存",
+			logger.StringField("id", entity.ID),
+			logger.ErrorField(err))
+		// 更新场景下缓存里可能还是旧版本，必须删掉，否则会继续返回过期实体。
+		if deleteErr := s.cache.Delete(ctx, cacheKey); deleteErr != nil {
+			logger.Warn("清理实体缓存失败",
+				logger.StringField("id", entity.ID),
+				logger.ErrorField(deleteErr))
+		}
+		return
+	}
 	// TTL 加 ±10% 抖动：同一批预热的实体会在同一秒过期，
 	// 抖动把失效时间摊开，避免整批 key 同时回源。
 	ttl := cache.JitterTTL(entityCacheTTL, entityCacheTTLJitter, rand.Float64())

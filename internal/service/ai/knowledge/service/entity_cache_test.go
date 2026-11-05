@@ -20,6 +20,7 @@ type fakeEntityCache struct {
 	mu      sync.Mutex
 	values  map[string]string
 	deletes int32
+	sets    int32
 }
 
 func newFakeEntityCache() *fakeEntityCache {
@@ -33,6 +34,7 @@ func (f *fakeEntityCache) Get(ctx context.Context, key string) (string, error) {
 }
 
 func (f *fakeEntityCache) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	atomic.AddInt32(&f.sets, 1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.values[key] = value.(string)
@@ -140,6 +142,56 @@ func TestCacheEntity_ClearsMissingMarker(t *testing.T) {
 	svc.cacheEntity(context.Background(), &model.Entity{ID: "e2", Name: "new"})
 	if svc.isMissingEntityCached(context.Background(), "e2") {
 		t.Fatal("实体写回后必须清掉空值标记，否则新实体 60s 内查不到")
+	}
+}
+
+// 序列化失败时旧实现会把空串写进缓存：Set 返回成功，key 被占到 TTL 结束，
+// 读侧又只能按未命中处理。更新实体时更糟——缓存里会留下旧版本。
+func TestCacheEntity_MarshalFailureDoesNotPoisonCache(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeEntityCache()
+	svc := newEntityServiceForTest(c, &fakeEntityRepo{})
+
+	svc.cacheEntity(ctx, &model.Entity{ID: "e3", Name: "old"})
+	if ok, _ := c.Exists(ctx, "entity:e3"); !ok {
+		t.Fatal("前置条件失败：正常实体应已写入缓存")
+	}
+
+	orig := marshalCachedEntity
+	marshalCachedEntity = func(any) ([]byte, error) { return nil, errors.New("marshal failed") }
+	t.Cleanup(func() { marshalCachedEntity = orig })
+
+	before := atomic.LoadInt32(&c.sets)
+	svc.cacheEntity(ctx, &model.Entity{ID: "e3", Name: "new"})
+
+	if got := atomic.LoadInt32(&c.sets); got != before {
+		t.Fatalf("序列化失败不得写缓存，Set 调用从 %d 变成 %d", before, got)
+	}
+	if ok, _ := c.Exists(ctx, "entity:e3"); ok {
+		t.Fatal("序列化失败必须删掉旧缓存，否则更新后仍会返回过期实体")
+	}
+}
+
+// 缓存内容损坏不是「实体不存在」：必须按未命中回源，并用回源结果覆盖坏值。
+func TestGetEntity_CorruptCacheFallsBackToRepo(t *testing.T) {
+	ctx := context.Background()
+	c := newFakeEntityCache()
+	if err := c.Set(ctx, "entity:e4", "{not-json", time.Minute); err != nil {
+		t.Fatalf("写入损坏缓存失败: %v", err)
+	}
+	repo := &fakeEntityRepo{byID: map[string]*model.Entity{"e4": {ID: "e4", Name: "Logos"}}}
+	svc := newEntityServiceForTest(c, repo)
+
+	entity, err := svc.GetEntity(ctx, "e4")
+	if err != nil || entity == nil || entity.Name != "Logos" {
+		t.Fatalf("损坏缓存应按未命中回源，实际 entity=%v err=%v", entity, err)
+	}
+	if got := atomic.LoadInt32(&repo.calls); got != 1 {
+		t.Fatalf("损坏缓存应回源 1 次，实际 %d 次", got)
+	}
+	cached, _ := c.Get(ctx, "entity:e4")
+	if cached == "" || cached == "{not-json" {
+		t.Fatalf("缓存应被回源结果覆盖，实际 %q", cached)
 	}
 }
 
