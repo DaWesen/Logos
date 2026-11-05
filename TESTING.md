@@ -166,6 +166,8 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **邀请群成员**：待邀请成员的查询失败必须整批拒绝且不写任何成员（回归 `existing, _ := ...` 把数据库故障当成「不是成员」，导致重复插入撞唯一约束）；同一请求里的重复/空白 ID 被过滤后只写一批；已存在成员跳过；Bot 只写成员表、不写会话参与者；普通成员无邀请权限时零写入；邀请写入统一走 `InviteGroupMembers`（成员/参与者/成员数同事务），不再拆成三次独立写入
 - **审核拦截提示**：补充审核判定违规后提示先落库再推送（`system` / 系统消息、`ChatID` 与 `ConversationID` 一致、`Channel=system`）；审核服务报错或判定通过时不写任何消息；`system` 发送者不再送审（避免提示被拦截后递归生成提示）；群聊接收者为全体成员、私聊只回发送者；群成员查询失败向上返回错误，由调用方降级为「仅落库不推送」
 - **退出/踢出群**：`GetAllGroupMemberIDs` 失败时 `LeaveGroup` 返回错误且**不解散群**（回归 `len(memberIDs) <= 1` 把空列表当最后一人）；`KickGroupMember` 踢人成功后读剩余成员失败返回成功但不解散群；成员身份查询失败返回「查询群成员身份失败」而不是「您不是该群组成员」；群主转让失败中止退出且不写成员数据；普通成员退出走一次 `RemoveGroupMemberAndConversation` 事务（成员/参与者/成员数），不再分三次独立写入；最后一人退出才调用 `DeleteGroup`
+- **群成员查询失败必须失败关闭**：用「报错同时返回非 nil 零值成员」的违约仓储模拟旧 DAO，`authorizeIncomingMessage` 必须拒绝入站事件、`SendMessage` 必须返回 `ErrChatMembershipUnavailable` 且零落库（回归零值指针绕过 `member == nil` 导致任意人可向群聊发消息）；成员存在时仍正常放行作为对照；服务层 `GetGroupMember` 原样上抛查询错误，不把零值成员交给 RPC 调用方
+- **群主自动转让顺序稳定**：剩余成员列表按 `joined_at, user_id` 排序后，群主退出固定转让给最早入群的成员；测试桩同步排序，避免 `map` 遍历顺序让用例随机命中 u2/u3
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
