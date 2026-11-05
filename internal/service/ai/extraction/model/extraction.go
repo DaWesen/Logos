@@ -6,14 +6,28 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	TaskStatusPending   = 1
+	TaskStatusRunning   = 2
+	TaskStatusSucceeded = 3
+	TaskStatusFailed    = 4
+	TaskStatusCancelled = 5
+)
+
+// 结果状态沿用任务状态的取值：成功落 3、失败落 4。
+const (
+	ResultStatusSucceeded = TaskStatusSucceeded
+	ResultStatusFailed    = TaskStatusFailed
+)
+
 type ExtractionTask struct {
 	ID          string     `gorm:"primaryKey;size:64;comment:任务ID"`
 	Type        int        `gorm:"not null;comment:任务类型 1-实体识别 2-关系抽取 3-三元组抽取 4-摘要 5-关键短语"`
 	DataID      string     `gorm:"size:128;index;not null;comment:数据ID"`
 	DataType    string     `gorm:"size:32;not null;comment:数据类型"`
-	Status      int        `gorm:"not null;default:1;comment:状态 1-待执行 2-运行中 3-成功 4-失败 5-已取消"`
+	Status      int        `gorm:"not null;default:1;index:idx_extraction_task_due,priority:1;comment:状态 1-待执行 2-运行中 3-成功 4-失败 5-已取消"`
 	Parameters  string     `gorm:"type:text;comment:参数JSON"`
-	ScheduledAt *time.Time `gorm:"comment:计划执行时间"`
+	ScheduledAt *time.Time `gorm:"index:idx_extraction_task_due,priority:2;comment:计划执行时间"`
 	StartedAt   *time.Time `gorm:"comment:实际开始时间"`
 	EndedAt     *time.Time `gorm:"comment:结束时间"`
 	CreatedAt   time.Time  `gorm:"autoCreateTime;comment:创建时间"`

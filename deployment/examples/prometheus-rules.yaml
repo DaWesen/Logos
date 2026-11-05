@@ -494,6 +494,33 @@ spec:
         summary: "支付回调失败率过高（result={{ $labels.result }}）"
         description: "近 10 分钟每秒 {{ $value }} 次支付回调未成功入账，请检查 PAYMENT_CALLBACK_SECRET 与渠道配置；若 invalid_signature 突增需排查伪造回调"
 
+  # 计划抽取任务：调度器是纯后台链路，失败不会打到用户请求上，
+  # 但任务会一直停在「待执行」，用户看到「已计划」却永远不跑。
+  - name: logos.extraction
+    interval: 30s
+    rules:
+    # 扫描本身就失败：所有计划任务都不会执行，且没有任何用户侧报错
+    - alert: ExtractionScheduleScanFailing
+      expr: |
+        sum(rate(logos_extraction_schedule_scan_failure_count_total[10m])) > 0
+      for: 10m
+      labels:
+        severity: critical
+      annotations:
+        summary: "抽取任务调度器无法读取到期任务"
+        description: "调度器连续多轮查询到期任务失败（数据库不可用或查询超时），计划任务会全部停摆且不会产生任何用户侧错误；请优先检查 extraction 服务的数据库连接与慢查询"
+
+    # 单条任务失败：模型超时/限流或知识服务不可用，任务已落失败结果
+    - alert: ExtractionScheduleFailing
+      expr: |
+        sum(rate(logos_extraction_scheduled_count_total{result="failure"}[15m])) > 0
+      for: 15m
+      labels:
+        severity: warning
+      annotations:
+        summary: "计划抽取任务持续失败"
+        description: "近 15 分钟计划任务持续执行失败（模型超时、限流或知识服务不可用）；请检查 extraction 日志与 LLM 配额，失败原因已写入对应任务的结果记录"
+
   # 就绪状态告警。
   #
   # 与 PodNotReady 不同：PodNotReady 看的是 K8s 视角的探针结果，

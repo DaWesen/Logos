@@ -56,6 +56,7 @@ type ExtractionService interface {
 	GetTask(ctx context.Context, id string) (*model.ExtractionTask, error)
 	ListTasks(ctx context.Context) ([]*model.ExtractionTask, error)
 	ExecuteTask(ctx context.Context, taskID string) (*model.ExtractionResult, error)
+	RunScheduledTask(ctx context.Context, taskID string) (*model.ExtractionResult, bool, error)
 	CancelTask(ctx context.Context, taskID string) error
 	GetExtractionResult(ctx context.Context, id string) (*model.ExtractionResult, error)
 	ListExtractionResults(ctx context.Context, taskID string) ([]*model.ExtractionResult, error)
@@ -94,7 +95,7 @@ func (s *extractionServiceImpl) CreateTask(ctx context.Context, taskType int32, 
 		Type:      int(taskType),
 		DataID:    dataID,
 		DataType:  dataType,
-		Status:    1,
+		Status:    model.TaskStatusPending,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -186,17 +187,70 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 	}
 
 	now := time.Now()
-	task.Status = 2
-	task.StartedAt = &now
-	if err := s.repo.UpdateTask(ctx, task); err != nil {
+	// 手动执行允许重跑已结束的任务（改完参数再试一次），但不能和正在执行的实例并发。
+	// 状态判断必须交给数据库的条件更新，先查后改只能把竞态窗口缩小、不能消除。
+	claimed, err := s.repo.MarkTaskRunning(ctx, taskID, now)
+	if err != nil {
 		return nil, fmt.Errorf("更新任务状态失败: %w", err)
 	}
+	if !claimed {
+		return nil, errors.New("任务正在执行中，请勿重复触发")
+	}
 
+	task.Status = model.TaskStatusRunning
+	task.StartedAt = &now
+
+	return s.runClaimedTask(ctx, task, now)
+}
+
+// RunScheduledTask 领取并执行一个已到计划时间的任务，返回 (结果, 是否抢到执行权, 错误)。
+//
+// 第二个返回值为 false 表示任务已被其他实例领走、或已被用户取消：
+// 这是多实例竞争的正常结果，调度器应跳过而不是记失败。
+//
+// 与 ExecuteTask 的差别是不占交互链路的限流配额：计划任务是后台批量工作，
+// 用单批上限 + 串行执行形成背压；套用 20 次/分钟的交互限流只会让到期任务成批失败。
+func (s *extractionServiceImpl) RunScheduledTask(ctx context.Context, taskID string) (*model.ExtractionResult, bool, error) {
+	now := time.Now()
+	claimed, err := s.repo.ClaimDueTask(ctx, taskID, now)
+	if err != nil {
+		return nil, false, fmt.Errorf("领取到期任务失败: %w", err)
+	}
+	if !claimed {
+		return nil, false, nil
+	}
+
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, true, fmt.Errorf("查询任务失败: %w", err)
+	}
+	if task == nil {
+		return nil, true, errors.New("任务在领取后被删除")
+	}
+
+	logger.Info("执行计划抽取任务",
+		logger.StringField("task_id", taskID),
+		logger.StringField("scheduled_at", formatScheduledAt(task.ScheduledAt)))
+
+	result, err := s.runClaimedTask(ctx, task, now)
+	return result, true, err
+}
+
+func formatScheduledAt(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+// runClaimedTask 执行一个已经被原子置为运行中的任务：调用抽取、落库结果、回写最终状态。
+// 调用前必须已经通过条件更新抢到执行权，否则并发触发会重复调用模型。
+func (s *extractionServiceImpl) runClaimedTask(ctx context.Context, task *model.ExtractionTask, startedAt time.Time) (*model.ExtractionResult, error) {
 	result := &model.ExtractionResult{
 		ID:        uuid.New().String(),
-		TaskID:    taskID,
-		Status:    3,
-		StartTime: now.Unix(),
+		TaskID:    task.ID,
+		Status:    model.ResultStatusSucceeded,
+		StartTime: startedAt.Unix(),
 	}
 
 	var extractErr error
@@ -219,16 +273,16 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 	task.EndedAt = &endTime
 
 	if extractErr != nil {
-		result.Status = 4
+		result.Status = model.ResultStatusFailed
 		errMsg := extractErr.Error()
 		result.ErrorMsg = &errMsg
-		task.Status = 4
+		task.Status = model.TaskStatusFailed
 		logger.Error("抽取任务执行失败",
-			logger.StringField("task_id", taskID),
+			logger.StringField("task_id", task.ID),
 			logger.ErrorField(extractErr))
 		if updateErr := s.repo.UpdateTask(ctx, task); updateErr != nil {
 			logger.Error("更新失败任务状态失败",
-				logger.StringField("task_id", taskID),
+				logger.StringField("task_id", task.ID),
 				logger.ErrorField(updateErr))
 			return result, errors.Join(extractErr, fmt.Errorf("更新任务状态失败: %w", updateErr))
 		}
@@ -236,14 +290,14 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		// 排查时连失败原因都拿不到。
 		if saveErr := s.repo.CreateResult(ctx, result); saveErr != nil {
 			logger.Error("保存失败结果失败",
-				logger.StringField("task_id", taskID),
+				logger.StringField("task_id", task.ID),
 				logger.ErrorField(saveErr))
 			return result, errors.Join(extractErr, fmt.Errorf("保存失败结果失败: %w", saveErr))
 		}
 	} else {
-		task.Status = 3
+		task.Status = model.TaskStatusSucceeded
 		logger.Info("抽取任务执行成功",
-			logger.StringField("task_id", taskID))
+			logger.StringField("task_id", task.ID))
 
 		err := s.repo.WithTransaction(ctx, func(txRepo dao.ExtractionRepository) error {
 			if err := txRepo.UpdateTask(ctx, task); err != nil {
@@ -259,7 +313,7 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 		})
 		if err != nil {
 			logger.Error("事务提交失败",
-				logger.StringField("task_id", taskID),
+				logger.StringField("task_id", task.ID),
 				logger.ErrorField(err))
 			// 结果与 outbox 没提交就不能报成功：调用方会立刻去查结果，
 			// 查到的却是空。
@@ -321,11 +375,11 @@ func (s *extractionServiceImpl) CancelTask(ctx context.Context, taskID string) e
 		return errors.New("任务不存在")
 	}
 
-	if task.Status != 1 && task.Status != 2 {
+	if task.Status != model.TaskStatusPending && task.Status != model.TaskStatusRunning {
 		return fmt.Errorf("任务状态不允许取消，当前状态: %d", task.Status)
 	}
 
-	task.Status = 5
+	task.Status = model.TaskStatusCancelled
 	now := time.Now()
 	task.EndedAt = &now
 	return s.repo.UpdateTask(ctx, task)

@@ -61,6 +61,10 @@ type execRepo struct {
 	failUpdateAt int
 	createErr error
 	txErr     error
+	markErr   error
+	// markClaimed 为 nil 时视为抢到执行权。
+	markClaimed *bool
+	markCalls   int
 
 	updates []int
 	results []model.ExtractionResult
@@ -80,6 +84,21 @@ func (r *execRepo) UpdateTask(ctx context.Context, task *model.ExtractionTask) e
 		return r.updateErr
 	}
 	return nil
+}
+
+func (r *execRepo) MarkTaskRunning(ctx context.Context, taskID string, now time.Time) (bool, error) {
+	r.markCalls++
+	if r.markErr != nil {
+		return false, r.markErr
+	}
+	if r.markClaimed != nil {
+		return *r.markClaimed, nil
+	}
+	if r.task != nil {
+		r.task.Status = model.TaskStatusRunning
+		r.task.StartedAt = &now
+	}
+	return true, nil
 }
 
 func (r *execRepo) CreateResult(ctx context.Context, result *model.ExtractionResult) error {
@@ -111,7 +130,7 @@ func newExecRepo() *execRepo {
 func TestExecuteTask_RunningUpdateFailureStopsExtraction(t *testing.T) {
 	withNoLimitCache(t)
 	repo := newExecRepo()
-	repo.updateErr = errors.New("write conflict")
+	repo.markErr = errors.New("write conflict")
 	svc := &extractionServiceImpl{repo: repo}
 
 	_, err := svc.ExecuteTask(context.Background(), "task-1")
@@ -141,7 +160,8 @@ func TestExecuteTask_FailureResultIsPersisted(t *testing.T) {
 	}
 	// repo.task 是同一指针，直接读字段无法区分「只在内存里改了」和
 	// 「真的落库了」，所以校验 UpdateTask 的调用序列。
-	if len(repo.updates) != 2 || repo.updates[1] != 4 {
+	// 置 RUNNING 走 MarkTaskRunning 条件更新，失败状态才走 UpdateTask。
+	if len(repo.updates) != 1 || repo.updates[0] != 4 {
 		t.Fatalf("任务失败状态应落库，实际更新序列 %v", repo.updates)
 	}
 	if repo.task.EndedAt == nil {
@@ -154,7 +174,7 @@ func TestExecuteTask_FailureStatusUpdateErrorIsJoined(t *testing.T) {
 	repo := newExecRepo()
 	repo.task.Type = 99
 	repo.updateErr = errors.New("write conflict")
-	repo.failUpdateAt = 2
+	repo.failUpdateAt = 1
 	svc := &extractionServiceImpl{repo: repo}
 
 	_, err := svc.ExecuteTask(context.Background(), "task-1")

@@ -1097,6 +1097,53 @@ func RecordPaymentReapFailure(ctx context.Context) {
 	}
 }
 
+// 计划抽取任务调度指标。
+//
+// scheduled_at 曾经只存不调度：任务永远停在待执行，接口却返回创建成功。
+// 调度器上线后必须能区分「执行成功」「执行失败」「被其他实例领走」三种结果，
+// 否则多副本同时扫描只会看到一堆无法解释的数字。result 只取 success /
+// failure / skipped / stale_reaped 四个固定值，任务 ID 不进标签，避免基数爆炸。
+var (
+	extractionScheduledOnce sync.Once
+	extractionScheduledNum  metric.Int64Counter
+	extractionScheduleScan  metric.Int64Counter
+)
+
+func initExtractionScheduledMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	extractionScheduledNum, _ = meter.Int64Counter(
+		"logos.extraction.scheduled.count",
+		metric.WithDescription("计划抽取任务执行结果计数（result=success/failure/skipped/stale_reaped）"),
+	)
+	extractionScheduleScan, _ = meter.Int64Counter(
+		"logos.extraction.schedule.scan_failure.count",
+		metric.WithDescription("计划抽取任务扫描失败次数（数据库不可用或查询超时）"),
+	)
+}
+
+// RecordExtractionScheduledRun 记录一批计划抽取任务的执行结果。
+func RecordExtractionScheduledRun(ctx context.Context, result string, count int64) {
+	if count <= 0 {
+		return
+	}
+	extractionScheduledOnce.Do(initExtractionScheduledMetrics)
+	if extractionScheduledNum != nil {
+		extractionScheduledNum.Add(ctx, count, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordExtractionScheduleScanFailure 记录一次到期任务扫描失败。
+// 扫描失败意味着所有计划任务都不会执行，且不会产生任何用户侧报错，必须单独告警。
+func RecordExtractionScheduleScanFailure(ctx context.Context) {
+	extractionScheduledOnce.Do(initExtractionScheduledMetrics)
+	if extractionScheduleScan != nil {
+		extractionScheduleScan.Add(ctx, 1)
+	}
+}
+
 // ServiceMeters holds the OpenTelemetry instruments for a service.
 type ServiceMeters struct {
 	// RequestCount counts the number of gRPC requests received.

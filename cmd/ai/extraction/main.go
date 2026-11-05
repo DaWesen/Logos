@@ -70,6 +70,12 @@ func main() {
 
 	extractionService := service.NewExtractionService(repo, einoClient, knowledgeService, vectorService, outboxRepo)
 
+	// 创建任务时允许带 scheduled_time，但如果没有消费者扫描到期任务，
+	// 任务会永远停在「待执行」：接口返回成功、实际什么都没发生。
+	scheduler := service.NewTaskScheduler(repo, extractionService)
+	scheduler.Start()
+	defer scheduler.Stop()
+
 	if err := extractionService.StartKafkaConsumer(context.Background()); err != nil {
 		logger.Warn("启动Kafka消费者失败", logger.ErrorField(err))
 	}
