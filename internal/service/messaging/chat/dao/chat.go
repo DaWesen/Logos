@@ -82,10 +82,6 @@ type ChatRepository interface {
 	GetMessagesAfterSeq(ctx context.Context, userID, chatID string, afterSeq int64, limit int) ([]*model.Message, error)
 	// SearchMessages 会话内搜索；minSeq > 0 时跳过用户已清空的历史，且排除本人已删除的消息。
 	SearchMessages(ctx context.Context, userID, chatID string, chatType model.ChatType, keyword string, startTime, endTime time.Time, page, pageSize int, minSeq int64) ([]*model.Message, int64, error)
-	// MarkMessagesRead 逐条标记指定消息为已读。
-	// 仅用于已读回执携带的显式、有界 msgIDs（供前端展示已读态）；
-	// 未读数统计走 AdvanceReadPosition 的位点比对，不依赖本方法。
-	MarkMessagesRead(ctx context.Context, msgIDs []string) error
 	// GetMaxMessageSeq 返回会话当前最大消息 seq（无消息返回 0）
 	GetMaxMessageSeq(ctx context.Context, chatID string) (int64, error)
 	// GetMaxSeqByMessageIDs 返回指定消息中的最大 seq（用于按位点标记已读）
@@ -475,15 +471,6 @@ func (r *chatRepositoryImpl) messageSearchQuery(ctx context.Context, userID, cha
 		Order("created_at DESC").
 		Offset(offset).
 		Limit(size)
-}
-
-func (r *chatRepositoryImpl) MarkMessagesRead(ctx context.Context, msgIDs []string) error {
-	if len(msgIDs) == 0 {
-		return nil
-	}
-	return r.db.WithContext(ctx).Model(&model.Message{}).
-		Where("id IN ?", msgIDs).
-		Update("is_read", true).Error
 }
 
 // AdvanceReadPosition 推进会话已读位点：seq 取较大值（GREATEST），保证位点单调不回退。

@@ -807,21 +807,27 @@ func (s *ChatServiceImpl) handleMessageReadEvent(event *types.MessageReadEvent) 
 	}
 
 	// 已读位点化：用本次回执携带消息的最大 seq 推进会话已读位点（单调不回退）。
-	// 未读数由位点比对计算，无需逐条 UPDATE messages.is_read。
+	// 位点是未读数与已读回执的唯一真相，不再逐条写 messages.is_read。
 	if event.ChatID != "" && event.ReaderID != "" {
 		targetSeq, err := s.repo.GetMaxSeqByMessageIDs(s.ctx, event.MessageIDs)
 		if err != nil {
-			logger.Warn("查询已读回执消息 seq 失败", logger.ErrorField(err))
+			// 查不到 seq 就无法推进位点；继续发布回执会给发送方一个
+			// 「对方已读」的假信号，而阅读方未读数仍然不动。交给消费重试。
+			logger.Error("查询已读回执消息 seq 失败", logger.ErrorField(err))
+			return err
+		}
+		if targetSeq == 0 {
+			// 消息已被保留策略清理或 ID 全部无效：没有可推进的位点，
+			// 也不应该为一次空回执通知发送方。
+			logger.Warn("已读回执没有可推进的消息 seq，跳过",
+				logger.StringField("chat_id", event.ChatID),
+				logger.StringField("reader_id", event.ReaderID))
+			return nil
 		}
 		if err := s.repo.AdvanceReadPosition(s.ctx, event.ChatID, event.ReaderID, targetSeq); err != nil {
 			logger.Error("推进已读位点失败", logger.ErrorField(err))
 			return err
 		}
-	}
-
-	// 兼容既有已读态展示：仍标记显式 msgIDs 的 is_read（有界，非全量）
-	if err := s.repo.MarkMessagesRead(s.ctx, event.MessageIDs); err != nil {
-		logger.Warn("标记消息已读失败", logger.ErrorField(err))
 	}
 
 	recipientIDs := s.getReadReceiptRecipients(event)
@@ -1227,8 +1233,8 @@ func (s *ChatServiceImpl) SearchMessages(userID, chatID string, chatType model.C
 //   - 带 msgIDs：取这些消息的最大 seq 作为目标位点；
 //   - 不带 msgIDs（进入会话"全部已读"）：取会话当前最大 seq。
 //
-// 未读数由 conversation_participants.last_read_seq 比对得出，因此不再全量
-// UPDATE messages.is_read（避免大会话下的写放大），仅对显式 msgIDs 保留标记以兼容展示。
+// 未读数由 conversation_participants.last_read_seq 比对得出，位点是唯一真相；
+// 不再额外写 messages.is_read，避免同一状态出现两份会分叉的副本。
 func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string, userID, chatID string) error {
 	if chatID == "" || userID == "" {
 		// 缺少会话/用户信息时不再静默退化为全局标记，直接拒绝。
@@ -1259,9 +1265,6 @@ func (s *ChatServiceImpl) MarkMessagesRead(msgIDs []string, userID, chatID strin
 		return err
 	}
 
-	if len(msgIDs) > 0 {
-		_ = s.repo.MarkMessagesRead(s.ctx, msgIDs)
-	}
 	return nil
 }
 

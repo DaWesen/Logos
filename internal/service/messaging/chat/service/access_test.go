@@ -43,6 +43,11 @@ type stubChatRepo struct {
 	watermarks map[string]dao.ParticipantWatermark
 	chatSeqs   map[string]int64
 	chatMsgs   map[string][]*model.Message
+	// advanceCalls 按顺序记录已读位点推进，用于断言「只写位点、不再逐条改 is_read」。
+	advanceCalls []advanceCall
+	advanceErr   error
+	// maxSeqByIDsErr 注入消息 seq 查询失败，验证事件处理是否上抛而不是发假回执。
+	maxSeqByIDsErr error
 	// deleted 按用户维度记录已删除消息 ID（删除是私有状态，必须按 viewer 过滤）
 	deleted map[string]map[string]bool
 	// deletions 按写入顺序保存墓碑，ID 单调递增，模拟自增主键
@@ -71,6 +76,12 @@ type clearCall struct {
 	seq    int64
 }
 
+type advanceCall struct {
+	chatID string
+	userID string
+	seq    int64
+}
+
 func (r *stubChatRepo) GetGroupByID(_ context.Context, groupID string) (*model.Group, error) {
 	return r.groups[groupID], nil
 }
@@ -81,6 +92,27 @@ func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string)
 
 func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64, error) {
 	return r.maxSeqs[chatID], nil
+}
+
+func (r *stubChatRepo) GetMaxSeqByMessageIDs(_ context.Context, msgIDs []string) (int64, error) {
+	if r.maxSeqByIDsErr != nil {
+		return 0, r.maxSeqByIDsErr
+	}
+	var maxSeq int64
+	for _, id := range msgIDs {
+		if m, ok := r.messages[id]; ok && m.Seq > maxSeq {
+			maxSeq = m.Seq
+		}
+	}
+	return maxSeq, nil
+}
+
+func (r *stubChatRepo) AdvanceReadPosition(_ context.Context, conversationID, userID string, seq int64) error {
+	if r.advanceErr != nil {
+		return r.advanceErr
+	}
+	r.advanceCalls = append(r.advanceCalls, advanceCall{chatID: conversationID, userID: userID, seq: seq})
+	return nil
 }
 
 // GetAllGroupMemberIDs 按「groupID|userID」键前缀汇总群成员，供编辑事件接收者计算使用。
