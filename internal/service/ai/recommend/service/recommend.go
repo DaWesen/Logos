@@ -131,11 +131,20 @@ func (s *recommendServiceImpl) loadRecommendations(ctx context.Context, userID i
 	}
 
 	logger.Info("数据库没有推荐数据，基于多源检索生成推荐")
-	items = s.generateSmartRecommendations(ctx, userID, recommendType, limit)
+	items, degraded := s.generateSmartRecommendations(ctx, userID, recommendType, limit)
 	total = int64(len(items))
 
-	if len(items) > 0 {
+	switch {
+	case len(items) > 0:
 		s.cacheRecommendations(ctx, userID, recommendType, limit, items, total)
+	case degraded:
+		// 依赖失败导致的空结果只是降级，不能当成「该用户没有推荐」写进负缓存：
+		// 那样依赖恢复后仍要等 TTL 结束才能重新生成。
+		logger.Warn("推荐生成依赖失败，跳过负缓存",
+			logger.Int64Field("user_id", userID),
+			logger.StringField("type", recommendType))
+	default:
+		s.cacheEmptyRecommendations(ctx, userID, recommendType, limit)
 	}
 	return recommendResult{Items: items, Total: total}, nil
 }
@@ -144,8 +153,12 @@ func recommendCacheKey(userID int64, recommendType string, limit int) string {
 	return fmt.Sprintf("recommend:%d:%s:limit:%d", userID, recommendType, limit)
 }
 
-func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context, userID int64, recommendType string, limit int) []*model.RecommendationItem {
+// generateSmartRecommendations 返回推荐列表，以及是否有检索依赖失败。
+// 第二个返回值决定空结果能不能写负缓存：依赖失败时「空」是暂时的降级结果，
+// 不是「这个用户确实没有推荐」。
+func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context, userID int64, recommendType string, limit int) ([]*model.RecommendationItem, bool) {
 	var items []*model.RecommendationItem
+	degraded := false
 	now := time.Now().Unix()
 	seen := make(map[string]bool)
 
@@ -157,6 +170,7 @@ func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context,
 		similarIDs, err := s.vectorService.SearchSimilar(ctx, query, limit)
 		if err != nil {
 			logger.Warn("向量搜索生成推荐失败", logger.ErrorField(err))
+			degraded = true
 		} else {
 			for i, id := range similarIDs {
 				if seen[id] {
@@ -188,6 +202,7 @@ func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context,
 		entityIDs, err := s.knowledgeService.SearchEntities(ctx, query)
 		if err != nil {
 			logger.Warn("知识图谱生成推荐失败", logger.ErrorField(err))
+			degraded = true
 		} else {
 			for i, id := range entityIDs {
 				if seen[id] {
@@ -219,7 +234,7 @@ func (s *recommendServiceImpl) generateSmartRecommendations(ctx context.Context,
 		items = items[:limit]
 	}
 
-	return items
+	return items, degraded
 }
 
 func (s *recommendServiceImpl) enrichWithEino(ctx context.Context, items []*model.RecommendationItem) {
@@ -252,14 +267,15 @@ func (s *recommendServiceImpl) cacheRecommendations(ctx context.Context, userID 
 	// 会写到 limit:3 这个 key，下一次 limit:10 的请求永远命中不了，
 	// 缓存命中率被人为归零。
 	cacheKey := recommendCacheKey(userID, recommendType, limit)
-	cacheData := map[string]any{
-		"items": items,
-		"total": total,
+	dataJSON, err := json.Marshal(recommendResult{Items: items, Total: total})
+	if err != nil {
+		logger.Error("序列化推荐数据失败，跳过写缓存",
+			logger.Int64Field("user_id", userID),
+			logger.ErrorField(err))
+		return
 	}
 
-	dataJSON, _ := json.Marshal(cacheData)
-
-	err := s.cache.Set(ctx, cacheKey, string(dataJSON), 30*time.Minute)
+	err = s.cache.Set(ctx, cacheKey, string(dataJSON), recommendCacheTTL)
 	if err != nil {
 		logger.Warn("缓存推荐数据到Redis失败",
 			logger.Int64Field("user_id", userID),
@@ -271,6 +287,41 @@ func (s *recommendServiceImpl) cacheRecommendations(ctx context.Context, userID 
 			logger.IntField("item_count", len(items)))
 	}
 }
+
+// cacheEmptyRecommendations 为空结果写一个短 TTL 负缓存。
+//
+// 没有这层缓存时，一个没有推荐数据的用户每次刷新都会完整重跑
+// 「查库 → 向量检索 → 知识图谱检索 → 逐条 LLM 改写」，
+// 空结果反而成了最贵的请求，还能被轮询放大成对下游的持续压力。
+// TTL 必须比正常结果短得多：新数据最多延迟一分钟可见。
+func (s *recommendServiceImpl) cacheEmptyRecommendations(ctx context.Context, userID int64, recommendType string, limit int) {
+	if s.cache == nil {
+		return
+	}
+	cacheKey := recommendCacheKey(userID, recommendType, limit)
+	dataJSON, err := json.Marshal(recommendResult{})
+	if err != nil {
+		logger.Error("序列化空推荐结果失败，跳过负缓存",
+			logger.Int64Field("user_id", userID),
+			logger.ErrorField(err))
+		return
+	}
+	if err := s.cache.Set(ctx, cacheKey, string(dataJSON), emptyRecommendCacheTTL); err != nil {
+		logger.Warn("缓存空推荐结果失败",
+			logger.Int64Field("user_id", userID),
+			logger.ErrorField(err))
+		return
+	}
+	logger.Info("已缓存空推荐结果",
+		logger.Int64Field("user_id", userID),
+		logger.StringField("cache_key", cacheKey))
+}
+
+const (
+	recommendCacheTTL = 30 * time.Minute
+	// 负缓存只挡住「短时间内的重复刷新」，不能让新数据长时间不可见。
+	emptyRecommendCacheTTL = 60 * time.Second
+)
 
 func (s *recommendServiceImpl) GetRelatedRecommendations(ctx context.Context, entityID string, recommendType string, limit int) ([]*model.RecommendationItem, int64, error) {
 	logger.Info("获取相关推荐请求",

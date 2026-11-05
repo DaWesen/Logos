@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,8 @@ type fakeRecommendCache struct {
 	store map[string]string
 	gets  int32
 	sets  int32
+	// lastTTL 记录最近一次写入的过期时间，用来区分正常缓存与负缓存。
+	lastTTL time.Duration
 }
 
 func newFakeRecommendCache() *fakeRecommendCache {
@@ -39,7 +42,23 @@ func (f *fakeRecommendCache) Set(ctx context.Context, key string, value interfac
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.store[key] = value.(string)
+	f.lastTTL = expiration
 	return nil
+}
+
+type fakeVectorService struct {
+	VectorService
+	err   error
+	ids   []string
+	calls int32
+}
+
+func (f *fakeVectorService) SearchSimilar(ctx context.Context, text string, topK int) ([]string, error) {
+	atomic.AddInt32(&f.calls, 1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.ids, nil
 }
 
 type fakeRecommendRepo struct {
@@ -127,6 +146,56 @@ func TestGetRecommendations_CacheKeyUsesRequestedLimit(t *testing.T) {
 	}
 	if atomic.LoadInt32(&repo.calls) != before {
 		t.Fatal("第二次请求应命中缓存，不应再查库")
+	}
+}
+
+// 空结果不缓存时，没有推荐数据的用户每次刷新都会重跑
+// 「查库 → 向量检索 → 知识图谱检索 → 逐条 LLM 改写」。
+func TestGetRecommendations_EmptyResultUsesShortNegativeCache(t *testing.T) {
+	c := newFakeRecommendCache()
+	repo := &fakeRecommendRepo{}
+	svc := &recommendServiceImpl{
+		recommendRepo: repo,
+		cache:         c,
+		fills:         singleflight.NewGroup[recommendResult](time.Second),
+	}
+
+	for i := 0; i < 3; i++ {
+		items, total, err := svc.GetRecommendations(context.Background(), 9, "feed", 10, nil)
+		if err != nil || len(items) != 0 || total != 0 {
+			t.Fatalf("第 %d 次请求 items=%v total=%d err=%v", i, items, total, err)
+		}
+	}
+	if got := atomic.LoadInt32(&repo.calls); got != 1 {
+		t.Fatalf("空结果应写负缓存，后续请求不再回源；实际回源 %d 次", got)
+	}
+	if c.lastTTL <= 0 || c.lastTTL > 2*time.Minute {
+		t.Fatalf("负缓存 TTL 必须远短于正常结果，实际 %v", c.lastTTL)
+	}
+}
+
+// 依赖失败得到的空列表只是降级，不是「用户没有推荐」，
+// 写进负缓存会让依赖恢复后仍被挡在 TTL 外面。
+func TestGetRecommendations_DegradedEmptyResultNotCached(t *testing.T) {
+	c := newFakeRecommendCache()
+	repo := &fakeRecommendRepo{}
+	svc := &recommendServiceImpl{
+		recommendRepo: repo,
+		cache:         c,
+		vectorService: &fakeVectorService{err: errors.New("milvus unavailable")},
+		fills:         singleflight.NewGroup[recommendResult](time.Second),
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, _, err := svc.GetRecommendations(context.Background(), 11, "feed", 10, nil); err != nil {
+			t.Fatalf("第 %d 次请求失败: %v", i, err)
+		}
+	}
+	if got := atomic.LoadInt32(&repo.calls); got != 2 {
+		t.Fatalf("依赖失败的空结果不得写负缓存，第二次应重新回源；实际回源 %d 次", got)
+	}
+	if got := atomic.LoadInt32(&c.sets); got != 0 {
+		t.Fatalf("依赖失败时不应写缓存，实际 Set %d 次", got)
 	}
 }
 
