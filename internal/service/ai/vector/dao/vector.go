@@ -2,6 +2,7 @@ package dao
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -238,7 +239,8 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string, userID 
 		if userID != "" {
 			query = query.Where("user_id = ?", userID)
 		}
-		if err := query.First(&rec).Error; err == nil {
+		lookupErr := query.First(&rec).Error
+		if lookupErr == nil {
 			coll := recordToModel(&rec)
 			collectionName := "vector_" + id
 			if r.milvus != nil {
@@ -251,6 +253,21 @@ func (r *vectorRepository) GetCollection(ctx context.Context, id string, userID 
 				}
 			}
 			return coll, nil
+		}
+		// 数据库故障不能降级成「集合不存在」：调用方会据此提示用户
+		// 重新创建集合，而内部调用会退回全局 Embedding，产生与集合
+		// 维度不一致的向量。只有明确的 Not Found 才允许继续探测。
+		if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			logger.Error("查询集合元信息失败",
+				logger.StringField("id", id),
+				logger.ErrorField(lookupErr))
+			return nil, fmt.Errorf("查询集合元信息失败: %w", lookupErr)
+		}
+		// 带归属校验的查询在缺少元数据时无法判断所有者。此时若回退到
+		// Milvus 探测，返回的集合没有任何 user_id，等于在数据库抖动
+		// 期间放开跨用户访问。宁可回答「不存在」。
+		if userID != "" {
+			return nil, nil
 		}
 	}
 	if r.milvus == nil {
@@ -360,49 +377,45 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 
 	var embeddings []float32
 
-	collection, _ := r.GetCollection(ctx, collectionID, "")
+	collection, err := r.GetCollection(ctx, collectionID, "")
+	if err != nil {
+		return nil, fmt.Errorf("查询集合 %s 失败: %w", collectionID, err)
+	}
 	if collection == nil {
 		return nil, fmt.Errorf("集合 %s 不存在，请先创建集合", collectionID)
 	}
-	var useCustomEmbedder embedding.Embedder = nil
-	if collection != nil && collection.Embedding.Model != "" && collection.Embedding.APIKey != "" {
-		var createErr error
-		useCustomEmbedder, createErr = eino.NewDynamicEmbedder(
-			collection.Embedding.APIKey,
-			collection.Embedding.Model,
-			collection.Embedding.BaseURL,
-		)
-		if createErr != nil {
-			logger.Warn("创建动态Embedder失败，使用全局配置", logger.ErrorField(createErr))
-			useCustomEmbedder = nil
-		}
+	customEmbedder, embedderErr := collectionEmbedder(collection)
+	if embedderErr != nil {
+		return nil, embedderErr
 	}
 
-	if useCustomEmbedder != nil {
-		vec, embedErr := useCustomEmbedder.EmbedStrings(ctx, []string{text})
+	if customEmbedder != nil {
+		// 集合显式配置了嵌入模型时，失败不能回退到全局模型：
+		// 不同模型即使维度相同，向量也不在同一语义空间；维度不同
+		// 还会触发下面的重建逻辑，把集合里的历史向量一起删掉。
+		vecs, embedErr := customEmbedder.EmbedStrings(ctx, []string{text})
 		if embedErr != nil {
-			logger.Warn("自定义嵌入失败，回退到全局Embedding", logger.ErrorField(embedErr))
-			useCustomEmbedder = nil
-		} else if len(vec) > 0 {
-			embeddings = float64ToFloat32(vec[0])
-		} else {
-			logger.Warn("自定义嵌入返回空向量，回退到全局Embedding")
-			useCustomEmbedder = nil
+			return nil, fmt.Errorf("集合 %s 的嵌入模型调用失败: %w", collectionID, embedErr)
 		}
-	}
-
-	if useCustomEmbedder == nil {
-		if r.einoClient != nil && r.einoClient.HasEmbedder() {
-			vec, embedErr := r.einoClient.EmbedText(ctx, text)
-			if embedErr != nil {
-				logger.Error("全局嵌入失败", logger.ErrorField(embedErr))
-				return nil, fmt.Errorf("嵌入失败，无法生成向量: %w", embedErr)
-			}
-			embeddings = float64ToFloat32(vec)
-		} else {
+		normalized, normErr := toFloat32Vectors(vecs, 1)
+		if normErr != nil {
+			return nil, fmt.Errorf("集合 %s 的嵌入结果非法: %w", collectionID, normErr)
+		}
+		embeddings = normalized[0]
+	} else {
+		if r.einoClient == nil || !r.einoClient.HasEmbedder() {
 			logger.Error("无可用的Embedder，无法生成向量")
 			return nil, fmt.Errorf("无可用的Embedder，无法生成向量")
 		}
+		vec, embedErr := r.einoClient.EmbedText(ctx, text)
+		if embedErr != nil {
+			logger.Error("全局嵌入失败", logger.ErrorField(embedErr))
+			return nil, fmt.Errorf("嵌入失败，无法生成向量: %w", embedErr)
+		}
+		if len(vec) == 0 {
+			return nil, fmt.Errorf("全局嵌入返回空向量，无法写入集合 %s", collectionID)
+		}
+		embeddings = float64ToFloat32(vec)
 	}
 
 	vectorID := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -418,28 +431,22 @@ func (r *vectorRepository) Vectorize(ctx context.Context, text string, collectio
 		collectionName := "vector_" + collectionID
 		has, hasErr := r.milvus.HasCollection(ctx, collectionName)
 		if hasErr != nil {
-			logger.Warn("检查Milvus集合是否存在失败", logger.StringField("collection", collectionName), logger.ErrorField(hasErr))
+			return nil, fmt.Errorf("检查 Milvus 集合 %s 是否存在失败: %w", collectionName, hasErr)
 		}
 		if has {
 			existingDim, dimErr := r.milvus.GetCollectionDimension(ctx, collectionName)
-			if dimErr == nil && existingDim != len(embeddings) {
-				logger.Warn("集合维度不匹配，需要重建集合",
-					logger.StringField("collection", collectionName),
-					logger.IntField("existing_dim", existingDim),
-					logger.IntField("new_dim", len(embeddings)))
-				if dropErr := r.milvus.DropCollection(ctx, collectionName); dropErr != nil {
-					logger.Error("删除旧集合失败", logger.StringField("collection", collectionName), logger.ErrorField(dropErr))
-				} else {
-					logger.Info("旧集合已删除，准备重建", logger.StringField("collection", collectionName))
-					has = false
-				}
+			if dimErr != nil {
+				return nil, fmt.Errorf("查询集合 %s 的向量维度失败: %w", collectionName, dimErr)
+			}
+			if existingDim != len(embeddings) {
+				// 维度不一致时旧实现直接 DropCollection 再重建，
+				// 一次上游抖动就会静默删掉整个集合的历史向量。
+				// 重建必须由运维显式发起。
+				return nil, fmt.Errorf("集合 %s 的向量维度为 %d，与当前嵌入模型输出的 %d 不一致，请显式重建集合后再写入", collectionName, existingDim, len(embeddings))
 			}
 		}
 		if !has {
 			dim := len(embeddings)
-			if dim == 0 {
-				dim = 768
-			}
 			logger.Info("Milvus集合不存在，自动创建", logger.StringField("collection", collectionName), logger.IntField("dimension", dim))
 			if createErr := r.milvus.CreateCollection(ctx, collectionName, dim); createErr != nil {
 				logger.Error("自动创建Milvus集合失败", logger.StringField("collection", collectionName), logger.ErrorField(createErr))
@@ -480,59 +487,51 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 		logger.IntField("count", len(texts)),
 		logger.StringField("collection_id", collectionID))
 
+	if len(texts) == 0 {
+		return nil, fmt.Errorf("批量向量化的文本列表为空")
+	}
+
 	vectors := make([]*model.Vector, 0, len(texts))
 	var allEmbeddings [][]float32
 	var contents []string
 
-	collection, _ := r.GetCollection(ctx, collectionID, "")
+	collection, err := r.GetCollection(ctx, collectionID, "")
+	if err != nil {
+		return nil, fmt.Errorf("查询集合 %s 失败: %w", collectionID, err)
+	}
 	if collection == nil {
 		return nil, fmt.Errorf("集合 %s 不存在，请先创建集合", collectionID)
 	}
-	var useCustomEmbedder embedding.Embedder = nil
-	if collection != nil && collection.Embedding.Model != "" && collection.Embedding.APIKey != "" {
-		var createErr error
-		useCustomEmbedder, createErr = eino.NewDynamicEmbedder(
-			collection.Embedding.APIKey,
-			collection.Embedding.Model,
-			collection.Embedding.BaseURL,
-		)
-		if createErr != nil {
-			logger.Warn("创建动态Embedder失败，使用全局配置", logger.ErrorField(createErr))
-			useCustomEmbedder = nil
-		}
+	customEmbedder, embedderErr := collectionEmbedder(collection)
+	if embedderErr != nil {
+		return nil, embedderErr
 	}
 
-	if useCustomEmbedder != nil {
-		vecs, embedErr := useCustomEmbedder.EmbedStrings(ctx, texts)
+	if customEmbedder != nil {
+		vecs, embedErr := customEmbedder.EmbedStrings(ctx, texts)
 		if embedErr != nil {
-			logger.Warn("自定义批量嵌入失败，回退到全局Embedding", logger.ErrorField(embedErr))
-			useCustomEmbedder = nil
-		} else if len(vecs) > 0 {
-			allEmbeddings = make([][]float32, len(vecs))
-			for i, vec := range vecs {
-				allEmbeddings[i] = float64ToFloat32(vec)
-			}
-		} else {
-			logger.Warn("自定义批量嵌入返回空，回退到全局Embedding")
-			useCustomEmbedder = nil
+			return nil, fmt.Errorf("集合 %s 的嵌入模型调用失败: %w", collectionID, embedErr)
 		}
-	}
-
-	if useCustomEmbedder == nil {
-		if r.einoClient != nil && r.einoClient.HasEmbedder() {
-			batchEmbeddings, batchErr := r.einoClient.BatchEmbedText(ctx, texts)
-			if batchErr != nil {
-				logger.Error("全局批量嵌入失败", logger.ErrorField(batchErr))
-				return nil, fmt.Errorf("批量嵌入失败，无法生成向量: %w", batchErr)
-			}
-			allEmbeddings = make([][]float32, len(batchEmbeddings))
-			for i, emb := range batchEmbeddings {
-				allEmbeddings[i] = float64ToFloat32(emb)
-			}
-		} else {
+		normalized, normErr := toFloat32Vectors(vecs, len(texts))
+		if normErr != nil {
+			return nil, fmt.Errorf("集合 %s 的批量嵌入结果非法: %w", collectionID, normErr)
+		}
+		allEmbeddings = normalized
+	} else {
+		if r.einoClient == nil || !r.einoClient.HasEmbedder() {
 			logger.Error("无可用的Embedder，无法生成向量")
 			return nil, fmt.Errorf("无可用的Embedder，无法生成向量")
 		}
+		batchEmbeddings, batchErr := r.einoClient.BatchEmbedText(ctx, texts)
+		if batchErr != nil {
+			logger.Error("全局批量嵌入失败", logger.ErrorField(batchErr))
+			return nil, fmt.Errorf("批量嵌入失败，无法生成向量: %w", batchErr)
+		}
+		normalized, normErr := toFloat32Vectors(batchEmbeddings, len(texts))
+		if normErr != nil {
+			return nil, fmt.Errorf("全局批量嵌入结果非法: %w", normErr)
+		}
+		allEmbeddings = normalized
 	}
 
 	ids := make([]string, len(texts))
@@ -560,32 +559,23 @@ func (r *vectorRepository) BatchVectorize(ctx context.Context, texts []string, c
 		collectionName := "vector_" + collectionID
 		has, hasErr := r.milvus.HasCollection(ctx, collectionName)
 		if hasErr != nil {
-			logger.Warn("检查Milvus集合是否存在失败", logger.StringField("collection", collectionName), logger.ErrorField(hasErr))
+			return nil, fmt.Errorf("检查 Milvus 集合 %s 是否存在失败: %w", collectionName, hasErr)
 		}
 		if has {
-			newDim := 0
-			if len(allEmbeddings) > 0 {
-				newDim = len(allEmbeddings[0])
-			}
+			newDim := len(allEmbeddings[0])
 			existingDim, dimErr := r.milvus.GetCollectionDimension(ctx, collectionName)
-			if dimErr == nil && existingDim != newDim {
-				logger.Warn("集合维度不匹配，需要重建集合",
-					logger.StringField("collection", collectionName),
-					logger.IntField("existing_dim", existingDim),
-					logger.IntField("new_dim", newDim))
-				if dropErr := r.milvus.DropCollection(ctx, collectionName); dropErr != nil {
-					logger.Error("删除旧集合失败", logger.StringField("collection", collectionName), logger.ErrorField(dropErr))
-				} else {
-					logger.Info("旧集合已删除，准备重建", logger.StringField("collection", collectionName))
-					has = false
-				}
+			if dimErr != nil {
+				return nil, fmt.Errorf("查询集合 %s 的向量维度失败: %w", collectionName, dimErr)
+			}
+			if existingDim != newDim {
+				// 与单条写入保持一致：维度不一致说明集合与当前嵌入模型
+				// 已经不匹配，删集合会把历史向量一起丢掉。重建必须由
+				// 运维显式发起，这里只拒绝写入。
+				return nil, fmt.Errorf("集合 %s 的向量维度为 %d，与当前嵌入模型输出的 %d 不一致，请显式重建集合后再写入", collectionName, existingDim, newDim)
 			}
 		}
 		if !has {
-			dim := 768
-			if len(allEmbeddings) > 0 && len(allEmbeddings[0]) > 0 {
-				dim = len(allEmbeddings[0])
-			}
+			dim := len(allEmbeddings[0])
 			logger.Info("Milvus集合不存在，自动创建", logger.StringField("collection", collectionName), logger.IntField("dimension", dim))
 			if createErr := r.milvus.CreateCollection(ctx, collectionName, dim); createErr != nil {
 				logger.Error("自动创建Milvus集合失败", logger.StringField("collection", collectionName), logger.ErrorField(createErr))
@@ -673,72 +663,67 @@ func (r *vectorRepository) TextSearch(ctx context.Context, collectionID string, 
 	var embeddings []float32
 
 	t0 := time.Now()
-	collection, _ := r.GetCollection(ctx, collectionID, "")
+	collection, err := r.GetCollection(ctx, collectionID, "")
 	logTiming("GetCollection", t0, logger.StringField("collection_id", collectionID))
-
-	var useCustomEmbedder embedding.Embedder = nil
-	if collection != nil && collection.Embedding.Model != "" && collection.Embedding.APIKey != "" {
-		logger.Info("使用集合自定义Embedding",
-			logger.StringField("model", collection.Embedding.Model),
-			logger.StringField("base_url", collection.Embedding.BaseURL))
-		t1 := time.Now()
-		var createErr error
-		useCustomEmbedder, createErr = eino.NewDynamicEmbedder(
-			collection.Embedding.APIKey,
-			collection.Embedding.Model,
-			collection.Embedding.BaseURL,
-		)
-		logTiming("创建动态Embedder", t1, logger.StringField("model", collection.Embedding.Model))
-		if createErr != nil {
-			logger.Warn("创建动态Embedder失败，使用全局配置", logger.ErrorField(createErr))
-			useCustomEmbedder = nil
-		}
+	if err != nil {
+		return nil, fmt.Errorf("查询集合 %s 失败: %w", collectionID, err)
+	}
+	if collection == nil {
+		return nil, fmt.Errorf("集合 %s 不存在，请先创建集合", collectionID)
 	}
 
-	if useCustomEmbedder != nil {
+	customEmbedder, embedderErr := collectionEmbedder(collection)
+	if embedderErr != nil {
+		return nil, embedderErr
+	}
+
+	if customEmbedder != nil {
 		t2 := time.Now()
-		vec, embedErr := useCustomEmbedder.EmbedStrings(ctx, []string{text})
+		vecs, embedErr := customEmbedder.EmbedStrings(ctx, []string{text})
 		logTiming("自定义Embedding API调用", t2, logger.StringField("model", collection.Embedding.Model))
 		if embedErr != nil {
-			logger.Warn("自定义嵌入失败，回退到全局Embedding", logger.ErrorField(embedErr))
-			useCustomEmbedder = nil
-		} else if len(vec) > 0 {
-			embeddings = float64ToFloat32(vec[0])
-		} else {
-			logger.Warn("自定义嵌入返回空向量，回退到全局Embedding")
-			useCustomEmbedder = nil
+			return nil, fmt.Errorf("集合 %s 的嵌入模型调用失败: %w", collectionID, embedErr)
 		}
-	}
-
-	if useCustomEmbedder == nil {
-		if r.einoClient != nil && r.einoClient.HasEmbedder() {
-			t3 := time.Now()
-			vec, embedErr := r.einoClient.EmbedText(ctx, text)
-			logTiming("全局Embedding API调用", t3)
-			if embedErr != nil {
-				logger.Error("全局嵌入失败",
-					logger.ErrorField(embedErr))
-				return []*model.SearchResultItem{}, embedErr
-			}
-			embeddings = float64ToFloat32(vec)
-		} else {
-			logger.Warn("Eino未初始化或无Embedder，无法执行文本搜索")
-			return []*model.SearchResultItem{}, nil
+		normalized, normErr := toFloat32Vectors(vecs, 1)
+		if normErr != nil {
+			return nil, fmt.Errorf("集合 %s 的嵌入结果非法: %w", collectionID, normErr)
 		}
+		embeddings = normalized[0]
+	} else {
+		if r.einoClient == nil || !r.einoClient.HasEmbedder() {
+			return nil, fmt.Errorf("无可用的Embedder，无法执行文本搜索")
+		}
+		t3 := time.Now()
+		vec, embedErr := r.einoClient.EmbedText(ctx, text)
+		logTiming("全局Embedding API调用", t3)
+		if embedErr != nil {
+			logger.Error("全局嵌入失败", logger.ErrorField(embedErr))
+			return nil, fmt.Errorf("全局嵌入失败: %w", embedErr)
+		}
+		if len(vec) == 0 {
+			return nil, fmt.Errorf("全局嵌入返回空向量，无法搜索集合 %s", collectionID)
+		}
+		embeddings = float64ToFloat32(vec)
 	}
 
 	t4 := time.Now()
 	collectionName := "vector_" + collectionID
 
-	if len(embeddings) > 0 {
-		existingDim, dimErr := r.milvus.GetCollectionDimension(ctx, collectionName)
-		if dimErr == nil && existingDim != len(embeddings) {
-			logger.Warn("搜索向量维度与集合不匹配，跳过向量搜索",
-				logger.StringField("collection", collectionName),
-				logger.IntField("collection_dim", existingDim),
-				logger.IntField("query_dim", len(embeddings)))
-			return []*model.SearchResultItem{}, nil
-		}
+	has, hasErr := r.milvus.HasCollection(ctx, collectionName)
+	if hasErr != nil {
+		return nil, fmt.Errorf("检查 Milvus 集合 %s 是否存在失败: %w", collectionName, hasErr)
+	}
+	if !has {
+		return nil, fmt.Errorf("集合 %s 在向量库中不存在，请先写入向量", collectionName)
+	}
+	existingDim, dimErr := r.milvus.GetCollectionDimension(ctx, collectionName)
+	if dimErr != nil {
+		return nil, fmt.Errorf("查询集合 %s 的向量维度失败: %w", collectionName, dimErr)
+	}
+	if existingDim != len(embeddings) {
+		// 维度不一致时搜索结果没有意义，返回空列表会让调用方
+		// 误以为「集合里确实没有相关内容」，必须把配置问题暴露出来。
+		return nil, fmt.Errorf("集合 %s 的向量维度为 %d，与当前嵌入模型输出的 %d 不一致，请检查集合的嵌入模型配置", collectionName, existingDim, len(embeddings))
 	}
 
 	results, err := r.milvus.Search(ctx, collectionName, embeddings, topK, "IP")
@@ -834,6 +819,51 @@ func float64ToFloat32(vec []float64) []float32 {
 		result[i] = float32(v)
 	}
 	return result
+}
+
+// collectionEmbedder 只在集合显式配置了嵌入模型时创建动态 Embedder。
+// 只配置了一半（例如有模型名却没有密钥）说明集合配置已经损坏，
+// 此时回退全局模型会把两种语义空间的向量混进同一个集合，必须报错。
+func collectionEmbedder(collection *model.VectorCollection) (embedding.Embedder, error) {
+	if collection == nil {
+		return nil, nil
+	}
+	config := collection.Embedding
+	if config.Model == "" && config.APIKey == "" {
+		return nil, nil
+	}
+	if config.Model == "" || config.APIKey == "" {
+		return nil, fmt.Errorf("集合 %s 的嵌入模型配置不完整: model=%q, api_key_configured=%t", collection.ID, config.Model, config.APIKey != "")
+	}
+	embedder, err := eino.NewDynamicEmbedder(config.APIKey, config.Model, config.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("集合 %s 的嵌入模型 %s 初始化失败: %w", collection.ID, config.Model, err)
+	}
+	return embedder, nil
+}
+
+// toFloat32Vectors 校验嵌入结果的条数、维度并转成 float32。
+// 条数不符会让第 i 条文本拿到别的文本的向量；空向量会让 Milvus
+// 建出维度为 0 的集合，这两种情况都必须在写入前失败。
+func toFloat32Vectors(vecs [][]float64, want int) ([][]float32, error) {
+	if len(vecs) != want {
+		return nil, fmt.Errorf("嵌入结果条数为 %d，与输入文本条数 %d 不一致", len(vecs), want)
+	}
+	if want == 0 {
+		return [][]float32{}, nil
+	}
+	dim := len(vecs[0])
+	if dim == 0 {
+		return nil, fmt.Errorf("嵌入返回空向量")
+	}
+	result := make([][]float32, 0, len(vecs))
+	for i, vec := range vecs {
+		if len(vec) != dim {
+			return nil, fmt.Errorf("第 %d 条嵌入向量维度为 %d，与首条 %d 不一致", i, len(vec), dim)
+		}
+		result = append(result, float64ToFloat32(vec))
+	}
+	return result, nil
 }
 
 func (r *vectorRepository) ListVectors(ctx context.Context, collectionID string, page, pageSize int) ([]*model.VectorPreviewItem, int64, error) {
