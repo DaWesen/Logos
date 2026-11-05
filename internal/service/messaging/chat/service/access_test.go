@@ -70,6 +70,17 @@ type stubChatRepo struct {
 	created []*model.Message
 	// privateConvCalls 记录私聊会话创建次数：被拉黑拦截时连会话都不该创建。
 	privateConvCalls int
+	// groupMemberErrFor 按 "groupID|userID" 注入成员查询失败，
+	// 验证邀请不会把「查失败」当成「不是成员」继续插入。
+	groupMemberErrFor map[string]error
+	// invites 记录批量邀请写入，便于断言输入去重与整批拒绝。
+	invites []inviteCall
+}
+
+type inviteCall struct {
+	groupID      string
+	members      []*model.GroupMember
+	participants []*model.ConversationParticipant
 }
 
 type purgeCall struct {
@@ -111,7 +122,16 @@ func (r *stubChatRepo) UpdateConversationLastMessage(_ context.Context, _, _ str
 }
 
 func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string) (*model.GroupMember, error) {
-	return r.members[groupID+"|"+userID], nil
+	key := groupID + "|" + userID
+	if err, ok := r.groupMemberErrFor[key]; ok {
+		return nil, err
+	}
+	return r.members[key], nil
+}
+
+func (r *stubChatRepo) InviteGroupMembers(_ context.Context, groupID string, members []*model.GroupMember, participants []*model.ConversationParticipant) error {
+	r.invites = append(r.invites, inviteCall{groupID: groupID, members: members, participants: participants})
+	return nil
 }
 
 func (r *stubChatRepo) GetMaxMessageSeq(_ context.Context, chatID string) (int64, error) {

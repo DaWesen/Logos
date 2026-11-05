@@ -1794,7 +1794,13 @@ func (s *ChatServiceImpl) InviteGroupMember(groupID, operatorID string, userIDs 
 		logger.StringField("user_ids", strings.Join(userIDs, ",")))
 	member, err := s.repo.GetGroupMember(s.ctx, groupID, operatorID)
 	if err != nil {
-		return fmt.Errorf("您不是群成员")
+		logger.Error("查询邀请人身份失败",
+			logger.StringField("group_id", groupID),
+			logger.StringField("operator_id", operatorID),
+			logger.ErrorField(err))
+		// 查询失败不是「不是群成员」：前者应该重试，后者重试也没用。
+		// 把故障说成权限问题，只会让真正的数据库问题永远停留在用户投诉里。
+		return fmt.Errorf("查询群成员身份失败，请稍后重试")
 	}
 	if member == nil {
 		return fmt.Errorf("您不是群成员")
@@ -1806,9 +1812,31 @@ func (s *ChatServiceImpl) InviteGroupMember(groupID, operatorID string, userIDs 
 	now := time.Now()
 	members := make([]*model.GroupMember, 0, len(userIDs))
 	participants := make([]*model.ConversationParticipant, 0, len(userIDs))
+	seen := make(map[string]struct{}, len(userIDs))
 
-	for _, userID := range userIDs {
-		if existing, _ := s.repo.GetGroupMember(s.ctx, groupID, userID); existing != nil {
+	for _, rawUserID := range userIDs {
+		userID := strings.TrimSpace(rawUserID)
+		if userID == "" {
+			continue
+		}
+		// 同一个请求里重复邀请同一个人，会在批量 INSERT 时撞唯一约束，
+		// 让整批邀请全部失败；先去重，重复项本身就应当是幂等的。
+		if _, duplicated := seen[userID]; duplicated {
+			continue
+		}
+		seen[userID] = struct{}{}
+
+		existing, err := s.repo.GetGroupMember(s.ctx, groupID, userID)
+		if err != nil {
+			// 旧实现把查询错误和「不是成员」都归到 existing == nil，
+			// 数据库抖动时会把已存在的成员再插一遍，唯一约束拒掉整批邀请。
+			logger.Error("查询待邀请成员状态失败，整批邀请拒绝",
+				logger.StringField("group_id", groupID),
+				logger.StringField("user_id", userID),
+				logger.ErrorField(err))
+			return fmt.Errorf("查询成员 %s 的群状态失败，请稍后重试", userID)
+		}
+		if existing != nil {
 			continue
 		}
 
@@ -1844,20 +1872,11 @@ func (s *ChatServiceImpl) InviteGroupMember(groupID, operatorID string, userIDs 
 	}
 
 	if len(members) > 0 {
-		if err := s.repo.AddGroupMembers(s.ctx, members); err != nil {
-			logger.Error("添加群成员失败", logger.ErrorField(err))
+		// 成员、会话参与者、成员数一次性写入：任何一步失败都整批回滚，
+		// 不留下「进群了但会话列表看不到」的半成功状态。
+		if err := s.repo.InviteGroupMembers(s.ctx, groupID, members, participants); err != nil {
+			logger.Error("邀请群成员失败，整批回滚", logger.ErrorField(err))
 			return err
-		}
-
-		// 更新群组成员数
-		if err := s.repo.UpdateGroupMemberCount(s.ctx, groupID); err != nil {
-			logger.Warn("更新群组成员数失败", logger.ErrorField(err))
-		}
-	}
-
-	if len(participants) > 0 {
-		if err := s.repo.AddConversationParticipants(s.ctx, participants); err != nil {
-			logger.Warn("添加会话参与者失败", logger.ErrorField(err))
 		}
 	}
 

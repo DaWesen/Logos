@@ -133,6 +133,10 @@ type ChatRepository interface {
 	GetGroupByID(ctx context.Context, groupID string) (*model.Group, error)
 	AddGroupMember(ctx context.Context, member *model.GroupMember) error
 	AddGroupMembers(ctx context.Context, members []*model.GroupMember) error
+	// InviteGroupMembers 在同一个事务里写入成员、会话参与者并刷新成员数。
+	// 邀请是用户可见的组合状态：只写成员不写参与者，被邀请人能在成员列表里看到自己，
+	// 会话列表里却没有这个群；成员数更新失败则会让群资料长期显示旧人数。
+	InviteGroupMembers(ctx context.Context, groupID string, members []*model.GroupMember, participants []*model.ConversationParticipant) error
 	RemoveGroupMember(ctx context.Context, groupID, userID string) error
 	GetGroupMembers(ctx context.Context, groupID string, page, pageSize int) ([]*model.GroupMember, int64, error)
 	GetGroupMember(ctx context.Context, groupID, userID string) (*model.GroupMember, error)
@@ -813,6 +817,32 @@ func (r *chatRepositoryImpl) AddGroupMember(ctx context.Context, member *model.G
 
 func (r *chatRepositoryImpl) AddGroupMembers(ctx context.Context, members []*model.GroupMember) error {
 	return r.db.WithContext(ctx).Create(members).Error
+}
+
+func (r *chatRepositoryImpl) InviteGroupMembers(ctx context.Context, groupID string, members []*model.GroupMember, participants []*model.ConversationParticipant) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if len(members) > 0 {
+			if err := tx.Create(members).Error; err != nil {
+				return err
+			}
+		}
+		if len(participants) > 0 {
+			if err := tx.Create(participants).Error; err != nil {
+				return err
+			}
+		}
+		// 成员数是冗余字段，必须在同一事务里按成员表重算；
+		// 事务外更新会留下「成员已入群、人数没变」的漂移窗口。
+		var count int64
+		if err := tx.Model(&model.GroupMember{}).
+			Where("group_id = ?", groupID).
+			Count(&count).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Group{}).
+			Where("id = ?", groupID).
+			Update("member_count", int(count)).Error
+	})
 }
 
 func (r *chatRepositoryImpl) RemoveGroupMember(ctx context.Context, groupID, userID string) error {
