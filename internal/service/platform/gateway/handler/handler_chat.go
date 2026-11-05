@@ -391,11 +391,11 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 		return
 	}
 
-	chatType := int32(0)
-	if ct := c.Query("chat_type"); ct != "" {
-		if v, err := strconv.Atoi(ct); err == nil {
-			chatType = int32(v)
-		}
+	// chat_type 决定下游按私聊/群聊/广播哪张表查；非法值吞成 0 会变成
+	// 「未指定」并让下游自行猜测，可能把群聊 ID 当私聊 ID 去查。
+	chatType, ok := parseBoundedIntQuery(c, "chat_type", 0, 0, maxEnumValue(pb.ChatType_name))
+	if !ok {
+		return
 	}
 	limit, ok := parseLimit(c, "limit", 50, pagination.MaxPageSize)
 	if !ok {
@@ -403,11 +403,11 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 	}
 	// after_seq 为可选增量游标：> 0 时只返回 seq 大于该值的消息（升序），
 	// 供客户端断线重连后补齐实时推送缺口；缺省 0 表示保持原有历史分页语义。
-	afterSeq := int64(0)
-	if a := c.Query("after_seq"); a != "" {
-		if v, err := strconv.ParseInt(a, 10, 64); err == nil && v > 0 {
-			afterSeq = v
-		}
+	// after_seq 是增量游标：非数字时旧实现静默按 0（全量历史）返回，
+	// 客户端会以为补到了断线期间的增量，实际重新拉了一遍完整历史。
+	afterSeq, ok := parseInt64Query(c, "after_seq", 0)
+	if !ok {
+		return
 	}
 
 	resp, err := h.ChatClient.GetMessageHistory(c.Request.Context(), &pb.GetMessageHistoryRequest{

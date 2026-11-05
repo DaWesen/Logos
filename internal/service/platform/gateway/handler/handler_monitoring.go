@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 	"time"
 
 	"Logos/internal/service/platform/gateway/model"
@@ -60,11 +59,19 @@ func (h *Handler) QueryMetrics(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
+	metricType, ok := parseBoundedIntQuery(c, "type", int(pb.MetricType_METRIC_TYPE_CPU), 0, maxEnumValue(pb.MetricType_name))
+	if !ok {
+		return
+	}
+	startTime, endTime, ok := parseTimeRange(c)
+	if !ok {
+		return
+	}
 	req := &pb.QueryMetricReq{
 		ServiceName: c.Query("service_name"),
-		Type:        pb.MetricType(mustAtoi(c.DefaultQuery("type", "1"))),
-		StartTime:   mustAtoi64(c.DefaultQuery("start_time", "0")),
-		EndTime:     mustAtoi64(c.DefaultQuery("end_time", "0")),
+		Type:        pb.MetricType(metricType),
+		StartTime:   startTime,
+		EndTime:     endTime,
 	}
 	resp, err := h.MonitoringClient.QueryMetrics(c.Request.Context(), req)
 	if err != nil {
@@ -122,12 +129,16 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 	if !ok {
 		return
 	}
+	startTime, endTime, ok := parseTimeRange(c)
+	if !ok {
+		return
+	}
 
 	req := &pb.QueryLogReq{
 		Page:      int32(page),
 		PageSize:  int32(pageSize),
-		StartTime: mustAtoi64(c.DefaultQuery("start_time", "0")),
-		EndTime:   mustAtoi64(c.DefaultQuery("end_time", "0")),
+		StartTime: startTime,
+		EndTime:   endTime,
 	}
 	if serviceName := c.Query("service_name"); serviceName != "" {
 		req.ServiceName = &serviceName
@@ -153,23 +164,32 @@ func (h *Handler) QueryAlerts(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
+	startTime, endTime, ok := parseTimeRange(c)
+	if !ok {
+		return
+	}
 	req := &pb.QueryAlertReq{
-		StartTime: mustAtoi64(c.DefaultQuery("start_time", "0")),
-		EndTime:   mustAtoi64(c.DefaultQuery("end_time", "0")),
+		StartTime: startTime,
+		EndTime:   endTime,
 	}
 	if serviceName := c.Query("service_name"); serviceName != "" {
 		req.ServiceName = &serviceName
 	}
-	if levelStr := c.Query("level"); levelStr != "" {
-		level := pb.AlertLevel(mustAtoi(levelStr))
-		req.Level = &level
+	// level=0 是 UNSPECIFIED，语义是「全部级别」。旧实现只要参数非空就塞进
+	// 指针，DAO 再按 level=0 过滤；而库里只存 1..4，于是默认筛选条件下
+	// 告警列表恒为空——前端明明传了「全部级别」，却一条也看不到。
+	if level, ok := parseBoundedIntQuery(c, "level", 0, 0, maxEnumValue(pb.AlertLevel_name)); ok {
+		if level > 0 {
+			enum := pb.AlertLevel(level)
+			req.Level = &enum
+		}
+	} else {
+		return
 	}
-	if c.Query("resolved") == "true" {
-		resolved := true
-		req.Resolved = &resolved
-	} else if c.Query("resolved") == "false" {
-		resolved := false
-		req.Resolved = &resolved
+	if resolved, ok := parseOptionalBoolQuery(c, "resolved"); ok {
+		req.Resolved = resolved
+	} else {
+		return
 	}
 
 	resp, err := h.MonitoringClient.QueryAlerts(c.Request.Context(), req)
@@ -301,9 +321,6 @@ func (h *Handler) ListServiceInfo(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: services})
 }
-
-func mustAtoi(s string) int32   { v, _ := strconv.Atoi(s); return int32(v) }
-func mustAtoi64(s string) int64 { v, _ := strconv.ParseInt(s, 10, 64); return v }
 
 func (h *Handler) servicePortMap() map[string]int {
 	return map[string]int{

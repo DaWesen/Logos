@@ -77,8 +77,9 @@ func (h *Handler) GetPaymentOrder(c *gin.Context) {
 	})
 }
 
-// ListPaymentOrders 查询本人支付单列表（按创建时间倒序）；
-// 分页参数非法时按默认值处理，status 显式传入时必须是合法枚举。
+// ListPaymentOrders 查询本人支付单列表（按创建时间倒序）。
+// 分页与 status 都是外部输入：分页走 parsePagination（非法 400、超限收敛），
+// status 显式传入时必须是合法枚举。
 func (h *Handler) ListPaymentOrders(c *gin.Context) {
 	if h.BillingClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
@@ -90,10 +91,15 @@ func (h *Handler) ListPaymentOrders(c *gin.Context) {
 		return
 	}
 
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
+
 	req := &pb.ListPaymentOrdersRequest{
 		UserId:   userID,
-		Page:     int32(atoiOrZero(c.Query("page"))),
-		PageSize: int32(atoiOrZero(c.Query("page_size"))),
+		Page:     int32(page),
+		PageSize: int32(pageSize),
 	}
 
 	if raw := c.Query("status"); raw != "" {
@@ -124,14 +130,6 @@ func (h *Handler) ListPaymentOrders(c *gin.Context) {
 			"total":  resp.Total,
 		},
 	})
-}
-
-func atoiOrZero(s string) int {
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
-	}
-	return v
 }
 
 // PaymentCallback 支付渠道回调：公开路由，安全性完全依赖服务端验签。
@@ -203,12 +201,14 @@ func (h *Handler) GetTransactions(c *gin.Context) {
 		return
 	}
 
-	var txType pb.TransactionType = pb.TransactionType_TRANSACTION_TYPE_UNSPECIFIED
-	if t := c.Query("type"); t != "" {
-		if ti, err := strconv.Atoi(t); err == nil {
-			txType = pb.TransactionType(ti)
-		}
+	// 枚举非法值旧实现直接吞掉、回落 UNSPECIFIED（= 不过滤），
+	// 调用方以为筛了「充值」，实际拿到全部流水。
+	parsedType, ok := parseBoundedIntQuery(c, "type",
+		int(pb.TransactionType_TRANSACTION_TYPE_UNSPECIFIED), 0, maxEnumValue(pb.TransactionType_name))
+	if !ok {
+		return
 	}
+	txType := pb.TransactionType(parsedType)
 
 	req := &pb.GetTransactionsRequest{
 		Type:     txType,
@@ -245,12 +245,12 @@ func (h *Handler) GetUsageStats(c *gin.Context) {
 		return
 	}
 
-	var item pb.BillingItem = pb.BillingItem_BILLING_ITEM_UNSPECIFIED
-	if i := c.Query("item"); i != "" {
-		if itemVal, err := strconv.Atoi(i); err == nil {
-			item = pb.BillingItem(itemVal)
-		}
+	parsedItem, ok := parseBoundedIntQuery(c, "item",
+		int(pb.BillingItem_BILLING_ITEM_UNSPECIFIED), 0, maxEnumValue(pb.BillingItem_name))
+	if !ok {
+		return
 	}
+	item := pb.BillingItem(parsedItem)
 
 	req := &pb.GetUsageStatsRequest{
 		Item: item,

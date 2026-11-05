@@ -331,11 +331,15 @@ func (h *Handler) GetBotHistory(c *gin.Context) {
 		Limit:  int32(limit),
 	}
 
-	if beforeTime := c.Query("before_time"); beforeTime != "" {
-		if t, err := strconv.ParseInt(beforeTime, 10, 64); err == nil {
-			ts := &timestamppb.Timestamp{Seconds: t}
-			req.BeforeTime = ts
-		}
+	// before_time 是「取该时间点之前的历史」的硬过滤条件。旧实现解析失败
+	// 就跳过赋值，接口照样 200，但返回的是全部历史——分页游标类参数尤其
+	// 不能静默失效，否则客户端会重复拉取。
+	beforeTime, ok := parseInt64Query(c, "before_time", 0)
+	if !ok {
+		return
+	}
+	if beforeTime > 0 {
+		req.BeforeTime = &timestamppb.Timestamp{Seconds: beforeTime}
 	}
 
 	// 透传 user_id，Bot 服务据此校验会话归属

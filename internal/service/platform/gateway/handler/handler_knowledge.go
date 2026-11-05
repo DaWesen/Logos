@@ -2,7 +2,6 @@ package handler
 
 import (
 	"net/http"
-	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/pagination"
@@ -314,7 +313,12 @@ func (h *Handler) GetSubgraph(c *gin.Context) {
 		return
 	}
 	entityID := c.Param("id")
-	depth, _ := strconv.Atoi(c.DefaultQuery("depth", "2"))
+	// 深度决定遍历成本：DAO 侧上限是 4 层，这里提前拒绝越界值，
+	// 而不是让 `depth=abc` 静默变成 0 再被 DAO 当默认值兜住。
+	depth, ok := parseBoundedIntQuery(c, "depth", 2, 1, 4)
+	if !ok {
+		return
+	}
 	collectionID := c.Query("collectionId")
 
 	req := &pb.GetSubgraphReq{
@@ -395,7 +399,11 @@ func (h *Handler) GetEntityPaths(c *gin.Context) {
 	}
 	sourceID := c.Query("sourceId")
 	targetID := c.Query("targetId")
-	maxDepth, _ := strconv.Atoi(c.DefaultQuery("maxDepth", "4"))
+	// 路径搜索的 DAO 上限是 6 层（BFS 分支因子高，再多会指数爆炸）。
+	maxDepth, ok := parseBoundedIntQuery(c, "maxDepth", 4, 1, 6)
+	if !ok {
+		return
+	}
 	collectionID := c.Query("collectionId")
 
 	if sourceID == "" || targetID == "" {
