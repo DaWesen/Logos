@@ -157,6 +157,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **抽取结果字段转换**：字段缺失返回零值且不报错；字段类型不符时错误信息带上字段名；位置字段为负数或超出 int32 范围时报错；`json.Unmarshal` 失败必须上抛，不能返回 200 + 空列表；批量列表中第 N 条坏数据时清空已拼好的结果并在错误里带上序号；缺省 `id` 仍按 `text_type` 派生
 - **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；`GetUserMemoryByKey` 报错时 `SetUserMemoryWithCategory` 返回 `ErrInternalServer`，不得走新建分支；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
 - **清空记忆是原子操作**：`DeleteAllUserMemories` 用认证身份发起**一条**批量 `DELETE`（断言 `bulkDeleteCalls == ["alice|bot-owner"]`），不得退化成逐条 `DeleteUserMemoryByID`（回归「逐条删 + `_ =` 吞错 → 部分失败仍返回成功」）；DAO 报错时返回 `ErrInternalServer`；未认证请求不触发任何删除
+- **已读位点单一真相**：`MarkMessagesRead` 只推进 `last_read_seq`（显式 msgIDs 取最大 seq，不带 msgIDs 取会话最大 seq），不再逐条写无人读取的 `messages.is_read`；缺身份或非会话成员时不触达位点表；`handleMessageReadEvent` 在 seq 查询失败时原样上抛且不推进位点（回归「失败后发假回执」），ID 全部失效时不发布空回执
 - **ffmpeg 解析**：`00:01:23.45` → 83.45 秒；`02:15:30.50` 正确进位；`Duration: N/A`、缺 `Duration` 行、`abc:def:ghi`、`1.2.3`、`99` 分钟、`60` 秒、负数秒、段数不足全部报错；`1920x1080 [SAR 1:1 DAR 16:9]` 与 `1080x1920` 正确识别；`(avc1 / 0x31637661)` 不被当成分辨率；缺 `Video:` 行、`0x0`、`1920x1080i` 均报错；`ffmpeg` 不存在时 `GetVideoInfo` 返回错误且不返回半截 map
 - **视频解析降级**：元信息探测失败时 `metadata` 不含 `video_info` 且抽帧回落到默认 1s 间隔；抽帧失败时仍保留 ASR 文本；单帧 VLM 失败只跳过该帧、不产生空帧段落；全部帧描述失败时不渲染「视频帧详情」；`duration=60` 时 `FrameInterval=10`、`MaxFrames=5`；`duration=3` 时间隔被夹到 1s；调用方显式传入的 `ExtractOptions` 优先且不被就地修改
 
