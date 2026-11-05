@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"Logos/pkg/grpcserver"
 	pkgJwt "Logos/pkg/jwt"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	"Logos/pkg/storage"
 	pbBilling "Logos/proto_gen/billing"
 	pbBot "Logos/proto_gen/bot"
@@ -328,6 +330,74 @@ func respondProtoCode(c *gin.Context, code int32, message string, data interface
 		Message: message,
 		Data:    data,
 	})
+}
+
+// 分页是外部输入，不能假设调用方一定传 page>=1、pageSize 在合理区间：
+// pageSize=0 可能让数据库省略 LIMIT，负 page 会生成负 OFFSET。
+//
+// 之前的写法是 `page, _ := strconv.Atoi(...)`：`?page=abc` 静默变成 0，
+// `?pageSize=1000000000` 原样透传给数据库/检索后端，一次请求就能把
+// 全表拉进内存。这里对非法值直接返回 400（而不是猜一个默认值），
+// 合法值再交给 pkg/pagination 统一收敛默认值与上限。
+func parsePagination(c *gin.Context, pageKey, pageSizeKey string, defaultPageSize int) (page, pageSize int, ok bool) {
+	return parsePaginationAlias(c, []string{pageKey}, []string{pageSizeKey}, defaultPageSize)
+}
+
+// parsePaginationAlias 与 parsePagination 相同，但允许页大小有多个参数名。
+// 历史上 knowledge 接口同时接受 pageSize（前端）和 page_size（旧客户端），
+// 两个名字都必须走同一套校验，不能只修其中一条路径。
+func parsePaginationAlias(c *gin.Context, pageKeys, pageSizeKeys []string, defaultPageSize int) (page, pageSize int, ok bool) {
+	page = pagination.DefaultPage
+	pageSize = defaultPageSize
+
+	if key, raw, found := firstQuery(c, pageKeys...); found {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < pagination.DefaultPage {
+			c.JSON(http.StatusBadRequest, model.BadRequest(key+" 必须是 >= 1 的整数"))
+			return 0, 0, false
+		}
+		page = parsed
+	}
+	if key, raw, found := firstQuery(c, pageSizeKeys...); found {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			c.JSON(http.StatusBadRequest, model.BadRequest(key+" 必须是 >= 1 的整数"))
+			return 0, 0, false
+		}
+		pageSize = parsed
+	}
+
+	page, pageSize = pagination.NormalizeWithDefault(page, pageSize, defaultPageSize)
+	return page, pageSize, true
+}
+
+// parseLimit 处理「只要条数不要页码」的接口（推荐、历史记录等）。
+// 非法值返回 400；超过 max 的值被收敛到 max，避免一次请求拖垮下游。
+func parseLimit(c *gin.Context, key string, defaultLimit, maxLimit int) (int, bool) {
+	raw := c.Query(key)
+	if raw == "" {
+		return defaultLimit, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		c.JSON(http.StatusBadRequest, model.BadRequest(key+" 必须是 >= 1 的整数"))
+		return 0, false
+	}
+	if maxLimit > 0 && parsed > maxLimit {
+		parsed = maxLimit
+	}
+	return parsed, true
+}
+
+// firstQuery 返回第一个非空参数，用于兼容同一语义的多个参数名。
+// 空字符串视作「没传」，避免 `?pageSize=` 被当成非法值而拒绝。
+func firstQuery(c *gin.Context, keys ...string) (key, value string, found bool) {
+	for _, k := range keys {
+		if raw := c.Query(k); raw != "" {
+			return k, raw, true
+		}
+	}
+	return "", "", false
 }
 
 func (h *Handler) ProxyProcessService(c *gin.Context) {

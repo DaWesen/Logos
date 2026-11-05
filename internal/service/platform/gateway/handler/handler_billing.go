@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/pagination"
 	pb "Logos/proto_gen/billing"
 
 	"github.com/gin-gonic/gin"
@@ -197,8 +198,10 @@ func (h *Handler) GetTransactions(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "pageSize", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	var txType pb.TransactionType = pb.TransactionType_TRANSACTION_TYPE_UNSPECIFIED
 	if t := c.Query("type"); t != "" {

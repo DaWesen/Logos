@@ -415,8 +415,6 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 
 	var req pb.SearchUsersReq
 	req.Keyword = c.Query("keyword")
-	pageStr := c.Query("page")
-	pageSizeStr := c.Query("page_size")
 
 	if req.Keyword == "" {
 		// 支持 POST JSON 方式
@@ -424,20 +422,16 @@ func (h *Handler) SearchUsers(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, model.BadRequest(err.Error()))
 			return
 		}
+		// JSON 里的 page/page_size 同样是外部输入，不能因为换了传输方式就跳过边界收敛。
+		page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
+		req.Page, req.PageSize = int32(page), int32(pageSize)
 	} else {
 		// 使用 GET 查询参数
-		if pageStr != "" {
-			if page, err := strconv.Atoi(pageStr); err == nil {
-				req.Page = int32(page)
-			}
-		}
-		if pageSizeStr != "" {
-			if pageSize, err := strconv.Atoi(pageSizeStr); err == nil {
-				req.PageSize = int32(pageSize)
-			}
-		}
 		// 默认值与上限统一走 pkg/pagination，避免网关和服务端各写一套。
-		page, pageSize := pagination.Normalize(int(req.Page), int(req.PageSize))
+		page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+		if !ok {
+			return
+		}
 		req.Page, req.PageSize = int32(page), int32(pageSize)
 	}
 

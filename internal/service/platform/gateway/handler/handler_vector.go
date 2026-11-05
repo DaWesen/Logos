@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"reflect"
 	"runtime/debug"
-	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 
 	pb "Logos/proto_gen/vector"
 
@@ -248,24 +248,20 @@ func (h *Handler) ListVectors(c *gin.Context) {
 		})
 		return
 	}
-	page := int32(1)
-	pageSize := int32(20)
-	if p, err := strconv.ParseInt(c.Query("page"), 10, 32); err == nil && p > 0 {
-		page = int32(p)
-	}
-	if ps, err := strconv.ParseInt(c.Query("page_size"), 10, 32); err == nil && ps > 0 {
-		pageSize = int32(ps)
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
 	}
 
 	logger.Info("ListVectors: calling gRPC",
 		logger.StringField("collection_id", collectionID),
-		logger.IntField("page", int(page)),
-		logger.IntField("page_size", int(pageSize)))
+		logger.IntField("page", page),
+		logger.IntField("page_size", pageSize))
 
 	resp, err := h.VectorClient.ListVectors(h.withUserID(c), &pb.ListVectorsReq{
 		CollectionId: collectionID,
-		Page:         page,
-		PageSize:     pageSize,
+		Page:         int32(page),
+		PageSize:     int32(pageSize),
 	})
 
 	logger.Info("ListVectors: gRPC call completed",

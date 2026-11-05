@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/pagination"
 
 	pb "Logos/proto_gen/knowledge"
 
@@ -85,9 +86,10 @@ func (h *Handler) QueryEntities(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
-	pageSize, _ := strconv.Atoi(pageSizeStr)
+	page, pageSize, ok := parsePaginationAlias(c, []string{"page"}, []string{"pageSize", "page_size"}, pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.QueryEntityReq{
 		Page:         int32(page),
@@ -116,9 +118,10 @@ func (h *Handler) SearchEntities(c *gin.Context) {
 		return
 	}
 	keyword := c.Query("keyword")
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
-	pageSize, _ := strconv.Atoi(pageSizeStr)
+	page, pageSize, ok := parsePaginationAlias(c, []string{"page"}, []string{"pageSize", "page_size"}, pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.SearchEntityReq{
 		Keyword:      keyword,
@@ -213,9 +216,10 @@ func (h *Handler) QueryRelations(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSizeStr := c.DefaultQuery("pageSize", c.DefaultQuery("page_size", "20"))
-	pageSize, _ := strconv.Atoi(pageSizeStr)
+	page, pageSize, ok := parsePaginationAlias(c, []string{"page"}, []string{"pageSize", "page_size"}, pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.QueryRelationReq{
 		Page:         int32(page),

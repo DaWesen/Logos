@@ -14,6 +14,7 @@ import (
 	"Logos/internal/service/platform/gateway"
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	"Logos/pkg/uploadguard"
 
 	pb "Logos/proto_gen/chat"
@@ -396,11 +397,9 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 			chatType = int32(v)
 		}
 	}
-	limit := int32(50)
-	if l := c.Query("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil {
-			limit = int32(v)
-		}
+	limit, ok := parseLimit(c, "limit", 50, pagination.MaxPageSize)
+	if !ok {
+		return
 	}
 	// after_seq 为可选增量游标：> 0 时只返回 seq 大于该值的消息（升序），
 	// 供客户端断线重连后补齐实时推送缺口；缺省 0 表示保持原有历史分页语义。
@@ -414,7 +413,7 @@ func (h *Handler) GetChatHistory(c *gin.Context) {
 	resp, err := h.ChatClient.GetMessageHistory(c.Request.Context(), &pb.GetMessageHistoryRequest{
 		ChatId:   chatID,
 		ChatType: pb.ChatType(chatType),
-		Limit:    limit,
+		Limit:    int32(limit),
 		AfterSeq: afterSeq,
 	})
 	if err != nil {
@@ -625,8 +624,10 @@ func (h *Handler) GetConversationList(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "service unavailable"))
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 	// cursor 可选：非空时服务端走 keyset 分页，page 被忽略。
 	cursor := c.Query("cursor")
 
@@ -934,22 +935,14 @@ func (h *Handler) GetGroupMembers(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BadRequest("group_id is required"))
 		return
 	}
-	page := int32(1)
-	if p := c.Query("page"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil {
-			page = int32(v)
-		}
-	}
-	pageSize := int32(20)
-	if ps := c.Query("page_size"); ps != "" {
-		if v, err := strconv.Atoi(ps); err == nil {
-			pageSize = int32(v)
-		}
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
 	}
 	req := &pb.GetGroupMembersRequest{
 		GroupId:  groupID,
-		Page:     page,
-		PageSize: pageSize,
+		Page:     int32(page),
+		PageSize: int32(pageSize),
 	}
 	resp, err := h.ChatClient.GetGroupMembers(c.Request.Context(), req)
 	if err != nil {

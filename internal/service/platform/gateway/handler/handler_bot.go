@@ -3,6 +3,7 @@ package handler
 import (
 	"Logos/internal/service/platform/gateway/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/pagination"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -123,8 +124,10 @@ func (h *Handler) ListBots(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "pageSize", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	var botType pb.BotType
 	if t := c.Query("type"); t == "builtin" {
@@ -317,7 +320,10 @@ func (h *Handler) GetBotHistory(c *gin.Context) {
 	}
 	botID := c.Query("bot_id")
 	chatID := c.Query("chat_id")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	limit, ok := parseLimit(c, "limit", 50, pagination.MaxPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.GetBotHistoryRequest{
 		BotId:  botID,

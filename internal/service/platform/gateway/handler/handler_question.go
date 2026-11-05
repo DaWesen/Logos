@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/pagination"
 
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/question"
@@ -69,8 +70,10 @@ func (h *Handler) GetHistory(c *gin.Context) {
 			}
 		}
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.HistoryReq{
 		UserId:   userID,

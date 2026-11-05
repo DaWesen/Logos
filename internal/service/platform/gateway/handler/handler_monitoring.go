@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/pagination"
 
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/monitoring"
@@ -117,8 +118,10 @@ func (h *Handler) QueryLogs(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.QueryLogReq{
 		Page:      int32(page),

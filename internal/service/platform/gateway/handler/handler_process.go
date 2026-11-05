@@ -6,7 +6,10 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
+	"strconv"
 
+	"Logos/pkg/pagination"
 	"Logos/pkg/uploadguard"
 
 	"github.com/gin-gonic/gin"
@@ -135,16 +138,21 @@ func (h *Handler) ProcessProcessURL(c *gin.Context) {
 }
 
 func (h *Handler) ProcessListDocuments(c *gin.Context) {
-	page := c.DefaultQuery("page", "1")
-	pageSize := c.DefaultQuery("page_size", "20")
-	statusStr := c.Query("status")
-
-	url := h.ProcessServiceURL + "/api/ai/process/documents?page=" + page + "&page_size=" + pageSize
-	if statusStr != "" {
-		url += "&status=" + statusStr
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
 	}
 
-	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil)
+	// 用 url.Values 拼参数：手写字符串拼接会让 status 里的 & 或 # 改写查询串。
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("page_size", strconv.Itoa(pageSize))
+	if statusStr := c.Query("status"); statusStr != "" {
+		query.Set("status", statusStr)
+	}
+	target := h.ProcessServiceURL + "/api/ai/process/documents?" + query.Encode()
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, target, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
 		return

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/pagination"
 
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/recommend"
@@ -18,7 +19,10 @@ func (h *Handler) GetRecommendations(c *gin.Context) {
 		return
 	}
 	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit, ok := parseLimit(c, "limit", 20, pagination.MaxPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.RecommendationReq{
 		UserId: userID,
@@ -49,7 +53,10 @@ func (h *Handler) GetRelatedRecommendations(c *gin.Context) {
 		return
 	}
 	entityID := c.Param("entityId")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	limit, ok := parseLimit(c, "limit", 20, pagination.MaxPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.RelatedRecommendationReq{
 		EntityId: entityID,
@@ -99,8 +106,10 @@ func (h *Handler) GetRecommendationHistory(c *gin.Context) {
 		return
 	}
 	userID, _ := strconv.ParseInt(c.DefaultQuery("user_id", "0"), 10, 64)
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	page, pageSize, ok := parsePagination(c, "page", "page_size", pagination.DefaultPageSize)
+	if !ok {
+		return
+	}
 
 	req := &pb.HistoryReq{
 		UserId:   userID,
