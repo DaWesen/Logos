@@ -163,6 +163,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 
 - **转发目标类型解析**：`GetGroupByID` 返回错误时 `ForwardMessage` 原样上抛且不写任何消息（即使前一个目标已解析成功）；已有群会话按群聊类型落库（`ChatType=Group`、`ChatID=目标群`），不能按私聊建出幽灵会话
 - **私聊拉黑拦截**：对方拉黑或自己拉黑都返回 `ErrChatBlocked`，且拦截发生在建会话/落库之前（`privateConvCalls == 0`）；关系服务查询失败返回 `ErrChatRelationshipUnavailable`（失败关闭）而不是放行；无拉黑时正常放行且双向各查一次；`system` / `bot_` 发送者与 `bot_` 目标跳过联系人查询；适配器在 TTL 内只回源一次、过期后取到最新拉黑状态、上游故障时**不**返回过期缓存；`CheckFriendship` 无记录返回 200/false/false，数据库故障返回 500，拉黑状态原样回传
+- **邀请群成员**：待邀请成员的查询失败必须整批拒绝且不写任何成员（回归 `existing, _ := ...` 把数据库故障当成「不是成员」，导致重复插入撞唯一约束）；同一请求里的重复/空白 ID 被过滤后只写一批；已存在成员跳过；Bot 只写成员表、不写会话参与者；普通成员无邀请权限时零写入；邀请写入统一走 `InviteGroupMembers`（成员/参与者/成员数同事务），不再拆成三次独立写入
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
