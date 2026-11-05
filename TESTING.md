@@ -130,6 +130,7 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **问答投递与执行语义**：7 个内部 topic 名全部映射到对应 Kafka 常量，`QA_REQUEST` 必须落到 `qa_request`；`AskQuestion` 失败时 handler 返回错误（触发重试），成功才提交 offset；问答应拿到带 deadline 的子 ctx，父 ctx 取消后 handler 立即退出；非问答消息不触发 `AskQuestion`
 - **Kafka 事件字段校验**：`content` / `message_id` 非字符串时返回 `ErrSkipMessage`，`AskQuestion` 零调用且不写数据库；问答缺 `content` 同样按不可恢复消息跳过；`questionService` 未注入返回可重试错误而不是静默成功；`message_id` 为 `null` 视为事件不需要回写状态，正常结束且不触库
 - **推荐问题客户端契约**：`BaseResp.StatusMessage` 为 `{"questions":[...]}` 时正确解析；坏 JSON 返回 error 而不是空列表；空 `StatusMessage` 返回空列表且不报错
+- **gRPC 指标只反映真实调用**：`UnaryServerMetricsInterceptor` 对成功与失败请求分别记入 `code=OK` / `code=InvalidArgument`，耗时直方图按 method+code 拆分；只创建 meters 而没有任何调用时不得出现数据点（防止「定时器造指标」回归）；nil meters 时拦截器原样透传
 - **批量确认语义**：多个 id 只发一条批量 UPDATE（不是 N 次往返）；空字符串与重复 id 被过滤；没有有效 id 时不访问数据库；数据库失败时返回错误而不是 `continue` 后报成功；消费后状态更新失败也会上抛触发重试
 - **topic/priority 枚举映射**：`TopicString(0..6)` 必须与 proto 枚举一一对应（`0 = DATA_COLLECTION`、`6 = SYSTEM_EVENT`），越界值显式成为 `UNKNOWN(n)` 并被 `ValidTopic` 拒绝；proto Priority（0 基）转内部 1..4 后，`LOW/NORMAL/HIGH/URGENT` 往返不偏移；存储层 topic 名回映射 proto 时未知值不得伪装成 `DATA_COLLECTION`
 - **批量发送原子性**：一批消息只开一个事务、一次多值 INSERT，并写入等量 outbox 事件；任一条非法时在开启事务前被拒绝且错误定位到「第 N 条」；写库失败整批回滚、不留下任何 outbox 事件；超过 100 条直接拒绝；批量响应逐条回显消息的真实 topic
