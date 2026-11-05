@@ -1435,18 +1435,16 @@ func (s *ChatServiceImpl) WithdrawMessage(msgID, userID string) error {
 	}
 
 	if s.eventBus != nil {
-		var recipientIDs []string
 		chatType := types.ChatType(msg.ChatType)
-		switch chatType {
-		case types.ChatTypePrivate:
-			recipientIDs = s.getPrivateChatRecipient(msg.ChatID, msg.SenderID)
-		case types.ChatTypeGroup:
-			recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
-		}
-		// 撤回同样要通知发送者本人的其他在线设备，否则同账号多端会一直显示原文。
-		recipientIDs = appendUnique(recipientIDs, msg.SenderID)
-		if len(recipientIDs) == 0 {
-			recipientIDs = []string{msg.SenderID}
+		recipientIDs, lookupErr := s.editRecipients(msg)
+		if lookupErr != nil {
+			// 撤回已落库，不因推送面查询失败回滚；但必须留痕：
+			// 此时只有发送者本人会收到事件，其他成员要等重新拉历史才能看到撤回状态。
+			logger.Error("查询撤回事件接收者失败，降级为仅通知发送者",
+				logger.StringField("chat_id", msg.ChatID),
+				logger.StringField("message_id", msgID),
+				logger.StringField("sender_id", msg.SenderID),
+				logger.ErrorField(lookupErr))
 		}
 
 		withdrawEvent := &types.MessageWithdrawEvent{
@@ -1535,7 +1533,16 @@ func (s *ChatServiceImpl) publishEditEvent(msg *model.Message) {
 		return
 	}
 
-	recipientIDs := s.editRecipients(msg)
+	recipientIDs, lookupErr := s.editRecipients(msg)
+	if lookupErr != nil {
+		// 编辑内容已落库，接收端重新拉历史仍能拿到新版本，因此不把请求判失败；
+		// 但群成员查询失败意味着除发送者外没人收到实时更新，必须可观测。
+		logger.Error("查询编辑事件接收者失败，降级为仅通知发送者",
+			logger.StringField("chat_id", msg.ChatID),
+			logger.StringField("message_id", msg.ID),
+			logger.StringField("sender_id", msg.SenderID),
+			logger.ErrorField(lookupErr))
+	}
 	chatType := types.ChatType(msg.ChatType)
 
 	event := &types.MessageEditEvent{
@@ -1554,22 +1561,27 @@ func (s *ChatServiceImpl) publishEditEvent(msg *model.Message) {
 	}
 }
 
-// editRecipients 计算编辑事件的接收者：会话内全部成员，且一定包含发送者本人。
+// editRecipients 计算编辑/撤回事件的接收者：会话内全部成员，且一定包含发送者本人。
 // getPrivateChatRecipient 只返回对方，发送者本人的其他在线设备必须显式补上，
 // 否则同账号多端中只有发起编辑的那一端能看到新内容。
-func (s *ChatServiceImpl) editRecipients(msg *model.Message) []string {
+//
+// 返回 error 而不是静默吞掉：群成员查询失败时列表会退化为「只有发送者」，
+// 调用方仍应发布事件（内容已落库，推送不是事实来源），但必须记录这次降级，
+// 否则线上表现是「其他成员的界面一直停在旧内容」且日志里毫无线索。
+func (s *ChatServiceImpl) editRecipients(msg *model.Message) ([]string, error) {
 	var recipientIDs []string
+	var lookupErr error
 	switch types.ChatType(msg.ChatType) {
 	case types.ChatTypePrivate:
 		recipientIDs = s.getPrivateChatRecipient(msg.ChatID, msg.SenderID)
 	case types.ChatTypeGroup:
-		recipientIDs, _ = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
+		recipientIDs, lookupErr = s.repo.GetAllGroupMemberIDs(s.ctx, msg.ChatID)
 	}
 	recipientIDs = appendUnique(recipientIDs, msg.SenderID)
 	if len(recipientIDs) == 0 {
 		recipientIDs = []string{msg.SenderID}
 	}
-	return recipientIDs
+	return recipientIDs, lookupErr
 }
 
 // DeleteChatHistory 清空「本人视角」的会话历史。

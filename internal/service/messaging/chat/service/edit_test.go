@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -115,7 +116,10 @@ func TestEditEventRecipients(t *testing.T) {
 	repo := editRepo()
 	svc := newAccessService(repo)
 
-	privateIDs := svc.editRecipients(repo.messages["m1"])
+	privateIDs, err := svc.editRecipients(repo.messages["m1"])
+	if err != nil {
+		t.Fatalf("私聊接收者计算不应失败，实际 %v", err)
+	}
 	if len(privateIDs) != 2 || !hasID(privateIDs, "1001") || !hasID(privateIDs, "1002") {
 		t.Fatalf("私聊编辑接收者应包含双方，实际 %v", privateIDs)
 	}
@@ -131,9 +135,40 @@ func TestEditEventRecipients(t *testing.T) {
 		ChatType: int(model.ChatTypeGroup),
 		SenderID: "1001",
 	}
-	groupIDs := svc.editRecipients(groupMsg)
+	groupIDs, err := svc.editRecipients(groupMsg)
+	if err != nil {
+		t.Fatalf("群聊接收者计算不应失败，实际 %v", err)
+	}
 	if len(groupIDs) != 3 || !hasID(groupIDs, "1003") {
 		t.Fatalf("群聊编辑应投递给全部成员，实际 %v", groupIDs)
+	}
+}
+
+// TestEditEventRecipientsLookupFailureIsExplicit 群成员查询失败时，
+// 接收者只能退化为发送者本人，但失败必须作为 error 返回给调用方记录日志，
+// 不能像早先那样 `recipientIDs, _ = ...` 静默吞掉——否则线上只表现为
+// 其他成员的界面停在旧内容，排查时没有任何线索。
+func TestEditEventRecipientsLookupFailureIsExplicit(t *testing.T) {
+	repo := editRepo()
+	repo.members = map[string]*model.GroupMember{
+		"group-1|1001": {GroupID: "group-1", UserID: "1001"},
+		"group-1|1002": {GroupID: "group-1", UserID: "1002"},
+	}
+	repo.groupMembersErr = errors.New("db unavailable")
+	svc := newAccessService(repo)
+
+	groupMsg := &model.Message{
+		ID:       "g1",
+		ChatID:   "group-1",
+		ChatType: int(model.ChatTypeGroup),
+		SenderID: "1001",
+	}
+	ids, err := svc.editRecipients(groupMsg)
+	if err == nil {
+		t.Fatal("群成员查询失败必须返回 error，而不是静默降级")
+	}
+	if len(ids) != 1 || ids[0] != "1001" {
+		t.Fatalf("降级后应仅保留发送者，实际 %v", ids)
 	}
 }
 
