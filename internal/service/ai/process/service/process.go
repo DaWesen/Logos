@@ -39,6 +39,9 @@ var (
 	ErrUnauthenticated = errors.New("missing user identity")
 	// ErrDocumentNotFound 表示文档不存在，或当前用户不是它的 owner。
 	ErrDocumentNotFound = errors.New("document not found")
+	// ErrKnowledgeExtractionAllFailed 表示抽取结果一条实体/关系都没写进去。
+	// 知识提取本身允许降级，但「全部失败」必须让调用方知道图谱是空的。
+	ErrKnowledgeExtractionAllFailed = errors.New("no entity or relation was written from knowledge extraction")
 )
 
 const (
@@ -923,46 +926,57 @@ func (s *ProcessService) processKnowledgeExtraction(ctx context.Context, doc *mo
 	}
 
 	collectionID := doc.VectorCollectionID
+	stats := knowledgeExtractionStats{}
 
-	for _, entity := range entities {
-		entityType, _ := entity["type"].(string)
-		name, _ := entity["text"].(string)
-		props := make(map[string]string)
-		for k, v := range entity {
-			if strV, ok := v.(string); ok && k != "type" && k != "text" && k != "confidence" {
-				props[k] = strV
-			}
-		}
-
-		if entityType == "" {
-			entityType = "ENTITY"
-		}
-		if name == "" {
+	for i, entity := range entities {
+		entityType, name, props, droppedProps, parseErr := parseExtractedEntity(entity)
+		if parseErr != nil {
+			stats.InvalidEntities++
+			logger.Warn("跳过无法解析的实体",
+				logger.StringField("doc_id", doc.ID),
+				logger.IntField("index", i),
+				logger.StringField("reason", parseErr.Error()))
 			continue
+		}
+		stats.AttemptedEntities++
+		if droppedProps > 0 {
+			logger.Warn("实体属性含非字符串值，已忽略",
+				logger.StringField("doc_id", doc.ID),
+				logger.StringField("name", name),
+				logger.IntField("dropped_properties", droppedProps))
 		}
 
 		desc := fmt.Sprintf("从文档 %s 提取", doc.FileName)
 		if _, err := s.knowledgeService.FindOrCreateEntity(ctx, entityType, name, collectionID, props, &desc, ""); err != nil {
-			logger.Warn("创建实体失败",
+			stats.FailedEntities++
+			logger.Error("创建实体失败",
+				logger.StringField("doc_id", doc.ID),
 				logger.StringField("type", entityType),
 				logger.StringField("name", name),
 				logger.StringField("collection_id", collectionID),
 				logger.ErrorField(err))
-		}
-	}
-
-	for _, triple := range triples {
-		subject, _ := triple["subject"].(string)
-		predicate, _ := triple["predicate"].(string)
-		obj, _ := triple["object"].(string)
-
-		if subject == "" || obj == "" || predicate == "" {
 			continue
 		}
+		stats.CreatedEntities++
+	}
+
+	for i, triple := range triples {
+		subject, predicate, obj, parseErr := parseExtractedTriple(triple)
+		if parseErr != nil {
+			stats.InvalidRelations++
+			logger.Warn("跳过无法解析的关系",
+				logger.StringField("doc_id", doc.ID),
+				logger.IntField("index", i),
+				logger.StringField("reason", parseErr.Error()))
+			continue
+		}
+		stats.AttemptedRelations++
 
 		srcEnt, srcErr := s.knowledgeService.FindOrCreateEntity(ctx, "ENTITY", subject, collectionID, nil, nil, "")
 		if srcErr != nil {
-			logger.Warn("创建源实体失败",
+			stats.FailedRelations++
+			logger.Error("创建源实体失败",
+				logger.StringField("doc_id", doc.ID),
 				logger.StringField("subject", subject),
 				logger.StringField("collection_id", collectionID),
 				logger.ErrorField(srcErr))
@@ -970,34 +984,148 @@ func (s *ProcessService) processKnowledgeExtraction(ctx context.Context, doc *mo
 		}
 		tgtEnt, tgtErr := s.knowledgeService.FindOrCreateEntity(ctx, "ENTITY", obj, collectionID, nil, nil, "")
 		if tgtErr != nil {
-			logger.Warn("创建目标实体失败",
+			stats.FailedRelations++
+			logger.Error("创建目标实体失败",
+				logger.StringField("doc_id", doc.ID),
 				logger.StringField("object", obj),
 				logger.StringField("collection_id", collectionID),
 				logger.ErrorField(tgtErr))
 			continue
 		}
 
-		srcID := ""
-		tgtID := ""
-		if srcEnt != nil {
-			srcID = srcEnt.ID
-		}
-		if tgtEnt != nil {
-			tgtID = tgtEnt.ID
+		if srcEnt == nil || srcEnt.ID == "" || tgtEnt == nil || tgtEnt.ID == "" {
+			stats.FailedRelations++
+			logger.Error("关系端点缺少 ID，跳过该关系",
+				logger.StringField("doc_id", doc.ID),
+				logger.StringField("predicate", predicate),
+				logger.StringField("subject", subject),
+				logger.StringField("object", obj))
+			continue
 		}
 
-		if srcID != "" && tgtID != "" {
-			if _, err := s.knowledgeService.AddRelation(ctx, predicate, srcID, tgtID, collectionID, nil, nil); err != nil {
-				logger.Warn("创建关系失败",
-					logger.StringField("predicate", predicate),
-					logger.StringField("source_id", srcID),
-					logger.StringField("target_id", tgtID),
-					logger.ErrorField(err))
-			}
+		if _, err := s.knowledgeService.AddRelation(ctx, predicate, srcEnt.ID, tgtEnt.ID, collectionID, nil, nil); err != nil {
+			stats.FailedRelations++
+			logger.Error("创建关系失败",
+				logger.StringField("doc_id", doc.ID),
+				logger.StringField("predicate", predicate),
+				logger.StringField("source_id", srcEnt.ID),
+				logger.StringField("target_id", tgtEnt.ID),
+				logger.ErrorField(err))
+			continue
 		}
+		stats.CreatedRelations++
+	}
+
+	considered := stats.AttemptedEntities + stats.InvalidEntities + stats.AttemptedRelations + stats.InvalidRelations
+	if considered == 0 {
+		logger.Info("知识提取未返回实体或关系", logger.StringField("doc_id", doc.ID))
+		return nil
+	}
+
+	if stats.CreatedEntities+stats.CreatedRelations == 0 {
+		return fmt.Errorf("%w: 实体 %d/%d 失败、关系 %d/%d 失败、非法实体 %d、非法关系 %d",
+			ErrKnowledgeExtractionAllFailed,
+			stats.FailedEntities, stats.AttemptedEntities,
+			stats.FailedRelations, stats.AttemptedRelations,
+			stats.InvalidEntities, stats.InvalidRelations)
+	}
+
+	if stats.FailedEntities+stats.InvalidEntities+stats.FailedRelations+stats.InvalidRelations > 0 {
+		logger.Warn("知识提取部分失败",
+			logger.StringField("doc_id", doc.ID),
+			logger.IntField("created_entities", stats.CreatedEntities),
+			logger.IntField("failed_entities", stats.FailedEntities),
+			logger.IntField("invalid_entities", stats.InvalidEntities),
+			logger.IntField("created_relations", stats.CreatedRelations),
+			logger.IntField("failed_relations", stats.FailedRelations),
+			logger.IntField("invalid_relations", stats.InvalidRelations))
 	}
 
 	return nil
+}
+
+type knowledgeExtractionStats struct {
+	AttemptedEntities  int
+	CreatedEntities    int
+	FailedEntities     int
+	InvalidEntities    int
+	AttemptedRelations int
+	CreatedRelations   int
+	FailedRelations    int
+	InvalidRelations   int
+}
+
+// parseExtractedEntity 把模型返回的 map 收敛成强类型字段。
+// 以前用 `entity["text"].(string)` 双返回值直接丢弃 ok，缺字段与非字符串
+// 都会被静默跳过；现在把原因返回给调用方记录，非法数据仍然不写库。
+func parseExtractedEntity(raw map[string]interface{}) (entityType, name string, props map[string]string, droppedProps int, err error) {
+	rawName, exists := raw["text"]
+	if !exists {
+		return "", "", nil, 0, errors.New("缺少 text 字段")
+	}
+	name, ok := rawName.(string)
+	if !ok {
+		return "", "", nil, 0, fmt.Errorf("text 字段不是字符串（%T）", rawName)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", "", nil, 0, errors.New("text 字段为空")
+	}
+
+	entityType = "ENTITY"
+	if rawType, exists := raw["type"]; exists && rawType != nil {
+		typeStr, ok := rawType.(string)
+		if !ok {
+			return "", "", nil, 0, fmt.Errorf("type 字段不是字符串（%T）", rawType)
+		}
+		if trimmed := strings.TrimSpace(typeStr); trimmed != "" {
+			entityType = trimmed
+		}
+	}
+
+	props = make(map[string]string)
+	for k, v := range raw {
+		if k == "type" || k == "text" || k == "confidence" {
+			continue
+		}
+		if strV, ok := v.(string); ok {
+			props[k] = strV
+		} else {
+			droppedProps++
+		}
+	}
+	return entityType, name, props, droppedProps, nil
+}
+
+// parseExtractedTriple 校验三元组的三个端点；缺字段、类型错误、空串都返回原因，
+// 避免整条关系被 `continue` 掉却没有任何日志。
+func parseExtractedTriple(raw map[string]interface{}) (subject, predicate, object string, err error) {
+	read := func(key string) (string, error) {
+		value, exists := raw[key]
+		if !exists {
+			return "", fmt.Errorf("缺少 %s 字段", key)
+		}
+		str, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("%s 字段不是字符串（%T）", key, value)
+		}
+		str = strings.TrimSpace(str)
+		if str == "" {
+			return "", fmt.Errorf("%s 字段为空", key)
+		}
+		return str, nil
+	}
+
+	if subject, err = read("subject"); err != nil {
+		return "", "", "", err
+	}
+	if predicate, err = read("predicate"); err != nil {
+		return "", "", "", err
+	}
+	if object, err = read("object"); err != nil {
+		return "", "", "", err
+	}
+	return subject, predicate, object, nil
 }
 
 func getStringFromMap(m map[string]interface{}, key string) string {
