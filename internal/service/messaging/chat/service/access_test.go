@@ -62,6 +62,12 @@ type stubChatRepo struct {
 	// groupMembersErr / privateConvErr 用于注入依赖失败，验证错误是否被正确上抛。
 	groupMembersErr error
 	privateConvErr  error
+	// groupErrFor 只让指定会话的 GetGroupByID 失败，用于验证转发会先解析
+	// 全部目标再写入，而不是解析一个写一个。
+	groupErrFor string
+	groupErr    error
+	// created 按写入顺序记录成功落库的消息，供转发等用例断言「一条都没写」。
+	created []*model.Message
 }
 
 type purgeCall struct {
@@ -83,7 +89,23 @@ type advanceCall struct {
 }
 
 func (r *stubChatRepo) GetGroupByID(_ context.Context, groupID string) (*model.Group, error) {
+	if r.groupErr != nil && r.groupErrFor == groupID {
+		return nil, r.groupErr
+	}
 	return r.groups[groupID], nil
+}
+
+func (r *stubChatRepo) CreateMessage(_ context.Context, msg *model.Message) error {
+	r.created = append(r.created, msg)
+	if r.messages == nil {
+		r.messages = make(map[string]*model.Message)
+	}
+	r.messages[msg.ID] = msg
+	return nil
+}
+
+func (r *stubChatRepo) UpdateConversationLastMessage(_ context.Context, _, _ string) error {
+	return nil
 }
 
 func (r *stubChatRepo) GetGroupMember(_ context.Context, groupID, userID string) (*model.GroupMember, error) {

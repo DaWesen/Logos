@@ -2989,14 +2989,29 @@ func (s *ChatServiceImpl) ForwardMessage(messageID string, targetChatIDs []strin
 		return nil, err
 	}
 
-	var forwardedMessages []*model.Message
+	// 先解析全部目标会话类型，再写入任何消息：GetGroupByID 的 error 与「不是群」
+	// 必须区分开。把查询失败当成私聊会让转发消息落进以群 ID 为用户名的幽灵会话，
+	// 而且已经写入的前几个目标无法回滚；因此这里失败关闭，整批拒绝。
+	chatTypes := make([]model.ChatType, 0, len(targetChatIDs))
 	for _, targetChatID := range targetChatIDs {
+		group, err := s.repo.GetGroupByID(s.ctx, targetChatID)
+		if err != nil {
+			logger.Error("解析转发目标会话类型失败，拒绝整批转发",
+				logger.StringField("target_chat_id", targetChatID),
+				logger.StringField("sender_id", senderID),
+				logger.ErrorField(err))
+			return nil, err
+		}
 		chatType := model.ChatTypePrivate
-		group, _ := s.repo.GetGroupByID(s.ctx, targetChatID)
 		if group != nil {
 			chatType = model.ChatTypeGroup
 		}
+		chatTypes = append(chatTypes, chatType)
+	}
 
+	var forwardedMessages []*model.Message
+	for i, targetChatID := range targetChatIDs {
+		chatType := chatTypes[i]
 		metadata := map[string]string{
 			"forwarded_from":  originalMsg.ChatID,
 			"original_msg_id": originalMsg.ID,
