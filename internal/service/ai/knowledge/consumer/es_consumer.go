@@ -3,6 +3,8 @@ package consumer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"Logos/internal/service/ai/knowledge/model"
 	"Logos/pkg/es"
@@ -55,7 +57,11 @@ func (c *ESConsumer) handleMessage(msg *mq.Message) error {
 		return err
 	}
 
-	action, _ := event["action"].(string)
+	action, err := eventStringField(event, "action")
+	if err != nil {
+		// 契约错误重试不会自愈，标记为跳过，避免无效消息占用重试预算。
+		return fmt.Errorf("%w: %v", mq.ErrSkipMessage, err)
+	}
 	ctx := messageContext(msg)
 
 	switch action {
@@ -66,9 +72,25 @@ func (c *ESConsumer) handleMessage(msg *mq.Message) error {
 	case "delete":
 		return c.handleDelete(ctx, event)
 	default:
-		logger.Warn("Unknown event type", logger.StringField("action", action))
-		return nil
+		// 未知 action 也按不可恢复处理：以前返回 nil 会静默提交 offset，
+		// 上游改名后同步链路会整条失效而没有任何失败信号。
+		return fmt.Errorf("%w: 未知的 action %q", mq.ErrSkipMessage, action)
 	}
+}
+
+func eventStringField(event map[string]interface{}, key string) (string, error) {
+	raw, exists := event[key]
+	if !exists {
+		return "", fmt.Errorf("缺少字段 %q", key)
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("字段 %q 期望 string，实际 %T", key, raw)
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("字段 %q 为空字符串", key)
+	}
+	return value, nil
 }
 
 func (c *ESConsumer) handleCreate(ctx context.Context, event map[string]interface{}) error {
