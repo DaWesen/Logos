@@ -71,6 +71,9 @@ type extractionServiceImpl struct {
 	outboxRepo       outbox.OutboxRepository
 }
 
+// rateLimitCacheFactory 让单测替换限流后端；生产环境走 Redis。
+var rateLimitCacheFactory = cache.NewRedisCache
+
 func NewExtractionService(repo dao.ExtractionRepository, einoClient *eino.EinoManager, knowledgeService KnowledgeService, vectorService VectorService, outboxRepo outbox.OutboxRepository) ExtractionService {
 	return &extractionServiceImpl{
 		repo:             repo,
@@ -183,7 +186,9 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 	now := time.Now()
 	task.Status = 2
 	task.StartedAt = &now
-	s.repo.UpdateTask(ctx, task)
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return nil, fmt.Errorf("更新任务状态失败: %w", err)
+	}
 
 	result := &model.ExtractionResult{
 		ID:        uuid.New().String(),
@@ -208,16 +213,33 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 	}
 
 	result.EndTime = time.Now().Unix()
+	endTime := time.Now()
+	task.EndedAt = &endTime
 
 	if extractErr != nil {
 		result.Status = 4
 		errMsg := extractErr.Error()
 		result.ErrorMsg = &errMsg
+		task.Status = 4
 		logger.Error("抽取任务执行失败",
 			logger.StringField("task_id", taskID),
 			logger.ErrorField(extractErr))
-		s.repo.CreateResult(ctx, result)
+		if updateErr := s.repo.UpdateTask(ctx, task); updateErr != nil {
+			logger.Error("更新失败任务状态失败",
+				logger.StringField("task_id", taskID),
+				logger.ErrorField(updateErr))
+			return result, errors.Join(extractErr, fmt.Errorf("更新任务状态失败: %w", updateErr))
+		}
+		// 失败结果也要落库：否则前端只能看到任务卡在 RUNNING，
+		// 排查时连失败原因都拿不到。
+		if saveErr := s.repo.CreateResult(ctx, result); saveErr != nil {
+			logger.Error("保存失败结果失败",
+				logger.StringField("task_id", taskID),
+				logger.ErrorField(saveErr))
+			return result, errors.Join(extractErr, fmt.Errorf("保存失败结果失败: %w", saveErr))
+		}
 	} else {
+		task.Status = 3
 		logger.Info("抽取任务执行成功",
 			logger.StringField("task_id", taskID))
 
@@ -237,6 +259,9 @@ func (s *extractionServiceImpl) ExecuteTask(ctx context.Context, taskID string) 
 			logger.Error("事务提交失败",
 				logger.StringField("task_id", taskID),
 				logger.ErrorField(err))
+			// 结果与 outbox 没提交就不能报成功：调用方会立刻去查结果，
+			// 查到的却是空。
+			return nil, fmt.Errorf("保存抽取结果失败: %w", err)
 		}
 	}
 
@@ -367,9 +392,22 @@ func (s *extractionServiceImpl) handleCollectionEvent(msg *mq.Message) error {
 		return err
 	}
 
-	dataID, _ := event["data_id"].(string)
-	dataType, _ := event["data_type"].(string)
+	// 采集服务发出的字段是 data_source_id，不是 data_id。
+	// 旧代码读错键，解析结果恒为空串：每个采集事件都会建出一个
+	// data_id="" 的抽取任务，任务详情里看不出数据来自哪。
+	dataID, _ := event["data_source_id"].(string)
 	collectionID, _ := event["collection_result_id"].(string)
+	status, _ := event["status"].(string)
+
+	if dataID == "" {
+		return fmt.Errorf("采集事件缺少 data_source_id，拒绝创建无数据源的抽取任务")
+	}
+	if status != "SUCCESS" {
+		logger.Info("采集未成功，跳过自动抽取",
+			logger.StringField("data_source_id", dataID),
+			logger.StringField("status", status))
+		return nil
+	}
 
 	parameters := map[string]string{
 		"data_source_id": dataID,
@@ -377,7 +415,7 @@ func (s *extractionServiceImpl) handleCollectionEvent(msg *mq.Message) error {
 	}
 
 	ctx := context.Background()
-	task, err := s.CreateTask(ctx, 1, dataID, dataType, parameters, nil)
+	task, err := s.CreateTask(ctx, 1, dataID, "data_source", parameters, nil)
 	if err != nil {
 		logger.Error("自动创建抽取任务失败",
 			logger.ErrorField(err))
@@ -816,9 +854,17 @@ func (s *extractionServiceImpl) parseStringArray(
 func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) error {
 	key := "ratelimit:extraction:global"
 
-	cache := cache.NewRedisCache()
+	limiter := rateLimitCacheFactory()
+	// NewRedisCache 在 Redis 不可用（或处于重连冷却期）时返回 nil。
+	// 旧代码直接调用方法，nil 接口会 panic：一次 Redis 抖动就能
+	// 把抽取服务打挂。限流是保护措施，不该成为单点故障，
+	// 拿不到缓存时放行并留日志。
+	if limiter == nil {
+		logger.Warn("限流缓存不可用，本次放行")
+		return nil
+	}
 
-	current, err := cache.IncrBy(ctx, key, 1)
+	current, err := limiter.IncrBy(ctx, key, 1)
 	if err != nil {
 		logger.Warn("抽取任务限流计数失败，放行",
 			logger.ErrorField(err))
@@ -826,7 +872,10 @@ func (s *extractionServiceImpl) checkExtractionRateLimit(ctx context.Context) er
 	}
 
 	if current == 1 {
-		cache.Expire(ctx, key, time.Minute)
+		if err := limiter.Expire(ctx, key, time.Minute); err != nil {
+			logger.Warn("设置限流窗口失败，窗口可能不过期",
+				logger.ErrorField(err))
+		}
 	}
 
 	if current > 20 {
