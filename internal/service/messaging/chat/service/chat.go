@@ -718,8 +718,18 @@ func isValidUUID(s string) bool {
 	return err == nil
 }
 
+// moderationBlockedNotice 审核拦截提示文案；落库与推送共用，避免两边漂移。
+const moderationBlockedNotice = "该消息因内容违规已被拦截"
+
+// moderateMessage 对「已落库」的消息做补充审核。
+//
+// 发送入口 SendMessage 已在同步路径按失败关闭策略拦截，这里是二次兜底：
+// 覆盖 Kafka 转入、QQ 桥接等绕过 SendMessage 的入口。此时消息已经推送、
+// 无法撤回，只能补一条系统提示告诉用户内容被拦截。
 func (s *ChatServiceImpl) moderateMessage(event *types.MessageEvent) {
-	if s.moderationClient == nil {
+	// 系统消息（含拦截提示本身）不再送审：既没有意义，也避免提示被拒后
+	// 再生成提示的递归。
+	if s.moderationClient == nil || event == nil || event.SenderID == "system" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -729,22 +739,103 @@ func (s *ChatServiceImpl) moderateMessage(event *types.MessageEvent) {
 	if err != nil {
 		// 该路径是消息已落库后的补充审核，无法撤回；发送入口 SendMessage 已按
 		// 失败关闭策略拦截，这里只记录告警供排查审核服务可用性。
-		logger.Warn("补充审核调用失败，消息已发出无法撤回", logger.ErrorField(err))
+		logger.Warn("补充审核调用失败，消息已发出无法撤回",
+			logger.StringField("msg_id", event.ID),
+			logger.StringField("chat_id", event.ChatID),
+			logger.ErrorField(err))
 		return
 	}
 
 	if rejected {
-		blockedEvent := &types.MessageEvent{
-			ID:          uuid.New().String(),
-			ChatID:      event.ChatID,
-			ChatType:    event.ChatType,
-			SenderID:    "system",
-			MessageType: types.MessageTypeSystem,
-			Content:     "该消息因内容违规已被拦截",
-			Timestamp:   time.Now(),
-		}
-		_ = s.eventBus.PublishMessageEvent(s.ctx, blockedEvent)
+		s.notifyModerationBlocked(ctx, event)
 	}
+}
+
+// notifyModerationBlocked 落库并推送「内容已被拦截」的系统提示。
+//
+// 顺序必须是先落库、再推送：提示本身也要能在历史消息里查到，推送失败
+// 时用户仍可通过同步接口看到处置结果；反过来只发 Kafka 的话，一次发布
+// 失败就等于提示彻底消失，用户只会看到一条违规消息却没有解释。
+func (s *ChatServiceImpl) notifyModerationBlocked(ctx context.Context, event *types.MessageEvent) {
+	now := time.Now()
+	notice := &model.Message{
+		ID:             uuid.New().String(),
+		ConversationID: event.ChatID,
+		ChatID:         event.ChatID,
+		ChatType:       int(event.ChatType),
+		SenderID:       "system",
+		MessageType:    int(model.MessageTypeSystem),
+		Content:        moderationBlockedNotice,
+		Status:         "sent",
+		Channel:        "system",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.repo.CreateMessage(ctx, notice); err != nil {
+		logger.Error("审核拦截提示落库失败，用户将看不到拦截原因",
+			logger.StringField("msg_id", event.ID),
+			logger.StringField("chat_id", event.ChatID),
+			logger.ErrorField(err))
+		return
+	}
+	if err := s.repo.UpdateConversationLastMessage(ctx, event.ChatID, notice.ID); err != nil {
+		// 历史里已有提示，只是会话列表最后一条可能仍是原消息，不影响可追溯性。
+		logger.Warn("更新审核拦截提示为会话最后消息失败",
+			logger.StringField("notice_id", notice.ID),
+			logger.StringField("chat_id", event.ChatID),
+			logger.ErrorField(err))
+	}
+
+	if s.eventBus == nil {
+		logger.Warn("事件总线未初始化，审核拦截提示仅落库不推送",
+			logger.StringField("notice_id", notice.ID),
+			logger.StringField("chat_id", event.ChatID))
+		return
+	}
+	recipients, err := s.moderationNoticeRecipients(ctx, event)
+	if err != nil {
+		logger.Error("获取审核拦截提示接收者失败，提示仅落库不推送",
+			logger.StringField("notice_id", notice.ID),
+			logger.StringField("chat_id", event.ChatID),
+			logger.ErrorField(err))
+		return
+	}
+	if len(recipients) == 0 {
+		logger.Warn("审核拦截提示没有接收者，仅落库不推送",
+			logger.StringField("notice_id", notice.ID),
+			logger.StringField("chat_id", event.ChatID))
+		return
+	}
+
+	pushEvent := &types.MessageEvent{
+		ID:           notice.ID,
+		ChatID:       event.ChatID,
+		ChatType:     event.ChatType,
+		SenderID:     "system",
+		MessageType:  types.MessageTypeSystem,
+		Content:      moderationBlockedNotice,
+		Timestamp:    now,
+		RecipientIDs: recipients,
+	}
+	if err := s.eventBus.PublishOutgoingMessageEvent(ctx, pushEvent); err != nil {
+		logger.Error("推送审核拦截提示失败，已落库可由历史消息补偿",
+			logger.StringField("notice_id", notice.ID),
+			logger.StringField("chat_id", event.ChatID),
+			logger.ErrorField(err))
+	}
+}
+
+// moderationNoticeRecipients 计算拦截提示的接收者：
+// 群聊广播给全体成员；私聊只回给发送者本人（提示是对其内容的处置反馈，
+// 不额外打扰对方）。
+func (s *ChatServiceImpl) moderationNoticeRecipients(ctx context.Context, event *types.MessageEvent) ([]string, error) {
+	if event.ChatType == types.ChatTypeGroup {
+		return s.repo.GetAllGroupMemberIDs(ctx, event.ChatID)
+	}
+	if event.SenderID == "" {
+		return nil, nil
+	}
+	return []string{event.SenderID}, nil
 }
 
 func (s *ChatServiceImpl) autoTranslateMessage(event *types.MessageEvent) {
