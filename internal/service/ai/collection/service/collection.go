@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -636,25 +637,131 @@ func (s *collectionServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 	return nil
 }
 
+// user_activity 主题的字段名，集中定义避免生产端/消费端拼错键名后各写一份。
+const (
+	userActivityFieldUserID     = "user_id"
+	userActivityFieldAction     = "action"
+	userActivityFieldTargetType = "target_type"
+)
+
+// userActivityEvent 是 user_activity 主题消费者认的载荷契约。
+//
+// 注意：当前生产端（messaging 服务的 saveMessageEventToOutbox）写的是通用
+// 消息信封（message_id/topic/content/priority/headers/correlation_id/
+// timestamp），并没有 user_id/action/target_type。也就是说这个消费者与生产端
+// 存在 schema 漂移，收到的消息大概率不满足本契约。
+//
+// 旧实现用 `event["user_id"].(string)` 直接丢弃断言结果：字段缺失或类型不符
+// 都会退化成空串，随后打一条全空的「处理用户活动」日志并 return nil。结果是
+// offset 正常提交、指标记为 ok，schema 不一致在生产上完全不可见，还白白跑了
+// 一条什么也没做的业务链路。
+type userActivityEvent struct {
+	UserID     string
+	Action     string
+	TargetType string
+}
+
 func (s *collectionServiceImpl) handleUserActivityEvent(msg *mq.Message) error {
+	if msg == nil {
+		return fmt.Errorf("%w: 用户活动事件消息为空", mq.ErrSkipMessage)
+	}
+
 	logger.Info("收到用户活动事件",
-		logger.StringField("key", msg.Key))
+		logger.StringField("key", msg.Key),
+		logger.IntField("value_len", len(msg.Value)))
 
 	var event map[string]interface{}
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		// 连 JSON 都解析不了说明生产端写坏了：重试不会让字节变合法，但保留
+		// 普通 error 走「重试 → 死信」，至少还能在死信队列里找到原始载荷。
 		logger.Error("解析用户活动事件失败",
-			logger.ErrorField(err))
+			logger.ErrorField(err),
+			logger.StringField("key", msg.Key))
+		return fmt.Errorf("解析用户活动事件失败: %w", err)
+	}
+
+	activity, err := parseUserActivityEvent(event)
+	if err != nil {
+		logger.Warn("用户活动事件不符合契约，跳过",
+			logger.ErrorField(err),
+			logger.StringField("key", msg.Key))
 		return err
 	}
 
-	userID, _ := event["user_id"].(string)
-	action, _ := event["action"].(string)
-	targetType, _ := event["target_type"].(string)
-
 	logger.Info("处理用户活动",
-		logger.StringField("user_id", userID),
-		logger.StringField("action", action),
-		logger.StringField("target_type", targetType))
+		logger.StringField("user_id", activity.UserID),
+		logger.StringField("action", activity.Action),
+		logger.StringField("target_type", activity.TargetType))
 
 	return nil
+}
+
+// parseUserActivityEvent 按契约解析用户活动事件。
+//
+// 区分两类失败：
+//   - 必填字段缺失/为空/类型不符：消息本身不可用，返回 mq.ErrSkipMessage，
+//     消费者直接提交 offset 并记 skipped 指标，不浪费 5 次重试、不污染死信；
+//   - target_type 是可选字段，缺失允许为空，但存在时类型必须正确。
+func parseUserActivityEvent(event map[string]interface{}) (userActivityEvent, error) {
+	var activity userActivityEvent
+
+	// JSON 里的 null 能成功反序列化成 nil map，必须单独拒绝，否则后面按
+	// 「字段缺失」处理会得到一条全空的合法事件。
+	if event == nil {
+		return activity, fmt.Errorf("%w: 用户活动事件载荷为 null", mq.ErrSkipMessage)
+	}
+
+	userID, err := requiredUserActivityString(event, userActivityFieldUserID)
+	if err != nil {
+		return activity, err
+	}
+	action, err := requiredUserActivityString(event, userActivityFieldAction)
+	if err != nil {
+		return activity, err
+	}
+
+	targetType, _, err := userActivityStringField(event, userActivityFieldTargetType)
+	if err != nil {
+		return activity, err
+	}
+
+	activity.UserID = userID
+	activity.Action = action
+	activity.TargetType = targetType
+	return activity, nil
+}
+
+// requiredUserActivityString 读取必填字符串字段，并对空白值给出可定位的错误。
+func requiredUserActivityString(event map[string]interface{}, name string) (string, error) {
+	value, exists, err := userActivityStringField(event, name)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", fmt.Errorf("%w: 用户活动事件缺少字段 %s", mq.ErrSkipMessage, name)
+	}
+
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", fmt.Errorf("%w: 用户活动事件字段 %s 为空", mq.ErrSkipMessage, name)
+	}
+	return trimmed, nil
+}
+
+// userActivityStringField 按事件契约读取字符串字段，返回 (值, 字段是否存在, 错误)。
+//
+// 缺失与类型错误必须区分：缺失可以交给调用方决定是否必填，而类型错误说明
+// 生产者和消费者对 schema 的理解已经不一致，重试不会自愈。
+func userActivityStringField(event map[string]interface{}, name string) (string, bool, error) {
+	raw, exists := event[name]
+	if !exists || raw == nil {
+		return "", false, nil
+	}
+
+	value, ok := raw.(string)
+	if !ok {
+		return "", true, fmt.Errorf("%w: 用户活动事件字段 %s 期望 string，实际为 %T",
+			mq.ErrSkipMessage, name, raw)
+	}
+	return value, true, nil
 }
