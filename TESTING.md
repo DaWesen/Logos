@@ -149,6 +149,10 @@ go test ./pkg/... ./internal/service/ai/bot/service/...
 - **抽取任务状态与结果落库**：`RUNNING` 落库失败时立即返回且不执行抽取；不支持的任务类型返回 `Status=4` 的结果并落库、任务状态更新为 4、`EndedAt` 非空；失败结果落库失败时错误同时包含原始抽取失败原因与落库原因（`errors.Join`）；成功路径事务失败返回错误且不返回可查询结果；成功路径写 2 条 outbox（`knowledge_extraction` 与 `vector_processing`）
 - **采集事件消费契约**：事件用 `data_source_id` 建任务（断言 `DataID == "ds-42"`、`DataType == "data_source"`），不是旧代码读的 `data_id`；缺少 `data_source_id` 时返回错误且不建任务；`status=FAILED` 的事件跳过且不建任务
 - **抽取限流降级**：缓存构造返回 nil 时放行且不 panic（单测注入内存 cache，不再连接真实 Redis）；`IncrBy` 失败放行并记 Warn；`Expire` 失败不影响本次判定
+- **抽取结果字段转换**：字段缺失返回零值且不报错；字段类型不符时错误信息带上字段名；位置字段为负数或超出 int32 范围时报错；`json.Unmarshal` 失败必须上抛，不能返回 200 + 空列表；批量列表中第 N 条坏数据时清空已拼好的结果并在错误里带上序号；缺省 `id` 仍按 `text_type` 派生
+- **记忆写入的查询失败**：按 key 查询报错时 `Failed` 加一并跳过，**不得**新建同名 key（回归「查询失败退化成重复插入」）；快照查询报错时整轮不写；精确 key 命中走合并而非插入；相似 key 命中时合并到已有条目；批量超过上限时只写上限条；`SetUserMemory` 失败计入 `Failed` 且不影响后续条目
+- **ffmpeg 解析**：`00:01:23.45` → 83.45 秒；`02:15:30.50` 正确进位；`Duration: N/A`、缺 `Duration` 行、`abc:def:ghi`、`1.2.3`、`99` 分钟、`60` 秒、负数秒、段数不足全部报错；`1920x1080 [SAR 1:1 DAR 16:9]` 与 `1080x1920` 正确识别；`(avc1 / 0x31637661)` 不被当成分辨率；缺 `Video:` 行、`0x0`、`1920x1080i` 均报错；`ffmpeg` 不存在时 `GetVideoInfo` 返回错误且不返回半截 map
+- **视频解析降级**：元信息探测失败时 `metadata` 不含 `video_info` 且抽帧回落到默认 1s 间隔；抽帧失败时仍保留 ASR 文本；单帧 VLM 失败只跳过该帧、不产生空帧段落；全部帧描述失败时不渲染「视频帧详情」；`duration=60` 时 `FrameInterval=10`、`MaxFrames=5`；`duration=3` 时间隔被夹到 1s；调用方显式传入的 `ExtractOptions` 优先且不被就地修改
 
 需要真实基础设施、因此不在单元测试中覆盖的部分：消息 `seq` 单调性、消费幂等、`after_seq` 增量补拉、`SKIP LOCKED` 的并发领取行为。这些请在启动 docker 基础设施后按下方 API 用例验证。
 
