@@ -672,3 +672,108 @@ func TestHandleGenericMessage_WritesCountedStatus(t *testing.T) {
 		t.Fatalf("状态更新 = %q/%q, want m-1/%s", repo.updatedID, repo.updatedTo, model.StatusProcessed)
 	}
 }
+
+// 类型断言失败曾被 `_` 吞掉，content 非字符串会被当成「没有内容」，
+// handler 返回 nil 后 offset 提交，这条问答就永久消失了。
+func TestHandleGenericMessage_NonStringContentIsSkipped(t *testing.T) {
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":42}`),
+		Context: context.Background(),
+	}
+
+	err := svc.handleGenericMessage(msg)
+	if !errors.Is(err, mq.ErrSkipMessage) {
+		t.Fatalf("类型错误应标记为不可恢复消息，err = %v", err)
+	}
+	if question.calls != 0 {
+		t.Fatalf("坏数据不应调用 AskQuestion, calls = %d", question.calls)
+	}
+}
+
+// message_id 类型错误时继续处理会更新不了任何记录，消息永远停在 PENDING；
+// 必须显式失败，让监控看到生产者 schema 已经和消费者不一致。
+func TestHandleGenericMessage_NonStringMessageIDIsSkipped(t *testing.T) {
+	repo := &stubMessageRepo{}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":42,"content":"hello"}`),
+		Context: context.Background(),
+	}
+
+	err := svc.handleGenericMessage(msg)
+	if !errors.Is(err, mq.ErrSkipMessage) {
+		t.Fatalf("message_id 类型错误应标记为不可恢复消息，err = %v", err)
+	}
+	if repo.updatedID != "" {
+		t.Fatalf("坏数据不应写数据库, updatedID = %q", repo.updatedID)
+	}
+	if question.calls != 0 {
+		t.Fatalf("字段校验失败后不应继续处理业务, calls = %d", question.calls)
+	}
+}
+
+func TestHandleGenericMessage_MissingQAContentIsSkipped(t *testing.T) {
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1"}`),
+		Context: context.Background(),
+	}
+
+	err := svc.handleGenericMessage(msg)
+	if !errors.Is(err, mq.ErrSkipMessage) {
+		t.Fatalf("缺少 content 应标记为不可恢复消息，err = %v", err)
+	}
+	if question.calls != 0 {
+		t.Fatalf("空问题不应调用 AskQuestion, calls = %d", question.calls)
+	}
+}
+
+// questionService 未注入属于装配错误，返回普通 error 触发重试/死信，
+// 而不是把问答静默标成 PROCESSED。
+func TestHandleGenericMessage_NilQuestionServiceFails(t *testing.T) {
+	svc := &messageServiceImpl{}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+
+	err := svc.handleGenericMessage(msg)
+	if err == nil {
+		t.Fatal("问答服务未初始化时必须报错，不能静默成功")
+	}
+	if errors.Is(err, mq.ErrSkipMessage) {
+		t.Fatalf("装配错误可以重试，不应按坏数据跳过: %v", err)
+	}
+}
+
+// message_id 缺失（JSON null 也一样）表示该事件不需要回写消息状态，
+// 属于契约允许的情况，不能被误判成类型错误。
+func TestHandleGenericMessage_MissingMessageIDSkipsStatusUpdate(t *testing.T) {
+	repo := &stubMessageRepo{}
+	svc := &messageServiceImpl{repo: repo}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicRecommendation,
+		Value:   []byte(`{"message_id":null}`),
+		Context: context.Background(),
+	}
+
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("缺少 message_id 不应报错: %v", err)
+	}
+	if repo.updatedID != "" {
+		t.Fatalf("没有 message_id 时不应写数据库, updatedID = %q", repo.updatedID)
+	}
+}

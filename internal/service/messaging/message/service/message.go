@@ -489,22 +489,50 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 		return err
 	}
 
-	messageID, _ := event["message_id"].(string)
-	content, _ := event["content"].(string)
+	// 字段类型必须显式校验：`value, _ := event["x"].(string)` 会把
+	// 类型错误吞成空字符串，表现为问答「没有内容」却成功提交 offset，
+	// 或者状态更新被静默跳过（消息永远停在 PENDING）。
+	messageID, _, err := eventStringField(event, "message_id")
+	if err != nil {
+		logger.Error("kafka operation",
+			logger.ErrorField(err),
+			logger.StringField("topic", msg.Topic),
+			logger.StringField("key", msg.Key))
+		return err
+	}
 
 	switch msg.Topic {
 	case mq.TopicQARequest:
-		if content != "" && s.questionService != nil {
-			// 必须同步等待结果：handler 返回 nil 后 offset 就会被提交，
-			// 裸 goroutine 失败时无法重试，进程崩溃时这条问答请求直接丢失。
-			// 串行消费下会牺牲吞吐，但换来 at-least-once；要提升吞吐应把
-			// 任务先持久化再异步处理，而不是吞掉错误。
-			answerCtx, cancel := context.WithTimeout(messageContext(msg), qaAnswerTimeout)
-			_, err := s.questionService.AskQuestion(answerCtx, content, nil)
-			cancel()
-			if err != nil {
-				return fmt.Errorf("问答处理失败: %w", err)
-			}
+		content, hasContent, err := eventStringField(event, "content")
+		if err != nil {
+			logger.Error("kafka operation",
+				logger.ErrorField(err),
+				logger.StringField("topic", msg.Topic),
+				logger.StringField("key", msg.Key))
+			return err
+		}
+		if !hasContent || content == "" {
+			// 没有问题的问答请求重试多少次都不会产生答案，按不可恢复消息
+			// 跳过：既不会静默标成已处理，也不会白占分区重试 5 次。
+			logger.Warn("kafka operation",
+				logger.StringField("topic", msg.Topic),
+				logger.StringField("key", msg.Key))
+			return fmt.Errorf("%w: 问答请求缺少 content", mq.ErrSkipMessage)
+		}
+		if s.questionService == nil {
+			// 装配缺失属于服务端故障，不能当成处理成功把消息标成 PROCESSED。
+			return fmt.Errorf("问答服务未初始化，无法处理问答请求")
+		}
+
+		// 必须同步等待结果：handler 返回 nil 后 offset 就会被提交，
+		// 裸 goroutine 失败时无法重试，进程崩溃时这条问答请求直接丢失。
+		// 串行消费下会牺牲吞吐，但换来 at-least-once；要提升吞吐应把
+		// 任务先持久化再异步处理，而不是吞掉错误。
+		answerCtx, cancel := context.WithTimeout(messageContext(msg), qaAnswerTimeout)
+		_, err = s.questionService.AskQuestion(answerCtx, content, nil)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("问答处理失败: %w", err)
 		}
 	case mq.TopicRecommendation:
 		logger.Info("operation")
@@ -521,6 +549,25 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	}
 
 	return nil
+}
+
+// eventStringField 按事件契约读取字符串字段，返回 (值, 字段是否存在, 错误)。
+//
+// 字段缺失与类型错误必须区分：缺失可以按默认值处理，而类型错误说明生产者
+// 和消费者对 schema 的理解已经不一致，重试不会自愈，用 mq.ErrSkipMessage
+// 让消费端快速跳过并留下日志，而不是静默降级成空值。
+func eventStringField(event map[string]interface{}, name string) (string, bool, error) {
+	raw, exists := event[name]
+	if !exists || raw == nil {
+		return "", false, nil
+	}
+
+	value, ok := raw.(string)
+	if !ok {
+		return "", true, fmt.Errorf("%w: 字段 %s 期望 string，实际为 %T", mq.ErrSkipMessage, name, raw)
+	}
+
+	return value, true, nil
 }
 
 // qaAnswerTimeout 是单条问答的处理上限。没有上限时，一次卡住的 LLM 调用
