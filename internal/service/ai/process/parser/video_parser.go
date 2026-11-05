@@ -9,6 +9,7 @@ import (
 	"Logos/internal/models/asr"
 	"Logos/internal/models/video"
 	"Logos/internal/models/vlm"
+	"Logos/pkg/logger"
 )
 
 const (
@@ -68,7 +69,13 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 
 	var videoInfo map[string]interface{}
 	if p.extractor != nil {
-		videoInfo, _ = p.extractor.GetVideoInfo(ctx, videoData)
+		var infoErr error
+		videoInfo, infoErr = p.extractor.GetVideoInfo(ctx, videoData)
+		if infoErr != nil {
+			logger.Warn("视频元信息解析失败，抽帧改用默认间隔",
+				logger.StringField("file_name", filename),
+				logger.ErrorField(infoErr))
+		}
 		if videoInfo != nil {
 			metadata["video_info"] = videoInfo
 		}
@@ -78,10 +85,18 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	if p.extractor != nil && p.vlmModel != nil {
 		options := p.resolveExtractOptions(videoInfo)
 		frames, extractErr := p.extractor.ExtractFrames(ctx, videoData, options)
-		if extractErr == nil && len(frames) > 0 {
+		if extractErr != nil {
+			logger.Warn("视频抽帧失败，仅保留音频转写",
+				logger.StringField("file_name", filename),
+				logger.ErrorField(extractErr))
+		} else if len(frames) > 0 {
 			for _, frame := range frames {
 				desc, descErr := p.vlmModel.Predict(ctx, frame.ImageData, vlmFramePrompt)
-				if descErr == nil {
+				if descErr != nil {
+					logger.Warn("视频帧描述失败",
+						logger.IntField("index", frame.Index),
+						logger.ErrorField(descErr))
+				} else {
 					frameDesc := fmt.Sprintf("[%.2fs] %s", frame.Timestamp, desc)
 					frameDescriptions = append(frameDescriptions, frameDesc)
 				}
@@ -97,7 +112,11 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 	var asrText string
 	if p.asrModel != nil {
 		asrResult, asrErr := p.asrModel.Transcribe(ctx, videoData, filename)
-		if asrErr == nil && asrResult != "" {
+		if asrErr != nil {
+			logger.Warn("视频音频转写失败，仅保留画面摘要",
+				logger.StringField("file_name", filename),
+				logger.ErrorField(asrErr))
+		} else if asrResult != "" {
 			asrText = asrResult
 			metadata["asr_text"] = asrText
 		}
@@ -110,6 +129,9 @@ func (p *VideoParser) Parse(ctx context.Context, reader io.Reader, filename stri
 		if sumErr == nil {
 			videoSummary = summary
 		} else {
+			logger.Warn("视频摘要生成失败，回退到逐帧描述",
+				logger.StringField("file_name", filename),
+				logger.ErrorField(sumErr))
 			videoSummary = combinedInput
 		}
 	} else if len(frameDescriptions) > 0 {

@@ -112,46 +112,141 @@ func (e *FFMpegExtractor) writeTempVideo(videoBytes []byte) (string, error) {
 	return tempFile.Name(), nil
 }
 
-func (e *FFMpegExtractor) getVideoDuration(ctx context.Context, videoPath string) (float64, error) {
-	cmd := exec.CommandContext(ctx, e.ffmpegPath,
-		"-i", videoPath,
-		"-f", "null",
-		"-")
-
+// probeVideo 只让 ffmpeg 读取媒体头信息，不产出任何文件。
+// ffmpeg 在只给 -i 而没有输出目标时会以非零码退出，但 stderr 里的
+// 媒体信息是完整的，所以这里只把「拿不到任何输出」当作失败。
+func (e *FFMpegExtractor) probeVideo(ctx context.Context, videoPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, e.ffmpegPath, "-hide_banner", "-i", videoPath)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return 0, err
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", fmt.Errorf("ffmpeg probe canceled: %w", ctxErr)
+	}
+	if len(output) == 0 {
+		if err != nil {
+			return "", fmt.Errorf("ffmpeg probe failed with no output: %w", err)
+		}
+		return "", fmt.Errorf("ffmpeg probe produced no output")
 	}
 
-	outputStr := string(output)
+	return string(output), nil
+}
+
+func parseFFmpegDuration(output string) (float64, error) {
 	durationStr := ""
-	lines := strings.Split(outputStr, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Duration:") {
-			parts := strings.Split(line, "Duration:")
-			if len(parts) > 1 {
-				durationPart := strings.TrimSpace(parts[1])
-				durationStr = strings.Split(durationPart, ",")[0]
-				break
-			}
+	for _, line := range strings.Split(output, "\n") {
+		idx := strings.Index(line, "Duration:")
+		if idx < 0 {
+			continue
 		}
+		durationPart := strings.TrimSpace(line[idx+len("Duration:"):])
+		durationStr = strings.TrimSpace(strings.Split(durationPart, ",")[0])
+		break
 	}
 
 	if durationStr == "" {
-		return 0, fmt.Errorf("could not parse duration")
+		return 0, fmt.Errorf("could not find duration in ffmpeg output")
+	}
+	if durationStr == "N/A" {
+		return 0, fmt.Errorf("ffmpeg reported duration as N/A")
 	}
 
 	timeParts := strings.Split(durationStr, ":")
 	if len(timeParts) != 3 {
-		return 0, fmt.Errorf("invalid duration format: %s", durationStr)
+		return 0, fmt.Errorf("invalid duration format: %q", durationStr)
 	}
 
-	hours, _ := strconv.Atoi(timeParts[0])
-	minutes, _ := strconv.Atoi(timeParts[1])
-	seconds, _ := strconv.ParseFloat(timeParts[2], 64)
+	hours, err := strconv.Atoi(strings.TrimSpace(timeParts[0]))
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration hours %q: %w", timeParts[0], err)
+	}
+	if hours < 0 {
+		return 0, fmt.Errorf("invalid duration hours %q: must not be negative", timeParts[0])
+	}
+	minutes, err := strconv.Atoi(strings.TrimSpace(timeParts[1]))
+	if err != nil || minutes < 0 || minutes > 59 {
+		return 0, fmt.Errorf("invalid duration minutes %q", timeParts[1])
+	}
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(timeParts[2]), 64)
+	if err != nil || seconds < 0 || seconds >= 60 {
+		return 0, fmt.Errorf("invalid duration seconds %q", timeParts[2])
+	}
 
-	totalSeconds := float64(hours*3600) + float64(minutes*60) + seconds
-	return totalSeconds, nil
+	return float64(hours*3600+minutes*60) + seconds, nil
+}
+
+func parseFFmpegVideoSize(output string) (int, int, error) {
+	var videoLine string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Video:") {
+			videoLine = line
+			break
+		}
+	}
+
+	if videoLine == "" {
+		return 0, 0, fmt.Errorf("could not find a video stream in ffmpeg output")
+	}
+
+	if width, height, ok := parseVideoSizeLine(videoLine); ok {
+		return width, height, nil
+	}
+
+	return 0, 0, fmt.Errorf("could not parse video resolution from stream line: %q", strings.TrimSpace(videoLine))
+}
+
+// parseVideoSizeLine 只在「以数字开头的独立字段」里找 WxH。
+// 形如 (avc1 / 0x31637661) 的十六进制编码标识虽然也含 x，但不是分辨率。
+func parseVideoSizeLine(line string) (int, int, bool) {
+	idx := strings.Index(line, "Video:")
+	if idx < 0 {
+		return 0, 0, false
+	}
+
+	for _, field := range strings.Split(line[idx+len("Video:"):], ",") {
+		field = strings.TrimSpace(field)
+		width, height, ok := parseDimensionToken(field)
+		if ok {
+			return width, height, true
+		}
+	}
+
+	return 0, 0, false
+}
+
+func parseDimensionToken(field string) (int, int, bool) {
+	xIdx := 0
+	for xIdx < len(field) && field[xIdx] >= '0' && field[xIdx] <= '9' {
+		xIdx++
+	}
+	if xIdx == 0 || xIdx >= len(field) || field[xIdx] != 'x' {
+		return 0, 0, false
+	}
+
+	endIdx := xIdx + 1
+	for endIdx < len(field) && field[endIdx] >= '0' && field[endIdx] <= '9' {
+		endIdx++
+	}
+	if endIdx == xIdx+1 {
+		return 0, 0, false
+	}
+	if endIdx < len(field) && field[endIdx] != ' ' && field[endIdx] != '[' {
+		return 0, 0, false
+	}
+
+	width, err := strconv.Atoi(field[:xIdx])
+	if err != nil {
+		return 0, 0, false
+	}
+	height, err := strconv.Atoi(field[xIdx+1 : endIdx])
+	if err != nil {
+		return 0, 0, false
+	}
+	if width <= 0 || height <= 0 || width > 16384 || height > 16384 {
+		return 0, 0, false
+	}
+
+	return width, height, true
 }
 
 func (e *FFMpegExtractor) buildScaleFilter(options *ExtractOptions) string {
@@ -354,37 +449,18 @@ func (e *FFMpegExtractor) GetVideoInfo(ctx context.Context, videoBytes []byte) (
 	}
 	defer os.Remove(tempVideoPath)
 
-	duration, err := e.getVideoDuration(ctx, tempVideoPath)
+	output, err := e.probeVideo(ctx, tempVideoPath)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, e.ffmpegPath, "-i", tempVideoPath, "-f", "null", "-")
-	output, _ := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	width, height := 0, 0
-	lines := strings.Split(outputStr, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Video:") {
-			parts := strings.Split(line, ",")
-			for _, part := range parts {
-				part = strings.TrimSpace(part)
-				if strings.Contains(part, "x") && !strings.Contains(part, "SAR") {
-					resParts := strings.Split(part, "x")
-					if len(resParts) == 2 {
-						width, _ = strconv.Atoi(strings.TrimSpace(resParts[0]))
-						heightStr := strings.TrimSpace(resParts[1])
-						heightParts := strings.Split(heightStr, " ")
-						if len(heightParts) > 0 {
-							height, _ = strconv.Atoi(heightParts[0])
-						}
-					}
-					break
-				}
-			}
-			break
-		}
+	duration, err := parseFFmpegDuration(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read video duration: %w", err)
+	}
+	width, height, err := parseFFmpegVideoSize(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read video resolution: %w", err)
 	}
 
 	videoInfo := map[string]interface{}{
