@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"Logos/internal/service/messaging/message/service"
+	"Logos/pkg/logger"
 	pbCommon "Logos/proto_gen/common"
 	pb "Logos/proto_gen/message"
 )
@@ -110,7 +112,23 @@ func (s *MessageServiceImpl) BatchSendMessage(ctx context.Context, req *pb.Batch
 	}
 
 	for _, m := range msgs {
-		topicVal, _ := topicFromInternal(m.GetTopic())
+		topicVal, ok := topicFromInternal(m.GetTopic())
+		if !ok {
+			// 未知 topic 之前被映射成 DATA_COLLECTION（enum 零值），
+			// 客户端会把一条 VECTOR_PROCESSING 消息当成数据采集任务处理。
+			// 宁可让整条读取失败，也不返回一个语义错误的枚举。
+			logger.Error("批量发送响应无法识别消息主题",
+				logger.StringField("message_id", m.GetID()),
+				logger.StringField("topic", m.GetTopic()))
+			resp.Responses = append(resp.Responses, &pb.MessageResp{
+				BaseResp: &pbCommon.BaseResp{
+					StatusCode:    500,
+					StatusMessage: fmt.Sprintf("消息 %s 的主题无法识别: %q", m.GetID(), m.GetTopic()),
+				},
+				MessageId: m.GetID(),
+			})
+			continue
+		}
 		resp.Responses = append(resp.Responses, &pb.MessageResp{
 			BaseResp:  &pbCommon.BaseResp{StatusCode: 0, StatusMessage: "success"},
 			MessageId: m.GetID(),
@@ -156,20 +174,43 @@ func (s *MessageServiceImpl) ConsumeMessages(ctx context.Context, req *pb.Consum
 
 	for _, m := range msgs {
 		headers := make(map[string]string)
-		json.Unmarshal([]byte(m.GetHeaders()), &headers)
+		if rawHeaders := m.GetHeaders(); rawHeaders != "" {
+			if err := json.Unmarshal([]byte(rawHeaders), &headers); err != nil {
+				logger.Error("消息头不是合法 JSON，拒绝返回半条消息",
+					logger.StringField("message_id", m.GetID()),
+					logger.ErrorField(err))
+				resp.BaseResp.StatusCode = 500
+				resp.BaseResp.StatusMessage = fmt.Sprintf("消息 %s 的 headers 不是合法 JSON: %v", m.GetID(), err)
+				resp.Messages = nil
+				resp.MessageCount = 0
+				return resp, nil
+			}
+		}
 
-		topicVal, _ := topicFromInternal(m.GetTopic())
+		topicVal, ok := topicFromInternal(m.GetTopic())
+		if !ok {
+			logger.Error("消费消息遇到无法识别的主题",
+				logger.StringField("message_id", m.GetID()),
+				logger.StringField("topic", m.GetTopic()))
+			resp.BaseResp.StatusCode = 500
+			resp.BaseResp.StatusMessage = fmt.Sprintf("消息 %s 的主题无法识别: %q", m.GetID(), m.GetTopic())
+			resp.Messages = nil
+			resp.MessageCount = 0
+			return resp, nil
+		}
 
-		var priorityVal pb.Priority
-		switch m.GetPriority() {
-		case 1:
-			priorityVal = pb.Priority_LOW
-		case 2:
-			priorityVal = pb.Priority_NORMAL
-		case 3:
-			priorityVal = pb.Priority_HIGH
-		case 4:
-			priorityVal = pb.Priority_URGENT
+		priorityVal, ok := priorityFromInternal(int32(m.GetPriority()))
+		if !ok {
+			// 存储约定是 1..4，落到 default 说明数据已经损坏。
+			// 旧 switch 没有 default，任何非法值都会被当成 LOW 返回。
+			logger.Error("消费消息遇到非法优先级",
+				logger.StringField("message_id", m.GetID()),
+				logger.IntField("priority", m.GetPriority()))
+			resp.BaseResp.StatusCode = 500
+			resp.BaseResp.StatusMessage = fmt.Sprintf("消息 %s 的优先级非法: %d", m.GetID(), m.GetPriority())
+			resp.Messages = nil
+			resp.MessageCount = 0
+			return resp, nil
 		}
 
 		resp.Messages = append(resp.Messages, &pb.Message{
@@ -185,6 +226,23 @@ func (s *MessageServiceImpl) ConsumeMessages(ctx context.Context, req *pb.Consum
 
 	resp.MessageCount = int32(len(resp.Messages))
 	return resp, nil
+}
+
+// priorityFromInternal 把存储层的 1..4 映射回 proto 枚举。
+// 未知值返回 ok=false，由调用方决定报错，避免静默落成 LOW。
+func priorityFromInternal(priority int32) (pb.Priority, bool) {
+	switch priority {
+	case 1:
+		return pb.Priority_LOW, true
+	case 2:
+		return pb.Priority_NORMAL, true
+	case 3:
+		return pb.Priority_HIGH, true
+	case 4:
+		return pb.Priority_URGENT, true
+	default:
+		return pb.Priority_LOW, false
+	}
 }
 
 // AcknowledgeMessage implements the MessageServiceImpl interface.

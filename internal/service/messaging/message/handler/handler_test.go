@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"Logos/internal/service/messaging/message/dao"
@@ -13,10 +14,12 @@ import (
 
 type fakeMessageService struct {
 	service.MessageService
-	batchResult []*model.Message
-	batchErr    error
-	stats       []dao.TopicStats
-	statsErr    error
+	batchResult   []*model.Message
+	batchErr      error
+	consumeResult []*model.Message
+	consumeErr    error
+	stats         []dao.TopicStats
+	statsErr      error
 }
 
 func (f *fakeMessageService) GetMessageStats(context.Context) ([]dao.TopicStats, error) {
@@ -31,6 +34,10 @@ func (f *fakeMessageService) BatchSendMessage(context.Context, []struct {
 	CorrelationID *string
 }) ([]*model.Message, error) {
 	return f.batchResult, f.batchErr
+}
+
+func (f *fakeMessageService) ConsumeMessages(context.Context, string, int32, int32, int32) ([]*model.Message, error) {
+	return f.consumeResult, f.consumeErr
 }
 
 // proto Priority 从 0 开始，内部模型是 1..4。
@@ -136,5 +143,91 @@ func TestGetMessageStats_MapsTypedCounters(t *testing.T) {
 	}
 	if resp.BaseResp.StatusCode != 500 || len(resp.Stats) != 0 {
 		t.Fatalf("查询失败应返回 500 且不带统计, got %+v", resp.BaseResp)
+	}
+}
+
+// 存储层优先级是 1..4，旧实现用没有 default 的 switch 直转：
+// 0 或 5 都会静默变成 LOW，客户端拿到错误的紧急程度。
+func TestPriorityFromInternal_RejectsUnknownLevel(t *testing.T) {
+	cases := map[int32]pb.Priority{
+		1: pb.Priority_LOW,
+		2: pb.Priority_NORMAL,
+		3: pb.Priority_HIGH,
+		4: pb.Priority_URGENT,
+	}
+	for in, want := range cases {
+		got, ok := priorityFromInternal(in)
+		if !ok || got != want {
+			t.Fatalf("priorityFromInternal(%d) = %v/%v, want %v", in, got, ok, want)
+		}
+	}
+	for _, invalid := range []int32{0, 5, -1} {
+		if got, ok := priorityFromInternal(invalid); ok {
+			t.Fatalf("非法优先级 %d 不应被接受（实际映射为 %v）", invalid, got)
+		}
+	}
+}
+
+func TestConsumeMessages_RejectsCorruptRowsInsteadOfGuessing(t *testing.T) {
+	cases := map[string]*model.Message{
+		"未知 topic":       {ID: "m1", Topic: "BROKEN_TOPIC", Priority: 2},
+		"非法优先级":          {ID: "m2", Topic: "QA_REQUEST", Priority: 0},
+		"headers 非 JSON": {ID: "m3", Topic: "QA_REQUEST", Priority: 2, Headers: "{not-json"},
+	}
+
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc := &MessageServiceImpl{MessageService: &fakeMessageService{
+				consumeResult: []*model.Message{
+					{ID: "ok", Topic: "QA_REQUEST", Priority: 2, Headers: `{"k":"v"}`},
+					bad,
+				},
+			}}
+
+			resp, err := svc.ConsumeMessages(context.Background(), &pb.ConsumeMessageReq{})
+			if err != nil {
+				t.Fatalf("业务错误不应变成传输错误: %v", err)
+			}
+			if resp.BaseResp.GetStatusCode() != 500 {
+				t.Fatalf("损坏数据应返回 500，实际 %+v", resp.BaseResp)
+			}
+			if len(resp.Messages) != 0 || resp.MessageCount != 0 {
+				t.Fatalf("失败时不应返回半批消息: count=%d", resp.MessageCount)
+			}
+			if !strings.Contains(resp.BaseResp.GetStatusMessage(), bad.ID) {
+				t.Fatalf("错误信息应带上消息 ID %q，实际 %q", bad.ID, resp.BaseResp.GetStatusMessage())
+			}
+		})
+	}
+}
+
+func TestBatchSendMessage_UnknownTopicFailsOnlyThatItem(t *testing.T) {
+	fake := &fakeMessageService{batchResult: []*model.Message{
+		{ID: "m1", Topic: "QA_REQUEST", Timestamp: 1},
+		{ID: "m2", Topic: "BROKEN_TOPIC", Timestamp: 2},
+	}}
+	svc := &MessageServiceImpl{MessageService: fake}
+
+	resp, err := svc.BatchSendMessage(context.Background(), &pb.BatchSendMessageReq{
+		Messages: []*pb.SendMessageReq{
+			{Topic: pb.Topic_QA_REQUEST, Content: "q"},
+			{Topic: pb.Topic_SYSTEM_EVENT, Content: "e"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("批量发送不应报错: %v", err)
+	}
+	if len(resp.Responses) != 2 {
+		t.Fatalf("响应条数 = %d, want 2", len(resp.Responses))
+	}
+	if resp.Responses[0].BaseResp.GetStatusCode() != 0 ||
+		resp.Responses[0].Topic != pb.Topic_QA_REQUEST {
+		t.Fatalf("合法条目不应受影响: %+v", resp.Responses[0])
+	}
+	if resp.Responses[1].BaseResp.GetStatusCode() != 500 {
+		t.Fatalf("未知 topic 的条目应标记失败: %+v", resp.Responses[1].BaseResp)
+	}
+	if !strings.Contains(resp.Responses[1].BaseResp.GetStatusMessage(), "BROKEN_TOPIC") {
+		t.Fatalf("错误信息应带原始 topic，实际 %q", resp.Responses[1].BaseResp.GetStatusMessage())
 	}
 }
