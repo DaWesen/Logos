@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"Logos/internal/service/platform/gateway/model"
+	"Logos/pkg/logger"
 	"Logos/pkg/pagination"
 
 	pbCommon "Logos/proto_gen/common"
@@ -251,22 +252,37 @@ func (h *Handler) GetServiceStatus(c *gin.Context) {
 		c.JSON(statusCode, model.Response{Code: statusCode, Message: resp.StatusMessage})
 		return
 	}
+	payload := getBaseRespMessage(resp)
 	var data any
-	json.Unmarshal([]byte(getBaseRespMessage(resp)), &data)
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		// 单服务详情没有本地探测兜底：解析失败必须显式失败，
+		// 否则前端拿到 200 + data=null，只会表现为「这个服务突然没数据」。
+		logger.Error("解析服务状态响应失败",
+			logger.IntField("payload_bytes", len(payload)),
+			logger.ErrorField(err))
+		c.JSON(http.StatusInternalServerError, model.InternalError("invalid monitoring response"))
+		return
+	}
 	if m, ok := data.(map[string]any); ok {
 		c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: m["data"]})
 		return
 	}
-	c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: nil})
+	logger.Warn("服务状态响应不是 JSON 对象",
+		logger.StringField("payload_type", fmt.Sprintf("%T", data)))
+	c.JSON(http.StatusInternalServerError, model.InternalError("invalid monitoring response"))
 }
 
 func (h *Handler) ListServiceStatuses(c *gin.Context) {
 	if h.MonitoringClient == nil {
+		logger.Warn("监控客户端未初始化，回退本地探测")
 		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
 	resp, err := h.MonitoringClient.ListServiceStatus(c.Request.Context(), &pb.EmptyReq{})
 	if err != nil {
+		// 列表接口保留本地探测兜底（监控服务本身可能还没起来），
+		// 但这是降级而不是正常结果，必须留下日志。
+		logger.Error("查询监控服务失败，回退本地探测", logger.ErrorField(err))
 		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 		return
 	}
@@ -275,13 +291,34 @@ func (h *Handler) ListServiceStatuses(c *gin.Context) {
 		c.JSON(statusCode, model.Response{Code: statusCode, Message: resp.StatusMessage})
 		return
 	}
+	payload := getBaseRespMessage(resp)
 	var data any
-	json.Unmarshal([]byte(getBaseRespMessage(resp)), &data)
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		// 早先这里直接忽略解析错误并回退探测：监控契约一变（字段改名、包一层信封），
+		// 服务列表就整批「消失」，前端与日志都看不出原因。
+		logger.Error("解析监控服务列表失败，回退本地探测",
+			logger.IntField("payload_bytes", len(payload)),
+			logger.ErrorField(err))
+		c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
+		return
+	}
 	if m, ok := data.(map[string]any); ok {
-		if arr, ok := m["data"].([]any); ok && len(arr) > 0 {
+		if arr, ok := m["data"].([]any); ok {
+			if len(arr) == 0 {
+				// 空列表可能是「确实没有实例上报」，也可能是上游按错误契约返回；
+				// 与解析失败一样走本地探测，但要让运维知道发生了降级。
+				logger.Warn("监控服务返回空列表，回退本地探测")
+				c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
+				return
+			}
 			c.JSON(statusCode, model.Response{Code: statusCode, Message: "success", Data: h.mergeWithProbe(arr)})
 			return
 		}
+		logger.Warn("监控服务响应缺少 data 数组，回退本地探测",
+			logger.StringField("data_type", fmt.Sprintf("%T", m["data"])))
+	} else {
+		logger.Warn("监控服务响应不是 JSON 对象，回退本地探测",
+			logger.StringField("payload_type", fmt.Sprintf("%T", data)))
 	}
 	c.JSON(http.StatusOK, model.Response{Code: 200, Message: "success", Data: h.probeLocalServices()})
 }
@@ -349,19 +386,30 @@ func (h *Handler) servicePortMap() map[string]int {
 func (h *Handler) mergeWithProbe(monitoringData []any) []any {
 	portMap := h.servicePortMap()
 	now := time.Now().UnixMilli()
+	skipped, badStatus := 0, 0
 
 	for _, item := range monitoringData {
 		entry, ok := item.(map[string]any)
 		if !ok {
+			skipped++
 			continue
 		}
-		svcName, _ := entry["service_name"].(string)
+		svcName, ok := entry["service_name"].(string)
+		if !ok || svcName == "" {
+			// 条目还在返回列表里，但无法参与本地探测；
+			// 静默跳过会让「契约漂移」看起来像「这个服务本来就不需要探测」。
+			skipped++
+			continue
+		}
 		port, hasPort := portMap[svcName]
 		if !hasPort || port <= 0 {
 			continue
 		}
 
-		status, _ := entry["status"].(string)
+		status, ok := entry["status"].(string)
+		if !ok {
+			badStatus++
+		}
 		if status != "UP" {
 			addr := fmt.Sprintf("127.0.0.1:%d", port)
 			conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
@@ -372,6 +420,17 @@ func (h *Handler) mergeWithProbe(monitoringData []any) []any {
 				entry["last_check_time"] = now
 			}
 		}
+	}
+
+	if skipped > 0 {
+		logger.Warn("监控数据存在无法识别的条目",
+			logger.IntField("skipped", skipped),
+			logger.IntField("total", len(monitoringData)))
+	}
+	if badStatus > 0 {
+		logger.Warn("监控数据 status 字段类型异常",
+			logger.IntField("invalid", badStatus),
+			logger.IntField("total", len(monitoringData)))
 	}
 
 	return monitoringData
