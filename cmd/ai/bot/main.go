@@ -341,11 +341,22 @@ func main() {
 
 	memoryMgr := botMemory.GetMemoryManager(repo, einoManager, agentManager)
 	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
+		const (
+			cleanupInterval = time.Hour
+			memoryRetention = 30 * 24 * time.Hour
+			cleanupTimeout  = 30 * time.Second
+		)
+		ticker := time.NewTicker(cleanupInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_ = memoryMgr.CleanupOldMemories(ctx, "", "", 30*24*time.Hour)
+			ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+			if err := memoryMgr.CleanupOldMemories(ctx, "", "", memoryRetention); err != nil {
+				// 后台清理没有人工入口，吞掉错误等于过期记忆永远不删：
+				// 数据量只增不减，每轮全表扫描的成本也会越来越高。
+				logger.Error("清理过期记忆失败",
+					logger.ErrorField(err),
+					logger.StringField("retention", memoryRetention.String()))
+			}
 			cancel()
 		}
 	}()
