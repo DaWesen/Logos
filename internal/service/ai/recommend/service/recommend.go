@@ -96,16 +96,10 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 	}
 
 	cacheKey := recommendCacheKey(userID, recommendType, limit)
-	if s.cache != nil {
-		cachedData, err := s.cache.Get(ctx, cacheKey)
-		if err == nil && cachedData != "" {
-			var cachedResult recommendResult
-			if json.Unmarshal([]byte(cachedData), &cachedResult) == nil {
-				logger.Info("从Redis缓存中获取推荐数据成功",
-					logger.Int64Field("user_id", userID))
-				return cachedResult.Items, cachedResult.Total, nil
-			}
-		}
+	if cached, ok := s.readCachedRecommendations(ctx, cacheKey); ok {
+		logger.Info("从Redis缓存中获取推荐数据成功",
+			logger.Int64Field("user_id", userID))
+		return cached.Items, cached.Total, nil
 	}
 
 	// 缓存未命中：合并并发回源。注意回源函数里要再查一次缓存——
@@ -127,13 +121,8 @@ func (s *recommendServiceImpl) GetRecommendations(ctx context.Context, userID in
 }
 
 func (s *recommendServiceImpl) loadRecommendations(ctx context.Context, userID int64, recommendType string, limit int, cacheKey string) (recommendResult, error) {
-	if s.cache != nil {
-		if cachedData, err := s.cache.Get(ctx, cacheKey); err == nil && cachedData != "" {
-			var cached recommendResult
-			if json.Unmarshal([]byte(cachedData), &cached) == nil {
-				return cached, nil
-			}
-		}
+	if cached, ok := s.readCachedRecommendations(ctx, cacheKey); ok {
+		return cached, nil
 	}
 
 	items, total, err := s.recommendRepo.GetRecommendations(ctx, userID, recommendType, limit)
@@ -162,6 +151,45 @@ func (s *recommendServiceImpl) loadRecommendations(ctx context.Context, userID i
 		s.cacheEmptyRecommendations(ctx, userID, recommendType, limit)
 	}
 	return recommendResult{Items: items, Total: total}, nil
+}
+
+// readCachedRecommendations 读取并解析推荐缓存。
+//
+// 读失败与内容损坏都按未命中回源——推荐允许降级，但两者必须留下痕迹：
+// 静默当成 miss 时，Redis 故障只会表现为命中率下降和下游压力上升，
+// 日志里没有任何线索；损坏值如果不删除，TTL 内每个请求都会重复解析失败，
+// 等于把一次脏写放大成持续的回源流量。
+func (s *recommendServiceImpl) readCachedRecommendations(ctx context.Context, cacheKey string) (recommendResult, bool) {
+	if s.cache == nil {
+		return recommendResult{}, false
+	}
+
+	cachedData, err := s.cache.Get(ctx, cacheKey)
+	if err != nil {
+		logger.Warn("读取推荐缓存失败，回源生成",
+			logger.StringField("cache_key", cacheKey),
+			logger.ErrorField(err))
+		return recommendResult{}, false
+	}
+	if cachedData == "" {
+		return recommendResult{}, false
+	}
+
+	var cached recommendResult
+	if err := json.Unmarshal([]byte(cachedData), &cached); err != nil {
+		logger.Warn("推荐缓存内容损坏，删除并回源",
+			logger.StringField("cache_key", cacheKey),
+			logger.IntField("raw_len", len(cachedData)),
+			logger.ErrorField(err))
+		if delErr := s.cache.Delete(ctx, cacheKey); delErr != nil {
+			logger.Warn("删除损坏的推荐缓存失败",
+				logger.StringField("cache_key", cacheKey),
+				logger.ErrorField(delErr))
+		}
+		return recommendResult{}, false
+	}
+
+	return cached, true
 }
 
 func recommendCacheKey(userID int64, recommendType string, limit int) string {
