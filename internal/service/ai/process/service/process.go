@@ -479,7 +479,7 @@ func (s *ProcessService) ListDocumentDTOs(ctx context.Context, status *int, page
 
 	chunkCounts, err := s.repo.GetChunkCountsByDocumentIDs(ctx, docIDs)
 	if err != nil {
-		chunkCounts = make(map[string]int64)
+		return nil, 0, fmt.Errorf("查询文档块数量失败: %w", err)
 	}
 
 	result := make([]*model.DocumentDTO, len(docs))
@@ -515,7 +515,7 @@ func (s *ProcessService) GetDocumentDTO(ctx context.Context, id string) (*model.
 
 	count, err := s.repo.GetChunkCountByDocumentID(ctx, id)
 	if err != nil {
-		count = 0
+		return nil, fmt.Errorf("查询文档块数量失败: %w", err)
 	}
 
 	return model.ToDocumentDTO(doc, int(count)), nil
@@ -556,7 +556,7 @@ func (s *ProcessService) ReprocessDocument(ctx context.Context, id string) error
 		return fmt.Errorf("获取文档失败: %w", err)
 	}
 	if doc == nil {
-		return fmt.Errorf("文档不存在: %s", id)
+		return fmt.Errorf("%w: %s", ErrDocumentNotFound, id)
 	}
 
 	doc.Status = model.DocumentStatusProcessing

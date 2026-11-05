@@ -140,6 +140,7 @@ func TestProcessHandlersDoNotSwallowStrconvErrors(t *testing.T) {
 	forbidden := []string{
 		", _ := strconv.",
 		", _ = strconv.",
+		"dto, _ := h.processService.GetDocumentDTO",
 		"strconv.Atoi(c.Query(",
 		"strconv.Atoi(c.Param(",
 		"strconv.ParseInt(c.Query(",

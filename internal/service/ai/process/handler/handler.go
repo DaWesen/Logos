@@ -102,10 +102,7 @@ func (h *ProcessHandler) ProcessFile(c *gin.Context) {
 		return
 	}
 
-	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), doc.ID)
-	if dto == nil {
-		dto = model.ToDocumentDTO(doc, 0)
-	}
+	dto := h.documentDTOAfterMutation(c, doc, "处理文件")
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
 }
@@ -129,12 +126,28 @@ func (h *ProcessHandler) ProcessURL(c *gin.Context) {
 		return
 	}
 
-	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), doc.ID)
-	if dto == nil {
-		dto = model.ToDocumentDTO(doc, 0)
-	}
+	dto := h.documentDTOAfterMutation(c, doc, "处理URL")
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
+}
+
+// documentDTOAfterMutation 用于「写操作已经提交，随后补充读模型」的场景。
+// 此时为了一个可选的块数量返回 500 会让客户端重试并重复创建文档，因此降级返回
+// 基础信息；但读取失败必须记 Error，不能把 0 当成真实块数悄悄返回。
+func (h *ProcessHandler) documentDTOAfterMutation(c *gin.Context, doc *model.Document, operation string) *model.DocumentDTO {
+	dto, err := h.processService.GetDocumentDTO(c.Request.Context(), doc.ID)
+	if err == nil && dto != nil {
+		return dto
+	}
+	if err != nil {
+		logger.Error(operation+"：文档已写入，但读取详情失败，返回基础信息",
+			logger.StringField("doc_id", doc.ID),
+			logger.ErrorField(err))
+	} else {
+		logger.Warn(operation+"：文档已写入，但详情查询为空，返回基础信息",
+			logger.StringField("doc_id", doc.ID))
+	}
+	return model.ToDocumentDTO(doc, 0)
 }
 
 func (h *ProcessHandler) ListDocuments(c *gin.Context) {
@@ -261,7 +274,15 @@ func (h *ProcessHandler) ReprocessDocument(c *gin.Context) {
 		return
 	}
 
-	dto, _ := h.processService.GetDocumentDTO(c.Request.Context(), id)
+	dto, err := h.processService.GetDocumentDTO(c.Request.Context(), id)
+	if err != nil {
+		writeProcessError(c, err, "重新处理完成，但查询文档失败")
+		return
+	}
+	if dto == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文档不存在"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": dto})
 }
 
