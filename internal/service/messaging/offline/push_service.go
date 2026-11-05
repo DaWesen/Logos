@@ -21,6 +21,11 @@ import (
 // 只会白白消耗重试次数并更快把消息推进死信。
 var ErrOfflinePushRetry = errors.New("offline push: retryable failure")
 
+// offlinePushConsumerGroup 是离线推送独有的消费组。
+// 不能复用 gateway 的默认组：Kafka 同组内是「分摊」而不是「广播」，
+// 共用组会让一条通知只在实时投递与离线推送之间二选一，两边都缺事件。
+const offlinePushConsumerGroup = "offline-push-notification-consumer"
+
 type OfflinePushService struct {
 	pushManager *push.PushManager
 	eventBus    *types.EventBus
@@ -35,37 +40,60 @@ var offlinePush *OfflinePushService
 // 若无保护会订阅出两条消费链路：同一通知被推送两遍，且第一条 ctx 永不取消。
 var offlinePushOnce sync.Once
 
-func InitOfflinePushService(eventBus *types.EventBus) *OfflinePushService {
+// InitOfflinePushService 启动离线推送服务，并把启动失败交给入口。
+//
+// 旧实现只记一条日志、没有调用方，GetOfflinePushService 永远是 nil：
+// 聊天消息推送路径每次都在 nil 判断处静默返回，表现为「在线能收、离线收不到」。
+// sync.Once 保证只启动一次，因此错误也要缓存，让重复调用得到同一个结论。
+func InitOfflinePushService(eventBus *types.EventBus) (*OfflinePushService, error) {
 	offlinePushOnce.Do(func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		offlinePush = &OfflinePushService{
-			pushManager: push.GetPushManager(),
-			eventBus:    eventBus,
-			ctx:         ctx,
-			cancel:      cancel,
-		}
-		offlinePush.startConsumer()
+		offlinePush, offlinePushErr = newOfflinePushService(eventBus)
 	})
-	return offlinePush
+	return offlinePush, offlinePushErr
+}
+
+var offlinePushErr error
+
+func newOfflinePushService(eventBus *types.EventBus) (*OfflinePushService, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	service := &OfflinePushService{
+		pushManager: push.GetPushManager(),
+		eventBus:    eventBus,
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+	if err := service.startConsumer(); err != nil {
+		cancel()
+		return nil, err
+	}
+	return service, nil
 }
 
 func GetOfflinePushService() *OfflinePushService {
 	return offlinePush
 }
 
-func (s *OfflinePushService) startConsumer() {
+// subscribeNotificationEvents 抽成包级变量，单测可在不连 Kafka 的前提下覆盖失败路径。
+var subscribeNotificationEvents = func(eventBus *types.EventBus, ctx context.Context, handler mq.MessageHandler, groupID string) error {
+	return eventBus.SubscribeNotifications(ctx, handler, groupID)
+}
+
+// startConsumer 同步完成订阅，失败直接返回给初始化路径。
+//
+// mq.Consumer.Subscribe 内部已经启动消费循环，并同步返回 reader 初始化错误；
+// 外层再包一层 goroutine 不提供并发收益，只会把「没有消费者」伪装成启动成功。
+func (s *OfflinePushService) startConsumer() error {
 	if s.eventBus == nil {
-		return
+		return errors.New("offline push: event bus not initialized")
 	}
 
-	go func() {
-		err := s.eventBus.SubscribeNotifications(s.ctx, func(msg *mq.Message) error {
-			return s.handleNotification(msg)
-		})
-		if err != nil {
-			logger.Error("离线推送: 订阅通知事件失败", logger.ErrorField(err))
-		}
-	}()
+	err := subscribeNotificationEvents(s.eventBus, s.ctx, func(msg *mq.Message) error {
+		return s.handleNotification(msg)
+	}, offlinePushConsumerGroup)
+	if err != nil {
+		return fmt.Errorf("subscribe notifications: %w", err)
+	}
+	return nil
 }
 
 // handleNotification 处理一条通知事件，并把失败交给消息队列。

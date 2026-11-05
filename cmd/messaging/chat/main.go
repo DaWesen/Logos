@@ -6,6 +6,7 @@ import (
 	"Logos/internal/service/messaging/chat/handler"
 	"Logos/internal/service/messaging/chat/model"
 	"Logos/internal/service/messaging/chat/service"
+	"Logos/internal/service/messaging/offline"
 	"Logos/internal/service/messaging/types"
 	"Logos/pkg/client"
 	"Logos/pkg/database/pgsql"
@@ -39,6 +40,12 @@ func main() {
 	}
 
 	eventBus := types.GetEventBus()
+
+	// 离线推送必须先于聊天事件消费者启动：消息事件一到就会走
+	// GetOfflinePushService()，初始化失败若只记日志，推送链路会静默缺失。
+	if _, err := offline.InitOfflinePushService(eventBus); err != nil {
+		log.Fatalf("Failed to init offline push: %v", err)
+	}
 
 	chatRepo := dao.NewChatRepository(db)
 
