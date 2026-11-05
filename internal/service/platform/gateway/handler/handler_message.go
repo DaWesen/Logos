@@ -12,6 +12,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// parseTopicParam 解析路径里的消息主题。
+//
+// 旧实现 `topicID, _ := strconv.ParseInt(...)` 把解析失败吞成 0，
+// 于是 /topics/abc 会被当成 DATA_COLLECTION 并真的删掉该主题的数据。
+// 非法值和越界值必须在网关层拒绝，不能交给下游“猜”。
+func parseTopicParam(raw string) (pb.Topic, bool) {
+	id, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	if _, ok := pb.Topic_name[int32(id)]; !ok {
+		return 0, false
+	}
+	return pb.Topic(id), true
+}
+
 func (h *Handler) SendMessage(c *gin.Context) {
 	if h.MessageClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "internal server error"))
@@ -27,10 +43,7 @@ func (h *Handler) SendMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: map[string]string{"message_id": resp.MessageId}})
 }
 
@@ -49,10 +62,7 @@ func (h *Handler) BatchSendMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Responses})
 }
 
@@ -71,10 +81,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -93,10 +100,7 @@ func (h *Handler) ConsumeMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Messages})
 }
 
@@ -115,10 +119,7 @@ func (h *Handler) AcknowledgeMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -137,10 +138,7 @@ func (h *Handler) BatchAcknowledgeMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -154,10 +152,7 @@ func (h *Handler) GetMessageStats(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp.BaseResp != nil {
-		statusCode = int(resp.BaseResp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp.BaseResp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp.BaseResp), Data: resp.Stats})
 }
 
@@ -176,29 +171,27 @@ func (h *Handler) CreateTopic(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
 func (h *Handler) DeleteTopic(c *gin.Context) {
-	topicID, _ := strconv.ParseInt(c.Param("topic"), 10, 64)
+	topic, ok := parseTopicParam(c.Param("topic"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, model.BadRequest("invalid topic"))
+		return
+	}
 	if h.MessageClient == nil {
 		c.JSON(http.StatusServiceUnavailable, model.Error(503, "operation"))
 		return
 	}
-	req := &pb.GetByTopicReq{Topic: pb.Topic(topicID)}
+	req := &pb.GetByTopicReq{Topic: topic}
 	resp, err := h.MessageClient.DeleteTopic(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
@@ -217,10 +210,7 @@ func (h *Handler) ClearMessages(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, model.InternalError(err.Error()))
 		return
 	}
-	statusCode := 200
-	if resp != nil {
-		statusCode = int(resp.StatusCode)
-	}
+	statusCode := mapBaseRespStatusCode(resp)
 	c.JSON(statusCode, model.Response{Code: statusCode, Message: getBaseRespMessage(resp)})
 }
 
