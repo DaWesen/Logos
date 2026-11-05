@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -58,13 +59,24 @@ type fakeEntityRepo struct {
 	calls int32
 	delay time.Duration
 	// byID 为空表示该 ID 不存在。
-	byID map[string]*model.Entity
+	byID    map[string]*model.Entity
+	findErr error
+	txCalls int32
 }
 
 func (f *fakeEntityRepo) GetEntity(ctx context.Context, id string) (*model.Entity, error) {
 	atomic.AddInt32(&f.calls, 1)
 	time.Sleep(f.delay)
 	return f.byID[id], nil
+}
+
+func (f *fakeEntityRepo) FindEntityByNameAndType(context.Context, string, string, string, string) (*model.Entity, error) {
+	return nil, f.findErr
+}
+
+func (f *fakeEntityRepo) WithTransaction(context.Context, func(dao.KnowledgeRepository) error) error {
+	atomic.AddInt32(&f.txCalls, 1)
+	return nil
 }
 
 func newEntityServiceForTest(c *fakeEntityCache, repo *fakeEntityRepo) *knowledgeServiceImpl {
@@ -128,5 +140,23 @@ func TestCacheEntity_ClearsMissingMarker(t *testing.T) {
 	svc.cacheEntity(context.Background(), &model.Entity{ID: "e2", Name: "new"})
 	if svc.isMissingEntityCached(context.Background(), "e2") {
 		t.Fatal("实体写回后必须清掉空值标记，否则新实体 60s 内查不到")
+	}
+}
+
+// 查重查询失败不等于「名称可用」。旧实现只打 Warn 就继续创建，
+// 结果要么撞唯一约束，要么静默造出重名实体。
+func TestFindOrCreateEntity_LookupFailureDoesNotCreate(t *testing.T) {
+	repo := &fakeEntityRepo{findErr: errors.New("database unavailable")}
+	svc := newEntityServiceForTest(newFakeEntityCache(), repo)
+
+	entity, err := svc.FindOrCreateEntity(context.Background(), "PERSON", "alice", "c1", nil, nil, "")
+	if !errors.Is(err, ErrInternalServer) {
+		t.Fatalf("查重失败应返回 ErrInternalServer，实际 entity=%v err=%v", entity, err)
+	}
+	if entity != nil {
+		t.Fatalf("查重失败不应返回实体，实际 %+v", entity)
+	}
+	if got := atomic.LoadInt32(&repo.txCalls); got != 0 {
+		t.Fatalf("查重失败后不得进入创建事务，实际调用 %d 次", got)
 	}
 }

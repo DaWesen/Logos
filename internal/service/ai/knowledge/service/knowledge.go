@@ -125,10 +125,14 @@ func (s *knowledgeServiceImpl) AddEntity(ctx context.Context, entityType, name, 
 func (s *knowledgeServiceImpl) FindOrCreateEntity(ctx context.Context, entityType, name, collectionID string, properties map[string]string, description *string, color string) (*model.Entity, error) {
 	existing, err := s.repo.FindEntityByNameAndType(ctx, name, entityType, collectionID, getUserIDFromContext(ctx))
 	if err != nil {
-		logger.Warn("查询已有实体失败",
+		// 查询失败不等于「实体不存在」：继续创建会在唯一约束上失败，
+		// 或者在缺唯一约束的表里造出重名实体，让后续按名称查询失去确定性。
+		logger.Error("查询已有实体失败，拒绝盲目创建",
 			logger.StringField("name", name),
 			logger.StringField("type", entityType),
+			logger.StringField("collection_id", collectionID),
 			logger.ErrorField(err))
+		return nil, ErrInternalServer
 	}
 
 	if existing != nil {
