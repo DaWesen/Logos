@@ -1146,6 +1146,7 @@ internal/service/ai/bot/model/bot.go:112    JSONMap 实现（JSONBlob 照抄）
 ```text
 go build ./...                                       通过
 go test ./internal/bot/planner/... -count=1          通过
+go test -race ./internal/bot/planner/... -count=1    通过
 go test ./internal/service/ai/bot/service/...        通过
 go test ./... -count=1                               通过
 go vet ./internal/bot/planner/...                    通过
@@ -1173,6 +1174,16 @@ go vet ./internal/bot/planner/...                    通过
 
 额外覆盖了 patch 修改已完成步骤时下游重跑、token 预算覆盖步骤 prompt、失败正文不进入综合 prompt、取消时仍写终态、验证失败 fail-open 等边界。
 
+§7.1 路径 B、§9.3 降级阶梯、§11.3 checkpoint 与步数入口约束的收口测试：
+
+| 用例 | 测试 |
+|---|---|
+| 前提被推翻 → blocked → 上游失效 → patch 改写 | `TestExecuteWith_AssumptionViolationBlocksAndReplans` |
+| 新计划超过 8 步在入口被拒绝，且不建运行记录 | `TestExecuteWith_RejectsOversizedInitialPlan` |
+| patch 累积到 9 步的续跑不被入口上限误伤 | `TestExecuteWith_ResumeAllowsPatchedStepCount` |
+| running/final 合并为同一行 checkpoint | `TestExecuteWith_CheckpointUpdatesSameRow` |
+| 降级顺序与只降不升 | `TestNextDegrade_FollowsLadder` |
+
 ### 20.3 尚未完成 / 已知限制
 
 | 项 | 状态 | 说明 |
@@ -1183,15 +1194,18 @@ go vet ./internal/bot/planner/...                    通过
 | 长稳压测 | 未执行 | 未测量分层并发在真实工具延迟下的收益，不得填数 |
 | 线上灰度 | 未开启 | 代码默认 `mode=legacy`，`planner.enabled=false`；`dag` 与 `persist_runs` 均需显式打开 |
 
-### 20.4 与规范的已知差异
+### 20.4 规范差异的收口情况
 
-下面三项是**有意的实现取舍**，不是"已按规范完成"。面试或评审时按此口径说明，避免把设计目标讲成已落地能力。
+原表中列出的实现取舍已经收口，行为与规范一致；这里记录"改成了什么"与"用什么证明"。
 
-| 规范 | 当前实现 | 取舍原因 |
+| 规范 | 当前实现 | 验证 |
 |---|---|---|
-| §7.1 路径 B：前提不成立标 `blocked`，并把 `violated` 转成 `Violation` | 标 `failed` + `ErrAssumptionViolated`，作为失效种子触发 patch | `blocked` 之后的恢复路径（`blocked -> ready` 的调度与 patch 后重置）尚未实现；`failed` 可直接复用现有失效传播，保证本步不执行且下游被修订 |
-| §9.3 按"降并发 → 关路径 C → 关重规划 → 部分结果 → 抛错"逐级降级 | 预算耗尽直接 `budget_exhausted`；重规划配额耗尽直接 `degraded` 并返回部分结果 | 并发上限是静态配置；阶梯降级需要运行时改写调度参数，当前未实现 |
-| §11.3 每步开始异步写 `running`，结束时阻塞更新同一行 | 每步开始与结束各 `AppendStep` 一行（`running` / 终态），开始写入也是同步的 | 追加式记录实现更简单、天然保留审计轨迹；代价是写放大，且未做到"开始不阻塞主链路" |
+| §7.1 路径 B：前提不成立标 `blocked`，并把 `violated` 转成 `Violation` | `running -> blocked` 合法；`violated` 的 1-based 下标映射到 `DependsOn` 对应上游；blocked 同时作为失效种子；patch 后用 `ResetBlocked` 放回 `ready` 重新调度；未发生的调用/token 预留全部退还 | `TestExecuteWith_AssumptionViolationBlocksAndReplans`、`TestParseVerifyResponse_ProtocolCompatibility` |
+| §9.3 按"降并发 → 关路径 C → 关重规划 → 部分结果 → 抛错"逐级降级 | `execState.nextDegrade` 单调推进 1–4 级，只改本轮局部 `Config`；软压力降一级后重试，硬预算（含"单步 prompt 都放不下"）走完阶梯后返回 `budget_exhausted`；`DegradeStage` 进入结果与日志 | `TestNextDegrade_FollowsLadder`、`TestExecute_TokenBudgetCoversStepPrompt` |
+| §11.3 每步开始异步写 `running`，结束时阻塞更新同一行 | `beginStepCheckpoint` 用 `context.WithoutCancel` 异步 INSERT；终态等待 INSERT 完成，优先走可选接口 `StepUpdater.UpdateStep` 原地更新，仓库不支持或更新失败时回退追加；DAO 已实现 `UpdateStep` | `TestExecuteWith_CheckpointUpdatesSameRow` |
+| §6.2 单次生成 ≤ 8 步，patch 累积 ≤ 12 步 | 非续跑新计划在创建运行记录前按 `min(cfg.MaxSteps, MaxPlanSteps)` 校验；续跑计划 hydrate 后按 `MaxTotalSteps` 校验，允许 patch 累积到 9–12 步 | `TestExecuteWith_RejectsOversizedInitialPlan`、`TestExecuteWith_ResumeAllowsPatchedStepCount` |
+
+仍未执行的仍是部署与标定类工作，不是代码缺口：跨进程 `kill -9` 续跑未在真实环境验证、DAO SQL 未进 CI、预算阈值与分层并发收益未用生产数据标定（见 §20.3）。面试口径应说"单测覆盖了这些语义，线上数据尚未标定"，不要说成已经在生产验证。
 
 
 
