@@ -90,7 +90,10 @@ func (p *Planner) Synthesize(ctx context.Context, goal string, results []StepRes
 
 // SynthesizeWithBudget 与 Synthesize 相同，但把这一次调用计入共享预算。
 func (p *Planner) SynthesizeWithBudget(ctx context.Context, goal string, results []StepResult, budget *Budget) (string, error) {
-	resp, err := p.chatWithBudget(ctx, synthesizeSystemPrompt, FormatResults(results), budget)
+	// 综合 prompt 必须显式带上目标：只给步骤结果时，模型可能答成
+	// "这些步骤做了什么"，而不是"用户要的答案是什么"。
+	userPrompt := fmt.Sprintf("用户目标：%s\n\n各步骤执行结果：\n%s", goal, FormatSynthesisResults(results))
+	resp, err := p.chatWithBudget(ctx, synthesizeSystemPrompt, userPrompt, budget)
 	if err != nil {
 		return "", fmt.Errorf("综合 LLM 调用失败: %w", err)
 	}
@@ -124,6 +127,9 @@ func (p *Planner) chatWithBudget(ctx context.Context, systemPrompt, userPrompt s
 			return "", fmt.Errorf("%w: 调用次数已用尽", ErrBudgetExhausted)
 		}
 		if !budget.TryReserveTokens(EstimateTokens(systemPrompt) + EstimateTokens(userPrompt)) {
+			// token 预留失败时这次调用不会发生，把调用额度退回去，
+			// 否则连续几次 token 超限就会在调用次数上留下"幽灵消耗"。
+			budget.Release(1)
 			return "", fmt.Errorf("%w: token 预算已用尽", ErrBudgetExhausted)
 		}
 	}

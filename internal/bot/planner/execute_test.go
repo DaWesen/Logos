@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -520,5 +521,217 @@ func TestResults_CarryOutcomeAndDuration(t *testing.T) {
 	}
 	if r.Attempt != 1 || r.Duration < 0 {
 		t.Errorf("attempt=%d duration=%d", r.Attempt, r.Duration)
+	}
+}
+
+// TestExecute_ParallelLayerPreReserve 验证并发层不会"跑到一半才发现预算不够"。
+// 3 个独立步骤只有 2 次调用额度时，应降级为串行：把剩余额度按顺序用完，
+// 而不是并发起跑 2 步——后者会留下无法解释的半层状态。
+func TestExecute_ParallelLayerPreReserve(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "一"},
+		PlanStep{ID: 2, Description: "二"},
+		PlanStep{ID: 3, Description: "三"},
+	)
+	var calls atomic.Int32
+	var running, maxRunning atomic.Int32
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		cur := running.Add(1)
+		for {
+			old := maxRunning.Load()
+			if cur <= old || maxRunning.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		calls.Add(1)
+		running.Add(-1)
+		return StepOutcome{Output: "ok"}, nil
+	}
+
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{MaxLLMCalls: 2, MaxConcurrency: 3, DisableReplan: true},
+	})
+	if !errors.Is(err, ErrBudgetExhausted) {
+		t.Fatalf("expected budget error, got %v", err)
+	}
+	if run.Status != RunBudgetExhausted {
+		t.Fatalf("status=%s", run.Status)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("降级串行后应用完剩余 2 次额度，calls=%d", calls.Load())
+	}
+	if maxRunning.Load() != 1 {
+		t.Errorf("整层预留失败后不应并发执行，max_running=%d", maxRunning.Load())
+	}
+	if run.LLMCalls != 2 {
+		t.Errorf("llm_calls=%d", run.LLMCalls)
+	}
+}
+
+// TestExecute_ParallelLayerChargedOnce 防止"整层预占 + 单步再扣"造成双扣。
+// 预算刚好等于步骤数时必须全部完成。
+func TestExecute_ParallelLayerChargedOnce(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "一"},
+		PlanStep{ID: 2, Description: "二"},
+		PlanStep{ID: 3, Description: "三"},
+	)
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		return StepOutcome{Output: "ok"}, nil
+	}
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{MaxLLMCalls: 3, MaxConcurrency: 3, DisableReplan: true},
+	})
+	if err != nil || run.Status != RunCompleted {
+		t.Fatalf("status=%v err=%v", run.Status, err)
+	}
+	if run.LLMCalls != 3 {
+		t.Errorf("预算恰好等于步骤数时应只扣 3 次，got %d", run.LLMCalls)
+	}
+}
+
+// TestExecute_FailedStepErrorNotInSynthesisPrompt 失败步骤的错误文本
+// 可能包含工具参数、内部地址，综合阶段只应看到"没有可用结果"。
+func TestExecute_FailedStepErrorNotInSynthesisPrompt(t *testing.T) {
+	const secret = "SECRET-INTERNAL-ENDPOINT-7788"
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "调用上游"},
+		PlanStep{ID: 2, Description: "整理结果", DependsOn: []int{1}},
+	)
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		return StepOutcome{}, fmt.Errorf("upstream 500: %s", secret)
+	}
+	chat := &fakeChat{responses: []string{"最终答案"}}
+	p := NewPlanner(chat.call)
+	run, err := p.ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{DisableReplan: true},
+	})
+	if run == nil || run.Status != RunDegraded {
+		t.Fatalf("失败计划应返回部分结果，run=%v err=%v", run, err)
+	}
+
+	if _, err := p.SynthesizeWithBudget(t.Context(), plan.Goal, run.Results, nil); err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+	if len(chat.prompts) != 1 {
+		t.Fatalf("prompts=%d", len(chat.prompts))
+	}
+	prompt := chat.prompts[0]
+	if strings.Contains(prompt, secret) {
+		t.Errorf("综合 prompt 泄漏了失败错误正文：%s", prompt)
+	}
+	for _, want := range []string{plan.Goal, "已失效"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("综合 prompt 缺少 %q：%s", want, prompt)
+		}
+	}
+}
+
+// TestFormatSynthesisResults_FailedBodyOmitted 直接覆盖失败分支：
+// 没有进入 stale 的失败结果也只能保留标题。
+func TestFormatSynthesisResults_FailedBodyOmitted(t *testing.T) {
+	results := []StepResult{
+		{
+			Step:    PlanStep{ID: 1, Description: "调用上游", Status: StatusFailed},
+			Output:  "upstream 500: SECRET-BODY",
+			Success: false,
+			Err:     errors.New("upstream 500: SECRET-BODY"),
+		},
+		{
+			Step:    PlanStep{ID: 2, Description: "有效步骤", Status: StatusDone},
+			Output:  "有效正文",
+			Success: true,
+		},
+	}
+	got := FormatSynthesisResults(results)
+	if strings.Contains(got, "SECRET-BODY") {
+		t.Errorf("失败正文不应进入综合 prompt：%s", got)
+	}
+	for _, want := range []string{"调用上游", "失败/未完成", "有效正文"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("缺少 %q：%s", want, got)
+		}
+	}
+}
+
+// TestExecute_StepReportAndTokenCheckpoint 覆盖"可观测性收口"：
+// 每一步都要有结构化报告，checkpoint 要留下可解释的 token 估算。
+func TestExecute_StepReportAndTokenCheckpoint(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "读取资料"},
+		PlanStep{ID: 2, Description: "汇总结论", DependsOn: []int{1}},
+	)
+	store := newMemRunStore()
+	var mu sync.Mutex
+	var reports []StepReport
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		return StepOutcome{Output: fmt.Sprintf("步骤 %d 的产出内容", step.ID)}, nil
+	}
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{DisableReplan: true},
+		Store:  store,
+		Meta:   RunMeta{BotID: "bot-1", ConversationID: "conv-1", UserID: "user-1"},
+		OnStep: func(rep StepReport) {
+			mu.Lock()
+			reports = append(reports, rep)
+			mu.Unlock()
+		},
+	})
+	if err != nil || run.Status != RunCompleted {
+		t.Fatalf("status=%v err=%v", run.Status, err)
+	}
+	mu.Lock()
+	got := append([]StepReport(nil), reports...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("每步应报告一次，got %d", len(got))
+	}
+	for _, rep := range got {
+		if rep.RunID == "" || rep.StepID == 0 || rep.Status != StatusDone {
+			t.Errorf("报告字段不完整：%+v", rep)
+		}
+		if rep.TokensIn <= 0 || rep.TokensOut <= 0 {
+			t.Errorf("step%d token 估算应为正数：in=%d out=%d",
+				rep.StepID, rep.TokensIn, rep.TokensOut)
+		}
+	}
+
+	steps, err := store.ListSteps(t.Context(), run.RunID)
+	if err != nil {
+		t.Fatalf("list steps: %v", err)
+	}
+	var final *StepRecord
+	for _, rec := range steps {
+		if rec.StepID == 2 && rec.Status == StatusDone {
+			final = rec
+		}
+	}
+	if final == nil {
+		t.Fatal("缺少 step2 的完成 checkpoint")
+	}
+	if final.TokensIn <= 0 || final.TokensOut <= 0 {
+		t.Errorf("checkpoint token 估算应为正数：in=%d out=%d", final.TokensIn, final.TokensOut)
+	}
+}
+
+// TestPlan_MarkStaleUsesStateMachine 确保批量失效标记不会把 pending
+// 步骤直接改成 stale（那会让调度器失去"重新走 ready"的合法路径）。
+func TestPlan_MarkStaleUsesStateMachine(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "已完成"},
+		PlanStep{ID: 2, Description: "未开始"},
+	)
+	plan.Steps[0].Status = StatusDone
+	plan.MarkStale([]int{1, 2}, "上游变更")
+	if got := plan.Steps[0].Status; got != StatusStale {
+		t.Errorf("done -> stale 应成功，got %s", got)
+	}
+	if got := plan.Steps[1].Status; got != StatusPending {
+		t.Errorf("pending 不应被标为 stale，got %s", got)
+	}
+	plan.ResetStale()
+	if got := plan.Steps[0].Status; got != StatusPending {
+		t.Errorf("stale 应重置为 pending，got %s", got)
 	}
 }

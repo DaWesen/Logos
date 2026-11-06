@@ -369,6 +369,23 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 		warnf := func(format string, args ...any) {
 			logger.Warn(fmt.Sprintf(format, args...))
 		}
+		// 每个步骤收口打一行结构化日志：run_id + step_id + attempt 才能
+		// 在一次执行的多条并发日志里还原出完整时间线。
+		onStep := func(rep planner.StepReport) {
+			logger.Info("Planner 步骤收口",
+				logger.StringField("run_id", rep.RunID),
+				logger.IntField("revision", rep.Revision),
+				logger.IntField("step_id", rep.StepID),
+				logger.IntField("attempt", rep.Attempt),
+				logger.StringField("status", string(rep.Status)),
+				logger.StringField("effect", string(rep.Effect)),
+				logger.StringField("fail_kind", rep.FailKind),
+				logger.StringField("stale_reason", rep.StaleReason),
+				logger.IntField("tokens_in", rep.TokensIn),
+				logger.IntField("tokens_out", rep.TokensOut),
+				logger.BoolField("replayed", rep.Replayed),
+				logger.DurationField("duration", rep.Duration))
+		}
 		run, err := s.planner.ExecuteWith(ctx, plan, exec, planner.ExecuteOptions{
 			Config:        cfg,
 			Budget:        budget,
@@ -377,6 +394,7 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 			VerifyAssumes: s.cfg != nil && s.cfg.Planner.VerifyAssumes,
 			VerifyExpects: s.cfg != nil && s.cfg.Planner.VerifyExpects,
 			Listener:      listener,
+			OnStep:        onStep,
 			Warnf:         warnf,
 		})
 		runErr = err

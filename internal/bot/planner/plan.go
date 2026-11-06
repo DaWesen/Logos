@@ -441,8 +441,9 @@ func (p *Plan) MarkStale(ids []int, reason string) {
 			continue
 		}
 		if s.Status == StatusDone || s.Status == StatusFailed {
-			s.Status = StatusStale
-			s.StaleReason = reason
+			if err := s.Transition(StatusStale); err == nil {
+				s.StaleReason = reason
+			}
 		}
 	}
 }
@@ -454,7 +455,9 @@ func (p *Plan) ResetStale() {
 	}
 	for i := range p.Steps {
 		if p.Steps[i].Status == StatusStale {
-			p.Steps[i].Status = StatusPending
+			if err := p.Steps[i].Transition(StatusPending); err != nil {
+				continue
+			}
 			p.Steps[i].Output = ""
 			p.Steps[i].Attempt = 0
 			p.Steps[i].StaleReason = ""
@@ -574,6 +577,34 @@ func FormatResults(results []StepResult) string {
 		out = truncateBytes(out, maxStepOutputBytes)
 		sb.WriteString(fmt.Sprintf("步骤 %d：%s【%s】\n结果：%s\n\n",
 			r.Step.ID, r.Step.Description, status, out))
+	}
+	return sb.String()
+}
+
+// FormatSynthesisResults 是综合阶段专用的结果视图。
+//
+// 与 FormatResults 的差异：失败步骤只保留标题，不把原始错误文本送进 prompt。
+// 错误信息里常带工具参数、权限提示甚至内部地址，模型很容易把它当成"事实"
+// 复述给用户；综合阶段只需要知道"这一步没有可用结果"。
+func FormatSynthesisResults(results []StepResult) string {
+	var sb strings.Builder
+	for _, r := range results {
+		if r.Stale || r.Step.Status == StatusStale {
+			sb.WriteString(fmt.Sprintf("步骤 %d：%s【已失效】\n该步骤结果已失效，不得作为依据。\n\n",
+				r.Step.ID, r.Step.Description))
+			continue
+		}
+		if r.Step.Status == StatusSkipped {
+			continue
+		}
+		if !r.Success {
+			sb.WriteString(fmt.Sprintf("步骤 %d：%s【失败/未完成】\n该步骤没有产出可用结果，不得猜测其内容。\n\n",
+				r.Step.ID, r.Step.Description))
+			continue
+		}
+		out := truncateBytes(r.Output, maxStepOutputBytes)
+		sb.WriteString(fmt.Sprintf("步骤 %d：%s【成功】\n结果：%s\n\n",
+			r.Step.ID, r.Step.Description, out))
 	}
 	return sb.String()
 }

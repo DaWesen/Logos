@@ -202,6 +202,26 @@ func (b *Budget) TryReserve(n int) bool {
 	}
 }
 
+// Release 退还尚未使用的预留额度。
+//
+// 层内并发会一次性预留整层调用数，但取消、状态机拒绝等路径可能让某个
+// 步骤根本没开始执行；不退还会把预算"漏"在一个永远不会发生的调用上。
+func (b *Budget) Release(n int) {
+	if b == nil || n <= 0 {
+		return
+	}
+	for {
+		cur := b.used.Load()
+		next := cur - int64(n)
+		if next < 0 {
+			next = 0
+		}
+		if b.used.CompareAndSwap(cur, next) {
+			return
+		}
+	}
+}
+
 // TryReserveTokens 预留 token 预算。
 // 在调用模型前按 prompt 估算预留，拿到响应后再用 AddTokens 补差额：
 // 只在调用后记账的话，超支已经发生，预算就变成了"事后统计"。
@@ -350,6 +370,26 @@ const (
 // 与旧的 func(string) 分开命名，避免破坏现有调用方的类型。
 type ProgressListenerV2 func(ProgressEvent)
 
+// StepReport 单步收口快照，供服务层打一条结构化日志。
+//
+// 指标只有聚合值，排障时仍然要能回答"这一轮的第 3 步为什么慢/为什么失败"；
+// 把 step_id、attempt、effect、fail_kind 放在同一行，日志平台才能直接按
+// run_id 串起一次执行。
+type StepReport struct {
+	RunID       string
+	Revision    int
+	StepID      int
+	Attempt     int
+	Status      StepStatus
+	Effect      EffectLevel
+	FailKind    string
+	StaleReason string
+	Duration    time.Duration
+	TokensIn    int
+	TokensOut   int
+	Replayed    bool
+}
+
 // TextProgressListener 把结构化事件适配成旧的人类可读文本。
 func TextProgressListener(fn func(string)) ProgressListenerV2 {
 	if fn == nil {
@@ -375,6 +415,9 @@ func TextProgressListener(fn func(string)) ProgressListenerV2 {
 type ExecuteOptions struct {
 	Config   Config
 	Listener ProgressListenerV2
+	// OnStep 每个步骤收口时回调一次；用于结构化日志与外部审计。
+	// 并发层会从多个 goroutine 同时调用，回调实现必须自行保证线程安全。
+	OnStep func(StepReport)
 	// Warnf 记录可恢复异常（例如模型编造了不存在的 violation step_id）。
 	Warnf func(format string, args ...any)
 	// Budget 与规划/综合共享的预算；为 nil 时按 Config 新建。
@@ -425,6 +468,7 @@ type execState struct {
 	verifyCache sync.Map
 
 	replayed atomic.Int64
+	observe  func(StepReport)
 }
 
 // Execute 使用默认配置执行计划。
@@ -482,6 +526,7 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 		revision:      plan.Revision,
 		store:         opts.Store,
 		warnf:         opts.Warnf,
+		observe:       opts.OnStep,
 		verifyAssumes: opts.VerifyAssumes,
 		verifyExpects: opts.VerifyExpects,
 	}
@@ -624,7 +669,11 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			break
 		}
 		if budgetHit || budget.Check() != nil {
-			markStale(plan, stale, reasons, emitter)
+			if err := markStale(plan, stale, reasons, emitter); err != nil {
+				run.Status = RunFailed
+				run.Err = err
+				break
+			}
 			run.Status = RunBudgetExhausted
 			run.Err = ErrBudgetExhausted
 			break
@@ -634,14 +683,24 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			// 若下一层为空会走 AllSettled / ErrDeadlock 分支。
 			continue
 		}
-		if run.Replans >= cfg.MaxReplans || !budget.TryReserve(1) {
-			markStale(plan, stale, reasons, emitter)
+		// 不在这里扣减调用次数：ReplanPatch 走 chatWithBudget，
+		// 由它同时预留调用数与 token；否则 patch 调用会绕过 token 预算。
+		if run.Replans >= cfg.MaxReplans || budget.Check() != nil {
+			if err := markStale(plan, stale, reasons, emitter); err != nil {
+				run.Status = RunFailed
+				run.Err = err
+				break
+			}
 			run.Status = RunDegraded
 			break
 		}
 
 		obs.RecordPlannerReplan(ctx, replanReason(layer))
-		markStale(plan, stale, reasons, emitter)
+		if err := markStale(plan, stale, reasons, emitter); err != nil {
+			run.Status = RunFailed
+			run.Err = err
+			break
+		}
 		emitter.emit(ProgressEvent{
 			Type:    EventReplan,
 			Message: fmt.Sprintf("正在根据 %d 个失效步骤修订计划...\n", len(stale)),
@@ -827,7 +886,7 @@ func (st *execState) appendStepCheckpoint(ctx context.Context, rec *StepRecord) 
 	}
 }
 
-func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHash string,
+func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHash, prior string,
 	attempt int, startedAt time.Time, err error) {
 	if st == nil || st.store == nil || step == nil {
 		return
@@ -844,6 +903,10 @@ func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHa
 		Output:     step.Output,
 		Facts:      append([]Fact(nil), step.outcome.Facts...),
 		Violations: append([]Violation(nil), step.outcome.Violations...),
+		// 供应商没有回传 usage 时，用与预算口径一致的估算值留痕：
+		// 至少能回答"这一步大概烧了多少"，而不是所有步骤都显示 0。
+		TokensIn:   EstimateTokens(BuildStepPrompt(*step, prior)),
+		TokensOut:  EstimateTokens(step.Output),
 		DurationMs: step.duration.Milliseconds(),
 		StartedAt:  startedAt,
 		FinishedAt: time.Now(),
@@ -854,9 +917,56 @@ func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHa
 	st.appendStepCheckpoint(ctx, rec)
 }
 
+// reportStep 在步骤收口时生成结构化快照。
+// 没有 store 也要能观测，因此不依赖 checkpoint 是否开启。
+func (st *execState) reportStep(step *PlanStep, prior string, replayed bool) {
+	if st == nil || st.observe == nil || step == nil {
+		return
+	}
+	st.reportStepTokens(step,
+		EstimateTokens(BuildStepPrompt(*step, prior)),
+		EstimateTokens(step.Output), replayed)
+}
+
+func (st *execState) reportStepTokens(step *PlanStep, tokensIn, tokensOut int, replayed bool) {
+	if st == nil || st.observe == nil || step == nil {
+		return
+	}
+	st.observe(StepReport{
+		RunID:       st.runID,
+		Revision:    st.revision,
+		StepID:      step.ID,
+		Attempt:     step.Attempt,
+		Status:      step.Status,
+		Effect:      step.Effect,
+		FailKind:    failKindLabel(step.err),
+		StaleReason: step.StaleReason,
+		Duration:    step.duration,
+		TokensIn:    tokensIn,
+		TokensOut:   tokensOut,
+		Replayed:    replayed,
+	})
+}
+
+// failKindLabel 给日志一个稳定枚举，不把错误文本当标签。
+func failKindLabel(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, ErrAssumptionViolated), errors.Is(err, ErrExpectationMissed):
+		return "validation"
+	case ClassifyError(err) == FailTransient:
+		return "transient"
+	default:
+		return "permanent"
+	}
+}
+
 // markStale 把已产出结果的失效步骤标为 stale。
 // 只标记 done/failed：pending 还没跑过，没有结果可作废。
-func markStale(plan *Plan, ids []int, reasons map[int]string, emitter *eventEmitter) {
+// 状态迁移统一走 Transition，避免某条新路径绕过状态机后留下无法调度的状态。
+func markStale(plan *Plan, ids []int, reasons map[int]string, emitter *eventEmitter) error {
 	for _, id := range ids {
 		reason := reasons[id]
 		if reason == "" {
@@ -869,10 +979,13 @@ func markStale(plan *Plan, ids []int, reasons map[int]string, emitter *eventEmit
 		if step.Status != StatusDone && step.Status != StatusFailed {
 			continue
 		}
-		step.Status = StatusStale
+		if err := step.Transition(StatusStale); err != nil {
+			return err
+		}
 		step.StaleReason = reason
 		emitter.emit(ProgressEvent{Type: EventStale, StepID: id, Message: reason})
 	}
+	return nil
 }
 
 // runLayer 执行一层：只读步骤并发，副作用步骤排在其后串行。
@@ -895,6 +1008,16 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 		if limit > len(parallel) {
 			limit = len(parallel)
 		}
+		// 并发前先整层预留：预留不到就降级串行，避免"前两步抢到额度、
+		// 后两步在 goroutine 里才发现没钱"造成半层执行与额外重试。
+		charged := false
+		if len(parallel) > 1 {
+			if budget.TryReserve(len(parallel)) {
+				charged = true
+			} else {
+				limit = 1
+			}
+		}
 		sem := make(chan struct{}, limit)
 		var wg sync.WaitGroup
 		for _, step := range parallel {
@@ -903,7 +1026,7 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st) {
+				if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st, charged) {
 					budgetHit.Store(true)
 				}
 			}(step)
@@ -911,7 +1034,7 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 		wg.Wait()
 	}
 	for _, step := range serial {
-		if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st) {
+		if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st, false) {
 			budgetHit.Store(true)
 			break
 		}
@@ -920,10 +1043,14 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 }
 
 // runStep 执行单步并维护状态机。返回 false 表示预算不足、未能执行。
+// charged 为 true 表示调用方已完成层内预占，本步首次 attempt 不再重复扣减。
 func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exec StepExecutorV2,
-	budget *Budget, emitter *eventEmitter, cfg Config, st *execState) bool {
+	budget *Budget, emitter *eventEmitter, cfg Config, st *execState, charged bool) bool {
 
 	if ctx.Err() != nil {
+		if charged {
+			budget.Release(1)
+		}
 		return true
 	}
 	inputHash := StepInputHash(*step, prior)
@@ -938,6 +1065,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			if err := step.Transition(StatusRunning); err != nil {
 				step.err = err
 				step.Status = StatusFailed
+				st.reportStep(step, prior, true)
 				return true
 			}
 			step.Attempt = rec.Attempt
@@ -955,18 +1083,23 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 				Type: EventStepDone, StepID: step.ID, Attempt: rec.Attempt,
 				Message: "副作用已执行过，复用历史结果",
 			})
+			st.reportStepTokens(step, rec.TokensIn, rec.TokensOut, true)
 			return true
 		}
 	}
 
-	if !budget.TryReserve(1) {
+	// charged 表示调用方已按整层预留过本次调用；只有重试才需要额外扣减。
+	if !charged && !budget.TryReserve(1) {
 		return false
 	}
 	if err := step.Transition(StatusRunning); err != nil {
+		// 预留了但一次模型/工具都没调，额度必须退回，否则会挤压后续步骤。
+		budget.Release(1)
 		step.err = err
 		// 状态机异常不能把步骤留在 ready，否则下一轮 ReadyLayer 会再次选中它，
 		// 形成"调度空转"——比直接失败更难排查。
 		step.Status = StatusFailed
+		st.reportStep(step, prior, false)
 		return true
 	}
 	step.Attempt = 0
@@ -1000,12 +1133,15 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			step.err = err
 			step.Output = err.Error()
 			_ = step.Transition(StatusFailed)
-			st.checkpointStep(ctx, step, inputHash, 0, start, err)
+			// 前提校验已经单独记过预算，本次步骤调用没有发生，退还预留。
+			budget.Release(1)
+			st.checkpointStep(ctx, step, inputHash, prior, 0, start, err)
 			obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
 			emitter.emit(ProgressEvent{
 				Type: EventStepFailed, StepID: step.ID, Attempt: 0,
 				Message: truncateBytes(err.Error(), 512),
 			})
+			st.reportStep(step, prior, false)
 			return true
 		}
 	}
@@ -1059,21 +1195,23 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			step.Output = err.Error()
 		}
 		_ = step.Transition(StatusFailed)
-		st.checkpointStep(ctx, step, inputHash, step.Attempt, start, err)
+		st.checkpointStep(ctx, step, inputHash, prior, step.Attempt, start, err)
 		obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
 		emitter.emit(ProgressEvent{
 			Type: EventStepFailed, StepID: step.ID, Attempt: step.Attempt,
 			Message: truncateBytes(err.Error(), 512),
 		})
+		st.reportStep(step, prior, false)
 		return true
 	}
 
 	step.Output = outcome.Output
 	step.outcome = outcome
 	_ = step.Transition(StatusDone)
-	st.checkpointStep(ctx, step, inputHash, step.Attempt, start, nil)
+	st.checkpointStep(ctx, step, inputHash, prior, step.Attempt, start, nil)
 	obs.RecordPlannerStep(ctx, string(StatusDone), string(step.Effect), step.duration.Seconds())
 	emitter.emit(ProgressEvent{Type: EventStepDone, StepID: step.ID, Attempt: step.Attempt})
+	st.reportStep(step, prior, false)
 	return true
 }
 
@@ -1354,7 +1492,7 @@ func (p *Planner) ReplanPatch(ctx context.Context, plan *Plan, stale []int,
 	}
 	sb.WriteString("\n请输出修订当前计划的 patch JSON。")
 
-	resp, err := p.chat(ctx, replanPatchSystemPrompt, sb.String())
+	resp, err := p.chatWithBudget(ctx, replanPatchSystemPrompt, sb.String(), budget)
 	if err != nil {
 		return nil, fmt.Errorf("重规划 LLM 调用失败: %w", err)
 	}

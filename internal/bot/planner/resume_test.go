@@ -239,6 +239,9 @@ func TestCreatePlanWithBudget_TokenExhaustedBeforeCall(t *testing.T) {
 	if chat.calls != 0 {
 		t.Errorf("token 预算不足时不应调用模型，calls=%d", chat.calls)
 	}
+	if used := budget.Used(); used != 0 {
+		t.Errorf("token 预留失败时应退还调用额度，used=%d", used)
+	}
 }
 
 func TestExecuteWith_VerifyFailureIsFailOpen(t *testing.T) {
