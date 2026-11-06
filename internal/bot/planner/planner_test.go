@@ -62,6 +62,52 @@ func TestValidatePlan(t *testing.T) {
 	}
 }
 
+// TestValidatePlan_DependencyGraph 覆盖 T2/T3/T4。
+// 依赖图校验必须在执行前失败：等到调度阶段才发现环，计划已经占用了
+// 规划调用与运行记录，回滚成本远高于入口处一次纯函数校验。
+func TestValidatePlan_DependencyGraph(t *testing.T) {
+	tests := []struct {
+		name    string
+		steps   []PlanStep
+		wantErr []string
+	}{
+		{
+			name:    "自环",
+			steps:   []PlanStep{{ID: 1, Description: "a", DependsOn: []int{1}}},
+			wantErr: []string{"依赖自身"},
+		},
+		{
+			name: "两步环",
+			steps: []PlanStep{
+				{ID: 1, Description: "a", DependsOn: []int{2}},
+				{ID: 2, Description: "b", DependsOn: []int{1}},
+			},
+			wantErr: []string{"依赖环", "1 -> 2 -> 1"},
+		},
+		{
+			name: "依赖不存在",
+			steps: []PlanStep{
+				{ID: 1, Description: "a"},
+				{ID: 2, Description: "b", DependsOn: []int{9}},
+			},
+			wantErr: []string{"依赖不存在", "9"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePlan(&Plan{Goal: "g", Steps: tt.steps})
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			for _, want := range tt.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q should contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 func makeSteps(n int) []PlanStep {
 	steps := make([]PlanStep, n)
 	for i := range steps {

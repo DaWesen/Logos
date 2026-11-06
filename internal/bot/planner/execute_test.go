@@ -154,6 +154,89 @@ func TestExecute_ViolationPatchReusesUnaffectedResults(t *testing.T) {
 	}
 }
 
+// TestExecute_UnknownViolationIsIgnored 覆盖 T6。
+// 模型编造 step_id 时只告警并继续：一条格式幻觉不应该让整轮已完成的结果作废。
+func TestExecute_UnknownViolationIsIgnored(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "第一步"},
+		PlanStep{ID: 2, Description: "第二步", DependsOn: []int{1}},
+	)
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		out := StepOutcome{Output: fmt.Sprintf("out-%d", step.ID)}
+		if step.ID == 2 {
+			out.Violations = []Violation{{StepID: 99, Claim: "不存在的步骤"}}
+		}
+		return out, nil
+	}
+
+	var warnings []string
+	var mu sync.Mutex
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Warnf: func(format string, args ...any) {
+			mu.Lock()
+			warnings = append(warnings, fmt.Sprintf(format, args...))
+			mu.Unlock()
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.Status != RunCompleted {
+		t.Fatalf("status=%s err=%v", run.Status, run.Err)
+	}
+	if !plan.AllDone() {
+		t.Errorf("非法 violation 不应让步骤失效: %+v", plan.Steps)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "不存在") {
+		t.Errorf("应记录一条可恢复告警，got %v", warnings)
+	}
+}
+
+// TestExecute_ReplanBudgetTerminatesDegraded 覆盖 T9（同时验证永久失败不重试）。
+// 连续失败时必须耗尽重规划配额后收口为 degraded，既不能无限打补丁，
+// 也不能把已经完成的部分结果丢掉。
+func TestExecute_ReplanBudgetTerminatesDegraded(t *testing.T) {
+	plan := testPlan(t, PlanStep{ID: 1, Description: "第一步"})
+	chat := &fakeChat{responses: []string{
+		`{"reasoning":"换一条链","operations":[
+			{"op":"remove","id":1},
+			{"op":"add","steps":[{"local_id":"a","description":"替代步骤 A","effect":"none"}]}]}`,
+		`{"reasoning":"再换一条链","operations":[
+			{"op":"remove","id":2},
+			{"op":"add","steps":[{"local_id":"b","description":"替代步骤 B","effect":"none"}]}]}`,
+	}}
+	p := NewPlanner(chat.call)
+
+	var executions atomic.Int32
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		executions.Add(1)
+		return StepOutcome{}, ErrPermission
+	}
+	run, err := p.ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{MaxReplans: 2, MaxRetries: 0},
+	})
+	if err != nil {
+		t.Fatalf("degraded run should return partial results: %v", err)
+	}
+	if run.Status != RunDegraded {
+		t.Fatalf("status=%s err=%v", run.Status, run.Err)
+	}
+	if run.Replans != 2 {
+		t.Errorf("应恰好耗尽 2 次重规划，got %d", run.Replans)
+	}
+	if chat.calls != 2 {
+		t.Errorf("重规划调用次数应等于配额，got %d", chat.calls)
+	}
+	if executions.Load() != 3 {
+		t.Errorf("永久失败不应重试，3 个步骤各执行一次，got %d", executions.Load())
+	}
+	if got := plan.Step(3).Status; got != StatusStale {
+		t.Errorf("最后一个失败步骤应标 stale，got %s", got)
+	}
+}
+
 func TestExecute_StaleResultsNotInSynthesisPrompt(t *testing.T) {
 	plan := testPlan(t,
 		PlanStep{ID: 1, Description: "第一步"},
@@ -379,6 +462,51 @@ func TestExecute_ExactBudgetStillCompletes(t *testing.T) {
 	})
 	if err != nil || run.Status != RunCompleted {
 		t.Fatalf("status=%v err=%v", run.Status, err)
+	}
+}
+
+// TestExecute_TokenBudgetCoversStepPrompt 保证 token 预算不是"只统计规划器"。
+// 单步 prompt 都放不下时必须在调用 Agent 前终止，不能先花掉一次真实调用
+// 再在事后统计里发现超支。
+func TestExecute_TokenBudgetCoversStepPrompt(t *testing.T) {
+	plan := testPlan(t, PlanStep{ID: 1, Description: "读取一个很长的文档"})
+	var calls atomic.Int32
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		calls.Add(1)
+		return StepOutcome{Output: "ok"}, nil
+	}
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Config: Config{MaxLLMCalls: 10, MaxTokens: 10, DisableReplan: true},
+	})
+	if err == nil {
+		t.Fatal("token 预算不足时应返回错误供上层降级")
+	}
+	if run.Status != RunBudgetExhausted {
+		t.Fatalf("status=%s", run.Status)
+	}
+	if calls.Load() != 0 {
+		t.Errorf("预算不足时不应调用执行器，calls=%d", calls.Load())
+	}
+}
+
+// TestExecute_StepTokensEnterSharedBudget 验证执行成本与规划成本共用一本账。
+// 面试里能讲清楚"预算覆盖全链路"的前提，是这里真的有一致口径的计数。
+func TestExecute_StepTokensEnterSharedBudget(t *testing.T) {
+	plan := testPlan(t, PlanStep{ID: 1, Description: "执行一步"})
+	budget := NewBudget(Config{MaxTokens: 100_000})
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		return StepOutcome{Output: "一段足够长的执行结果，用于确认 token 记账不为零。"}, nil
+	}
+	run, err := NewPlanner(nil).ExecuteWith(t.Context(), plan, exec, ExecuteOptions{
+		Budget: budget,
+		Config: Config{DisableReplan: true},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if budget.TokensUsed() <= 0 || run.TokensUsed != budget.TokensUsed() {
+		t.Errorf("执行 token 应进入共享预算：budget=%d run=%d",
+			budget.TokensUsed(), run.TokensUsed)
 	}
 }
 

@@ -248,6 +248,25 @@ func (b *Budget) AddTokens(n int) {
 	b.tokens.Add(int64(n))
 }
 
+// ReleaseTokens 退还尚未真正发生的 token 预留。
+// 只有"预留成功但调用没发出去"的路径才需要退：例如状态机拒绝、
+// 重试前发现预算不足。已经发出的调用不能退，否则预算会低估实际成本。
+func (b *Budget) ReleaseTokens(n int) {
+	if b == nil || n <= 0 {
+		return
+	}
+	for {
+		cur := b.tokens.Load()
+		next := cur - int64(n)
+		if next < 0 {
+			next = 0
+		}
+		if b.tokens.CompareAndSwap(cur, next) {
+			return
+		}
+	}
+}
+
 // Used 返回已消耗的调用次数。
 func (b *Budget) Used() int {
 	if b == nil {
@@ -1054,6 +1073,10 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 		return true
 	}
 	inputHash := StepInputHash(*step, prior)
+	// 单步 Agent 内部可能走多轮 ReAct，规划器拿不到供应商 usage；
+	// 这里至少把本步 prompt 按统一口径计入共享预算。否则 MaxTokens 只统计
+	// 规划/重规划/综合，执行才是成本大头却完全不设防。
+	promptTokens := EstimateTokens(BuildStepPrompt(*step, prior))
 
 	// 副作用重放：同一次运行里，输入指纹一致且已经成功的副作用不再执行。
 	// 检查放在预算扣减之前——重放是读历史，不应该消耗本轮调用配额。
@@ -1092,9 +1115,15 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	if !charged && !budget.TryReserve(1) {
 		return false
 	}
+	if !budget.TryReserveTokens(promptTokens) {
+		// 调用没发出去，调用额度必须同步退回。
+		budget.Release(1)
+		return false
+	}
 	if err := step.Transition(StatusRunning); err != nil {
 		// 预留了但一次模型/工具都没调，额度必须退回，否则会挤压后续步骤。
 		budget.Release(1)
+		budget.ReleaseTokens(promptTokens)
 		step.err = err
 		// 状态机异常不能把步骤留在 ready，否则下一轮 ReadyLayer 会再次选中它，
 		// 形成"调度空转"——比直接失败更难排查。
@@ -1135,6 +1164,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			_ = step.Transition(StatusFailed)
 			// 前提校验已经单独记过预算，本次步骤调用没有发生，退还预留。
 			budget.Release(1)
+			budget.ReleaseTokens(promptTokens)
 			st.checkpointStep(ctx, step, inputHash, prior, 0, start, err)
 			obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
 			emitter.emit(ProgressEvent{
@@ -1149,8 +1179,14 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	var outcome StepOutcome
 	var err error
 	for attempt := 1; attempt <= cfg.MaxRetries+1; attempt++ {
-		if attempt > 1 && !budget.TryReserve(1) {
-			break
+		if attempt > 1 {
+			if !budget.TryReserve(1) {
+				break
+			}
+			if !budget.TryReserveTokens(promptTokens) {
+				budget.Release(1)
+				break
+			}
 		}
 		step.Attempt = attempt
 		key := IdempotencyKey(st.runID, step.ID, step.Tool, []byte(step.Description))
@@ -1159,6 +1195,8 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			Type: EventStepStart, StepID: step.ID, Attempt: attempt, Message: step.Description,
 		})
 		outcome, err = exec(stepCtx, *step, prior)
+		// 无论成功失败，Agent 已经产出的正文都按同一估算口径记账。
+		budget.AddTokens(EstimateTokens(outcome.Output))
 		if err == nil {
 			if strings.TrimSpace(outcome.Output) == "" && len(outcome.Facts) == 0 {
 				err = ErrEmptyStepOutput
