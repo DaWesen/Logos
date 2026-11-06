@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,9 @@ type Message struct {
 	Partition int
 	Offset    int64
 	Time      time.Time
+	// Headers 是 Kafka record header。只在消费侧按需物化成 map：
+	// header 值本身是 []byte，直接透出会让每个 handler 都要自己处理解码与重名 key。
+	Headers map[string]string
 	// Context 是消费者生命周期 ctx，随消息一起传给 handler。
 	//
 	// handler 只拿到 *Message，如果没有这个字段，下游写库/写 ES 就只能用
@@ -191,15 +195,25 @@ func NewConsumer(topic string, groupID string) *Consumer {
 }
 
 func (p *Producer) Send(ctx context.Context, topic string, key string, value []byte) error {
+	return p.SendWithHeaders(ctx, topic, key, value, nil)
+}
+
+// SendWithHeaders 发送带 Kafka header 的消息。
+//
+// 链路元数据（例如死信回放次数、来源死信 topic）走 header 而不是塞进 value：
+// 下游消费者的 JSON schema 无需为此变更，不认识这些 header 的旧版本消费者
+// 会直接忽略，回滚时不用协调两侧发布顺序。
+func (p *Producer) SendWithHeaders(ctx context.Context, topic string, key string, value []byte, headers map[string]string) error {
 	if p == nil || p.writer == nil {
 		obs.RecordKafkaProduce(ctx, topic, "failed", 0)
 		return fmt.Errorf("producer not initialized")
 	}
 
 	msg := kafka.Message{
-		Topic: topic,
-		Key:   []byte(key),
-		Value: value,
+		Topic:   topic,
+		Key:     []byte(key),
+		Value:   value,
+		Headers: headersToSlice(headers),
 	}
 
 	start := time.Now()
@@ -430,7 +444,50 @@ func (c *Consumer) Receive(ctx context.Context) (*Message, error) {
 		Partition: msg.Partition,
 		Offset:    msg.Offset,
 		Time:      msg.Time,
+		Headers:   headersToMap(msg.Headers),
 	}, nil
+}
+
+// 死信与回放链路的 Kafka header 约定。
+const (
+	// HeaderReplayCount 记录这条消息已经被回放的次数。回放后再次失败进死信时，
+	// publishDeadLetter 会把该 header 写回信封，形成跨轮次的累计计数。
+	HeaderReplayCount = "x-logos-replay-count"
+	// HeaderReplayedFrom 记录这条消息由哪个死信 topic 回放而来，供排查与审计定位。
+	HeaderReplayedFrom = "x-logos-replayed-from"
+)
+
+// headersToMap 把 kafka header 列表压成 map。同名 key 保留最后一个值，
+// 与 kafka-go 生产端「后写覆盖」的直觉一致。空列表返回 nil，避免每条消息都分配 map。
+func headersToMap(hdrs []kafka.Header) map[string]string {
+	if len(hdrs) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(hdrs))
+	for _, h := range hdrs {
+		out[h.Key] = string(h.Value)
+	}
+	return out
+}
+
+// headersToSlice 按 key 升序生成 header 列表。
+// 排序是为了让同一组 header 的编码结果稳定：单测可以直接断言字节内容，
+// 排查时同一条消息重复回放也能在日志里对齐比较。
+func headersToSlice(headers map[string]string) []kafka.Header {
+	if len(headers) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	out := make([]kafka.Header, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, kafka.Header{Key: k, Value: []byte(headers[k])})
+	}
+	return out
 }
 
 // deadLetterEnvelope 死信队列消息体：保留原始消息与失败原因，
@@ -442,6 +499,12 @@ type deadLetterEnvelope struct {
 	Key         string          `json:"key"`
 	Error       string          `json:"error"`
 	Value       json.RawMessage `json:"value"`
+	// DeadLetteredAt 记录消息进入死信的时刻。没有它就只能全量重放，
+	// 把已经恢复的下游再打一遍；有了它才能按故障窗口筛选。
+	// 用指针区分「字段缺失」（旧数据）与「零值」，缺失时回放工具会显式拒绝按窗口过滤。
+	DeadLetteredAt *time.Time `json:"dead_lettered_at,omitempty"`
+	// ReplayCount 是已累计的回放轮次，用于阻断「回放→再失败→再死信→再回放」的循环。
+	ReplayCount int `json:"replay_count,omitempty"`
 }
 
 // buildDeadLetterPayload 构造死信消息体。
@@ -461,13 +524,18 @@ func buildDeadLetterPayload(msg *Message, cause error) ([]byte, error) {
 	if cause != nil {
 		errMsg = cause.Error()
 	}
+	at := dlqNow().UTC()
 	return json.Marshal(deadLetterEnvelope{
-		SourceTopic: msg.Topic,
-		Partition:   msg.Partition,
-		Offset:      msg.Offset,
-		Key:         msg.Key,
-		Error:       errMsg,
-		Value:       value,
+		SourceTopic:    msg.Topic,
+		Partition:      msg.Partition,
+		Offset:         msg.Offset,
+		Key:            msg.Key,
+		Error:          errMsg,
+		Value:          value,
+		DeadLetteredAt: &at,
+		// 回放过的消息再次进死信时，轮次继续沿用上游 header 里的计数，
+		// 否则每一轮都会被当成「第一次回放」，循环保护永远不会触发。
+		ReplayCount: replayCountFromMessage(msg),
 	})
 }
 
