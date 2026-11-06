@@ -582,9 +582,9 @@ redis.call('HSET', KEYS[4],
 	'embed', ARGV[12], 'created_at', ARGV[3])
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 redis.call('EXPIRE', KEYS[2], ARGV[4])
-redis.call('EXPIRE', KEYS[3], ARGV[4])
+redis.call('EXPIRE', KEYS[3], ARGV[14])
 redis.call('EXPIRE', KEYS[4], ARGV[13])
-redis.call('SADD', KEYS[5], ARGV[14])
+redis.call('SADD', KEYS[5], ARGV[15])
 redis.call('EXPIRE', KEYS[5], ARGV[13])
 return 1
 `
@@ -598,6 +598,12 @@ func (c *Cache) persist(ctx context.Context, redis cache.Cache, entry *Entry, sc
 	if ttl < 1 {
 		ttl = 1
 	}
+	// 精确层只服务「归一化后完全相同」的查询，没必要和向量条目同寿。
+	// 配置更短时提前回收，配置更长时也不能超过条目本身的有效期。
+	exactTTL := min(ttl, int64(c.cfg.ExactTTL/time.Second))
+	if exactTTL < 1 {
+		exactTTL = 1
+	}
 	metaTTL := ttl * 2
 	_, err = redis.EvalSha(ctx, persistScript,
 		[]string{
@@ -610,7 +616,7 @@ func (c *Cache) persist(ctx context.Context, redis cache.Cache, entry *Entry, sc
 		entry.ID, string(raw), entry.CreatedAt, ttl, NormalizeHash(entry.NormQuery),
 		scope.Tenant, scope.BotID, scope.UserID, scope.KBVersion,
 		scope.PromptHash, scope.ModelKey, scope.EmbedKey,
-		metaTTL, entry.ScopeHash)
+		metaTTL, exactTTL, entry.ScopeHash)
 	return err
 }
 

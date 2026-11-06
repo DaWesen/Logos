@@ -145,12 +145,18 @@ func (i *index) exact(scopeHash, normQuery string, now int64) *Entry {
 }
 
 // touch 记录一次命中。Hits 只用于观测与后续 TTL 调优，不参与命中判定。
+//
+// 用副本替换而不是原地 ++：写 worker 可能正持有同一个 Entry 指针做
+// 序列化，原地修改会让「读请求记一次 hit」与「持久化读 Hits」并发访问
+// 同一块内存。索引内条目在插入后应视为不可变。
 func (i *index) touch(scopeHash, id string) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if bucket := i.buckets[scopeHash]; bucket != nil {
 		if e := bucket[id]; e != nil {
-			e.Hits++
+			cp := *e
+			cp.Hits++
+			bucket[id] = &cp
 		}
 	}
 }

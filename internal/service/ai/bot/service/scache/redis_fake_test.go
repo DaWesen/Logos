@@ -21,6 +21,7 @@ type fakeRedis struct {
 	zsets    map[string]map[string]float64
 	strings  map[string]string
 	counters map[string]int64
+	expires  map[string]time.Duration
 }
 
 func newFakeRedis() *fakeRedis {
@@ -30,6 +31,7 @@ func newFakeRedis() *fakeRedis {
 		zsets:    make(map[string]map[string]float64),
 		strings:  make(map[string]string),
 		counters: make(map[string]int64),
+		expires:  make(map[string]time.Duration),
 	}
 }
 
@@ -76,7 +78,12 @@ func (f *fakeRedis) Exists(_ context.Context, key string) (bool, error) {
 	return false, nil
 }
 
-func (f *fakeRedis) Expire(_ context.Context, _ string, _ time.Duration) error { return nil }
+func (f *fakeRedis) Expire(_ context.Context, key string, ttl time.Duration) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.expires[key] = ttl
+	return nil
+}
 
 func (f *fakeRedis) MSet(context.Context, map[string]interface{}) error { return errFakeUnsupported }
 func (f *fakeRedis) MGet(context.Context, []string) (map[string]string, error) {
@@ -223,7 +230,7 @@ func (f *fakeRedis) EvalSha(_ context.Context, script string, keys []string, arg
 	if script != persistScript {
 		return nil, errFakeUnsupported
 	}
-	if len(keys) != 5 || len(args) < 14 {
+	if len(keys) != 5 || len(args) < 15 {
 		return nil, errors.New("fake redis: bad persist script arguments")
 	}
 	f.mu.Lock()
@@ -245,7 +252,12 @@ func (f *fakeRedis) EvalSha(_ context.Context, script string, keys []string, arg
 	meta["model"] = fmt.Sprint(args[10])
 	meta["embed"] = fmt.Sprint(args[11])
 	meta["created_at"] = fmt.Sprint(args[2])
-	f.set(keys[4])[fmt.Sprint(args[13])] = struct{}{}
+	f.expires[keys[0]] = time.Duration(toInt64(args[3])) * time.Second
+	f.expires[keys[1]] = time.Duration(toInt64(args[3])) * time.Second
+	f.expires[keys[2]] = time.Duration(toInt64(args[13])) * time.Second
+	f.expires[keys[3]] = time.Duration(toInt64(args[12])) * time.Second
+	f.expires[keys[4]] = time.Duration(toInt64(args[12])) * time.Second
+	f.set(keys[4])[fmt.Sprint(args[14])] = struct{}{}
 	return int64(1), nil
 }
 
@@ -270,6 +282,12 @@ func (f *fakeRedis) set(key string) map[string]struct{} {
 		f.sets[key] = make(map[string]struct{})
 	}
 	return f.sets[key]
+}
+
+func (f *fakeRedis) ttlOf(key string) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.expires[key]
 }
 
 func toInt64(v interface{}) int64 {
