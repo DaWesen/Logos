@@ -11,6 +11,10 @@ message QuestionReq {
   string content = 1;
   int64 user_id = 2;
   map<string, string> context = 3;
+  // request_id 是调用方的幂等键（Kafka 消费路径使用 message_id）。
+  // 服务端据此派生确定性的问答记录 ID：同一 request_id 重放时直接返回
+  // 已落库的答案，不再调用模型。为空时保持原有行为（每次生成新记录）。
+  string request_id = 4;
 }
 
 // 回答响应

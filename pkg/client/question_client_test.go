@@ -12,8 +12,14 @@ import (
 
 type stubQAClient struct {
 	pb.QAServiceClient
+	req  *pb.QuestionReq
 	resp *pbCommon.BaseResp
 	err  error
+}
+
+func (s *stubQAClient) AskQuestion(_ context.Context, req *pb.QuestionReq, _ ...grpc.CallOption) (*pb.AnswerResp, error) {
+	s.req = req
+	return &pb.AnswerResp{Answer: "ok"}, nil
 }
 
 func (s *stubQAClient) GetRecommendedQuestions(
@@ -64,5 +70,33 @@ func TestQuestionClient_GetRecommendedQuestionsEmptyMessage(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("空响应应返回空列表，got %v", got)
+	}
+}
+
+func TestQuestionClient_AskQuestionWithRequestIDPropagatesKey(t *testing.T) {
+	stub := &stubQAClient{}
+	c := NewQuestionClient(stub, nil)
+
+	if _, err := c.AskQuestionWithRequestID(context.Background(), "hello", 7, "m-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stub.req.GetRequestId() != "m-1" {
+		t.Fatalf("request_id = %q, want m-1", stub.req.GetRequestId())
+	}
+	if stub.req.GetUserId() != 7 || stub.req.GetContent() != "hello" {
+		t.Fatalf("请求字段未透传: %+v", stub.req)
+	}
+}
+
+// 不带幂等键的调用必须显式发送空 request_id，服务端据此保持 UUID 行为。
+func TestQuestionClient_AskQuestionKeepsEmptyRequestID(t *testing.T) {
+	stub := &stubQAClient{}
+	c := NewQuestionClient(stub, nil)
+
+	if _, err := c.AskQuestion(context.Background(), "hello", 7); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stub.req.GetRequestId() != "" {
+		t.Fatalf("request_id = %q, want empty", stub.req.GetRequestId())
 	}
 }

@@ -60,7 +60,8 @@ func (s *QAServiceImpl) AskQuestion(ctx context.Context, req *pb.QuestionReq) (*
 		reqContext = req.Context
 	}
 
-	answer, confidence, sources, questionID, timestamp, err := s.QAService.AskQuestion(ctx, req.Content, req.UserId, reqContext)
+	answer, confidence, sources, questionID, timestamp, err := s.QAService.AskQuestion(
+		ctx, req.Content, req.UserId, reqContext, req.RequestId)
 	if err != nil {
 		logger.Error("Failed to ask question", logger.ErrorField(err))
 		resp.BaseResp = buildErrorBaseResp(err.Error())

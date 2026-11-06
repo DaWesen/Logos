@@ -24,10 +24,14 @@ const (
 
 // 问题请求
 type QuestionReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
-	UserId        int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Context       map[string]string      `protobuf:"bytes,3,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Content string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
+	UserId  int64                  `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Context map[string]string      `protobuf:"bytes,3,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// request_id 是调用方的幂等键（Kafka 消费路径使用 message_id）。
+	// 服务端据此派生确定性的问答记录 ID：同一 request_id 重放时直接返回
+	// 已落库的答案，不再调用模型。为空时保持原有行为（每次生成新记录）。
+	RequestId     string `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -81,6 +85,13 @@ func (x *QuestionReq) GetContext() map[string]string {
 		return x.Context
 	}
 	return nil
+}
+
+func (x *QuestionReq) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
 }
 
 // 回答响应
@@ -607,11 +618,13 @@ var File_ai_question_proto protoreflect.FileDescriptor
 
 const file_ai_question_proto_rawDesc = "" +
 	"\n" +
-	"\x11ai/question.proto\x12\bquestion\x1a\fcommon.proto\"\xba\x01\n" +
+	"\x11ai/question.proto\x12\bquestion\x1a\fcommon.proto\"\xd9\x01\n" +
 	"\vQuestionReq\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12<\n" +
-	"\acontext\x18\x03 \x03(\v2\".question.QuestionReq.ContextEntryR\acontext\x1a:\n" +
+	"\acontext\x18\x03 \x03(\v2\".question.QuestionReq.ContextEntryR\acontext\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x04 \x01(\tR\trequestId\x1a:\n" +
 	"\fContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x01\n" +

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -29,7 +31,7 @@ type VectorService interface {
 }
 
 type QAService interface {
-	AskQuestion(ctx context.Context, content string, userID int64, context map[string]string) (string, float64, []string, string, int64, error)
+	AskQuestion(ctx context.Context, content string, userID int64, context map[string]string, requestID string) (string, float64, []string, string, int64, error)
 	BatchAskQuestions(ctx context.Context, questions []string, userID int64) (map[string]string, error)
 	GetHistory(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error)
 	SubmitFeedback(ctx context.Context, questionID string, feedback string, rating *int32) error
@@ -45,6 +47,15 @@ type qaServiceImpl struct {
 	cache            cache.Cache
 }
 
+// ErrQARequestIDConflict 表示同一个幂等键被不同用户或不同问题复用。
+// 这时不能返回已有答案：前者会把别人的问答内容泄露给当前调用方，
+// 后者会让调用方拿到一个与其请求内容不符的答案。
+var ErrQARequestIDConflict = errors.New("qa: request_id already used by another request")
+
+// qaRecordIDMaxLen 与历史 uuid 主键保持同一量级，避免不同数据库
+// 对 varchar 默认长度的差异把确定性 ID 截断成碰撞。
+const qaRecordIDMaxLen = 64
+
 func NewQAService(qaRepo dao.QARepository, einoClient *eino.EinoManager, knowledgeService KnowledgeService, searchService SearchService, vectorService VectorService) QAService {
 	return &qaServiceImpl{
 		qaRepo:           qaRepo,
@@ -56,20 +67,49 @@ func NewQAService(qaRepo dao.QARepository, einoClient *eino.EinoManager, knowled
 	}
 }
 
-func (s *qaServiceImpl) AskQuestion(ctx context.Context, content string, userID int64, context map[string]string) (string, float64, []string, string, int64, error) {
+func (s *qaServiceImpl) AskQuestion(
+	ctx context.Context,
+	content string,
+	userID int64,
+	context map[string]string,
+	requestID string,
+) (string, float64, []string, string, int64, error) {
 	logger.Info("Processing question",
 		logger.StringField("content", content),
-		logger.Int64Field("user_id", userID))
+		logger.Int64Field("user_id", userID),
+		logger.StringField("request_id", requestID))
 
 	if content == "" {
 		return "", 0, nil, "", 0, errors.New("question content cannot be empty")
+	}
+
+	questionID := uuid.New().String()
+	if requestID != "" {
+		questionID = qaRecordID(requestID)
+		// 幂等查询必须放在限流之前：重放已经完成的问题不应该再消耗配额，
+		// 更不能因为限流把「已有答案」变成一次失败。
+		existing, err := s.qaRepo.GetQARecord(ctx, questionID)
+		if err != nil {
+			return "", 0, nil, "", 0, fmt.Errorf("查询幂等问答记录失败: %w", err)
+		}
+		if existing != nil {
+			if existing.UserID != userID {
+				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+			}
+			if existing.Question != content {
+				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+			}
+			logger.Info("命中幂等问答记录，跳过模型调用",
+				logger.StringField("request_id", requestID),
+				logger.StringField("question_id", existing.ID))
+			return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, nil
+		}
 	}
 
 	if err := s.checkQuestionRateLimit(ctx, userID); err != nil {
 		return "", 0, nil, "", 0, err
 	}
 
-	questionID := uuid.New().String()
 	timestamp := time.Now().Unix()
 
 	var answer string
@@ -155,11 +195,38 @@ func (s *qaServiceImpl) AskQuestion(ctx context.Context, content string, userID 
 
 	err := s.qaRepo.CreateQARecord(ctx, record)
 	if err != nil {
+		if requestID != "" {
+			// 并发请求可能已经用同一个确定性 ID 写入成功；唯一键冲突时
+			// 返回先写入的答案，而不是把一次成功问答报成失败。
+			existing, getErr := s.qaRepo.GetQARecord(ctx, questionID)
+			if getErr == nil && existing != nil {
+				if existing.UserID != userID || existing.Question != content {
+					return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+				}
+				logger.Warn("幂等问答记录已被并发写入，返回已有答案",
+					logger.StringField("request_id", requestID),
+					logger.StringField("question_id", existing.ID))
+				return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, nil
+			}
+		}
 		logger.Error("Failed to create QA record", logger.ErrorField(err))
 		return answer, confidence, sources, questionID, timestamp, fmt.Errorf("answered but failed to record: %w", err)
 	}
 
 	return answer, confidence, sources, questionID, timestamp, nil
+}
+
+// qaRecordID 从调用方幂等键派生确定性主键。
+// 短 ID 保留可读的原文，便于按 message_id 直接查库；超长时用 SHA-256
+// 收敛到固定长度，避免数据库截断后不同请求撞到同一条记录。
+func qaRecordID(requestID string) string {
+	const prefix = "qa:"
+	id := prefix + requestID
+	if len(id) <= qaRecordIDMaxLen {
+		return id
+	}
+	sum := sha256.Sum256([]byte(requestID))
+	return prefix + hex.EncodeToString(sum[:])[:qaRecordIDMaxLen-len(prefix)]
 }
 
 func (s *qaServiceImpl) BatchAskQuestions(ctx context.Context, questions []string, userID int64) (map[string]string, error) {
@@ -170,7 +237,7 @@ func (s *qaServiceImpl) BatchAskQuestions(ctx context.Context, questions []strin
 	answers := make(map[string]string)
 
 	for _, q := range questions {
-		answer, _, _, _, _, err := s.AskQuestion(ctx, q, userID, nil)
+		answer, _, _, _, _, err := s.AskQuestion(ctx, q, userID, nil, "")
 		if err != nil {
 			logger.Warn("Failed to process question",
 				logger.StringField("question", q),

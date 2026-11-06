@@ -30,9 +30,22 @@ func NewQuestionClientFromConfig(cfg *config.Config) (*QuestionClient, error) {
 }
 
 func (c *QuestionClient) AskQuestion(ctx context.Context, content string, userID int64) (string, error) {
+	return c.AskQuestionWithRequestID(ctx, content, userID, "")
+}
+
+// AskQuestionWithRequestID 带上调用方的幂等键。
+// 同一个 requestID 重放时，服务端会返回已落库的答案而不是再次调用模型，
+// 用于 Kafka at-least-once 消费与 DLQ 回放场景。
+func (c *QuestionClient) AskQuestionWithRequestID(
+	ctx context.Context,
+	content string,
+	userID int64,
+	requestID string,
+) (string, error) {
 	resp, err := c.client.AskQuestion(ctx, &pb.QuestionReq{
-		Content: content,
-		UserId:  userID,
+		Content:   content,
+		UserId:    userID,
+		RequestId: requestID,
 	})
 	if err != nil {
 		return "", err
