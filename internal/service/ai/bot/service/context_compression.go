@@ -63,8 +63,8 @@ type ConversationCompressor struct {
 }
 
 type summaryState struct {
-	summary   string    // 早期对话的滚动摘要
-	upToMsgID string    // 已摘要到的最后一条消息 ID
+	summary   string // 早期对话的滚动摘要
+	upToMsgID string // 已摘要到的最后一条消息 ID
 	createdAt time.Time
 }
 
