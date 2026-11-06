@@ -1315,6 +1315,6 @@ go test -race ./internal/service/ai/bot/service/scache/...  通过
 | 压测（QPS/P99/内存） | 未执行 | §15.4 留空 |
 | `mode=on` 灰度放量 | 未开启 | 默认 `mode=shadow` |
 
-**默认 `mode=shadow`**：完整判定并记录指标，但不返回缓存答案，用户可见行为与 `off` 一致。切换 `mode=on` 前必须完成阈值标定并在配置中填写 `calibrated_for`；没有真实数据就不放量。
+**代码缺省为 `mode=off`**；当前部署配置（`config/config.yaml`，按仓库约定不入库）设为 `mode=shadow`：完整判定并记录指标，但不返回缓存答案，用户可见行为与 `off` 一致。切换 `mode=on` 前必须完成阈值标定并在配置中填写 `calibrated_for`；没有真实数据就不放量。
 
 
