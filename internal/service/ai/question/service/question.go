@@ -58,9 +58,12 @@ type qaServiceImpl struct {
 
 	// 三个预算字段留空时使用 retrieval.go 里的默认值；
 	// 测试通过注入更短的预算来验证超时与降级路径。
-	answerTimeout    time.Duration
-	retrievalTimeout time.Duration
-	persistTimeout   time.Duration
+	answerTimeout     time.Duration
+	retrievalTimeout  time.Duration
+	persistTimeout    time.Duration
+	batchTimeout      time.Duration
+	batchMaxQuestions int
+	batchConcurrency  int
 }
 
 // ErrQARequestIDConflict 表示同一个幂等键被不同用户或不同问题复用。
@@ -287,28 +290,6 @@ func qaRecordID(requestID string) string {
 	}
 	sum := sha256.Sum256([]byte(requestID))
 	return prefix + hex.EncodeToString(sum[:])[:qaRecordIDMaxLen-len(prefix)]
-}
-
-func (s *qaServiceImpl) BatchAskQuestions(ctx context.Context, questions []string, userID int64) (map[string]string, error) {
-	logger.Info("Processing batch questions",
-		logger.IntField("count", len(questions)),
-		logger.Int64Field("user_id", userID))
-
-	answers := make(map[string]string)
-
-	for _, q := range questions {
-		answer, _, _, _, _, _, err := s.AskQuestion(ctx, q, userID, nil, "")
-		if err != nil {
-			logger.Warn("Failed to process question",
-				logger.StringField("question", q),
-				logger.ErrorField(err))
-			answers[q] = "Failed to answer, please try again later"
-		} else {
-			answers[q] = answer
-		}
-	}
-
-	return answers, nil
 }
 
 func (s *qaServiceImpl) GetHistory(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error) {

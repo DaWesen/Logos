@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"Logos/internal/service/ai/question/dao"
@@ -13,6 +14,7 @@ import (
 )
 
 type stubQARepo struct {
+	mu           sync.Mutex
 	records      map[string]*model.QARecord
 	getResults   []*model.QARecord
 	getCalls     int
@@ -24,6 +26,8 @@ type stubQARepo struct {
 }
 
 func (r *stubQARepo) CreateQARecord(_ context.Context, record *model.QARecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.created = append(r.created, record)
 	if r.createErr != nil {
 		return r.createErr
@@ -36,6 +40,8 @@ func (r *stubQARepo) CreateQARecord(_ context.Context, record *model.QARecord) e
 }
 
 func (r *stubQARepo) GetQARecord(_ context.Context, id string) (*model.QARecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.getCalls++
 	if r.getErr != nil {
 		return nil, r.getErr
@@ -54,6 +60,8 @@ func (r *stubQARepo) ReplaceDegradedAnswer(
 	answer string,
 	confidence float64,
 ) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.replaceCalls++
 	if r.replaceErr != nil {
 		return false, r.replaceErr
