@@ -1168,10 +1168,34 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 | `hit` | 重放/重复投递命中已落库答案，没有再次调用模型 |
 | `concurrent_hit` | 两个实例同时执行，后写入者撞唯一键后回查到先写入者 |
 | `conflict` | 同一幂等键被不同用户或不同问题复用，按错误日志排查 |
+| `degraded_hit` | 命中的是兜底文案而不是终态答案，服务端会重新生成 |
+| `healed` | 重试生成了正常回答，并通过条件更新覆盖了降级记录 |
 
 `hit` 与 `concurrent_hit` 的区别很重要：前者说明重复投递被正常挡住，后者说明消费端
 仍有并发窗口，但业务侧已经把它收敛成一次成功问答。只看「模型调用次数下降」无法区分
 这两种情况。
+
+### 降级不是成功：别让幂等键缓存一次模型故障
+
+模型未配置或调用失败时，问答服务仍会返回 200 和一段兜底文案。在没有幂等键之前，
+这只是「这次回答不好」；加上 `request_id` 之后，这条兜底文案会被当成终态落库，
+后续所有重放都直接返回「请稍后再试」，模型恢复了也不会再生成——一次瞬时故障被
+永久固化成这个幂等键的答案。
+
+处理方式：
+
+- `qa_records.degraded` 标记兜底回答，历史记录也能区分「未回答」与「已回答」；
+- 命中降级记录时不直接返回，继续走模型生成，且不再消耗一次用户配额；
+- 生成成功后走 `UPDATE qa_records SET ... WHERE id = ? AND degraded = TRUE`：
+  只有第一个成功的实例能覆盖，其他实例回查先写入的答案，用条件更新代替分布式锁；
+- gRPC 响应透传 `degraded`，Kafka 适配器把它当失败返回，消息进入重试；
+  重试耗尽进死信，模型恢复后用 `dlq-replay` 回放即可自愈；
+- `logos.qa.answer.count{result=ok|degraded}` 单独暴露降级率，
+  `logos.qa.idempotency.count{result=degraded_hit|healed}` 暴露自愈情况。
+
+一句话总结：幂等最容易被忽略的不是重复请求，而是把失败也幂等掉。失败结果一旦
+带确定性主键落库，就等于把一次瞬时故障变成永久状态；正确做法是把「是否成功」
+编码进记录，并让后续重试有机会用条件更新修正它。
 
 ### 自动化测试覆盖
 
@@ -1193,9 +1217,12 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 - 命中已有记录时返回原答案与原标识，不再次写库；
 - 不同用户、不同问题复用同一个 `request_id` 都返回冲突；
 - 空 `request_id` 保持 UUID 行为，不查询幂等记录；
-- 并发写入唯一键冲突后回查已有记录，返回先写入者的答案。
+- 并发写入唯一键冲突后回查已有记录，返回先写入者的答案；
+- 命中降级记录会重新生成，成功后用条件更新覆盖并返回新答案；
+- 模型仍不可用时保持 `degraded=true`，不会被包装成成功回答；
+- 首次请求就没有模型可用时，落库记录带降级标记。
 
-`pkg/obs/metrics_qa_test.go`：验证幂等结果指标按固定 `result` 标签上报。
+`pkg/obs/metrics_qa_test.go`：验证幂等结果与问答降级指标按固定 `result` 标签上报。
 
 ```bash
 go test ./internal/service/messaging/message/... -count=1
