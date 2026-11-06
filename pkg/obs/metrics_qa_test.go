@@ -39,6 +39,12 @@ func TestRecordQAContextItem_ReportsDropped(t *testing.T) {
 	})
 }
 
+func TestRecordQABatch_ReportsPartial(t *testing.T) {
+	assertCounterHasLabel(t, "logos.qa.batch.count", "result", "partial", func() {
+		RecordQABatch(context.Background(), "partial")
+	})
+}
+
 func assertCounterHasLabel(t *testing.T, name, key, want string, record func()) {
 	t.Helper()
 	assertCounterHasAttrs(t, name, map[string]string{key: want}, record)

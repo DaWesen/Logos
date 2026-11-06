@@ -31,6 +31,7 @@ var (
 	qaRetrievalNum       metric.Int64Counter
 	qaRetrievalDur       metric.Float64Histogram
 	qaContextItemNum     metric.Int64Counter
+	qaBatchNum           metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -102,6 +103,10 @@ func initReliabilityMetrics() {
 	qaContextItemNum, _ = meter.Int64Counter(
 		"logos.qa.context.item.count",
 		metric.WithDescription("拼入 prompt 的参考信息条目计数（result=kept/duplicated/truncated/dropped）"),
+	)
+	qaBatchNum, _ = meter.Int64Counter(
+		"logos.qa.batch.count",
+		metric.WithDescription("批量问答结果计数（result=ok/partial/failed/rejected）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -284,6 +289,18 @@ func RecordQAContextItem(ctx context.Context, result string, count int) {
 		return
 	}
 	qaContextItemNum.Add(ctx, int64(count), metric.WithAttributes(attribute.String("result", result)))
+}
+
+// RecordQABatch 记录一次批量问答的整体结果。
+//
+// partial 是这里最重要的枚举：一批 20 题成功 19 题，接口仍然返回 200，
+// 只看成功率会以为批量能力完全正常。rejected 则说明调用方在超限提交，
+// 需要回到客户端做分批，而不是默默截断。
+func RecordQABatch(ctx context.Context, result string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if qaBatchNum != nil {
+		qaBatchNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
 }
 
 // RecordOutboxDispatch 记录一条 Outbox 消息的投递结果与耗时。
