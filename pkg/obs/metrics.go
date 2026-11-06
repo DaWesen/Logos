@@ -26,6 +26,7 @@ var (
 	kafkaReplayCounter   metric.Int64Counter
 	kafkaDuplicateNum    metric.Int64Counter
 	kafkaFinalizeFailNum metric.Int64Counter
+	qaIdempotencyNum     metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -76,6 +77,10 @@ func initReliabilityMetrics() {
 	kafkaFinalizeFailNum, _ = meter.Int64Counter(
 		"logos.kafka.finalize.failure.count",
 		metric.WithDescription("业务处理成功但消息终态写入失败的次数（消息会停留在 PROCESSING）"),
+	)
+	qaIdempotencyNum, _ = meter.Int64Counter(
+		"logos.qa.idempotency.count",
+		metric.WithDescription("问答业务幂等结果计数（result=hit/conflict/concurrent_hit）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -200,6 +205,19 @@ func RecordMessageFinalizeFailure(ctx context.Context, topic string) {
 	reliabilityOnce.Do(initReliabilityMetrics)
 	if kafkaFinalizeFailNum != nil {
 		kafkaFinalizeFailNum.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// RecordQAIdempotency 记录问答服务按 request_id 做业务幂等的结果。
+//
+// hit 说明重放/重复投递被下游兜住，没有再次调用模型；concurrent_hit 说明
+// 两个实例同时执行、后写入者回查到了先写入的答案；conflict 则可能是调用方
+// 复用了别人的幂等键，或同一键携带了不同问题，需要按错误日志排查。
+// result 只接受固定枚举，不把 request_id 放进标签，避免高基数。
+func RecordQAIdempotency(ctx context.Context, result string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if qaIdempotencyNum != nil {
+		qaIdempotencyNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 	}
 }
 

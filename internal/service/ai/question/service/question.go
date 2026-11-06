@@ -15,6 +15,7 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/eino"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 	"Logos/pkg/pagination"
 )
 
@@ -94,11 +95,14 @@ func (s *qaServiceImpl) AskQuestion(
 		}
 		if existing != nil {
 			if existing.UserID != userID {
+				obs.RecordQAIdempotency(ctx, "conflict")
 				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 			}
 			if existing.Question != content {
+				obs.RecordQAIdempotency(ctx, "conflict")
 				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 			}
+			obs.RecordQAIdempotency(ctx, "hit")
 			logger.Info("命中幂等问答记录，跳过模型调用",
 				logger.StringField("request_id", requestID),
 				logger.StringField("question_id", existing.ID))
@@ -201,8 +205,10 @@ func (s *qaServiceImpl) AskQuestion(
 			existing, getErr := s.qaRepo.GetQARecord(ctx, questionID)
 			if getErr == nil && existing != nil {
 				if existing.UserID != userID || existing.Question != content {
+					obs.RecordQAIdempotency(ctx, "conflict")
 					return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 				}
+				obs.RecordQAIdempotency(ctx, "concurrent_hit")
 				logger.Warn("幂等问答记录已被并发写入，返回已有答案",
 					logger.StringField("request_id", requestID),
 					logger.StringField("question_id", existing.ID))
