@@ -842,6 +842,22 @@ Redis ≈ 同上 × 1.5（JSON/base64 膨胀）
 
 同时输出**负样本相似度分布的分位数**（p50/p90/p99）。理想情况下 p99 明显低于正样本 p10；若两条分布大面积重叠，说明这套 embedding 不适合作缓存，需要换模型或加判官。
 
+运行方式（标定集需自行按 §10.1 采集，仓库不放真实数据）：
+
+```bash
+go run ./cmd/tools/scache-calibrate \
+  -dataset internal/service/ai/bot/service/scache/testdata/calib.jsonl \
+  -base-url https://api.openai.com/v1 -model bge-m3
+
+go run ./cmd/tools/scache-calibrate -check -mid 0.88 -high 0.94 \
+  -dataset internal/service/ai/bot/service/scache/testdata/calib.jsonl \
+  -base-url https://api.openai.com/v1 -model bge-m3
+```
+
+`-check` 同时校验总体 FHR（默认 >1% 失败）与逐类硬负样本（任一类有假命中即失败），
+避免总体比例被大量容易样本稀释。`testdata/calib.example.jsonl` 只演示 JSONL 格式，
+不是标定数据，不能用于填 §10.3 的数字。
+
 ### 10.3 选点规则
 
 ```
@@ -1293,6 +1309,8 @@ semantic_cache:
 | KBVersion 失效与 `BumpKBVersion` | 已实现 | `scache/signal.go` |
 | 熔断与指标（命中/拒绝原因/判官/写队列） | 已实现 | `scache/breaker.go`、`pkg/obs/metrics.go` |
 | Bot 非流式与流式接入（工具轮、planner、注入命中禁止写入） | 已实现 | `bot.go`、`semantic_cache.go` |
+| `calibrated_for` 与 embedding 模型绑定，不匹配降级 shadow | 已实现 | `semantic_cache.go` |
+| 阈值标定工具与 `-check` 回归 | 已实现 | `cmd/tools/scache-calibrate`、`scache/calibrate` |
 
 关键正确性约束：灰区判官只裁决**最终会被返回的那一条候选**。实现上先按槽位过滤出兼容候选，再取 `compatible[0]` 交给判官，避免"判官批准候选 2、实际返回候选 1"的假命中。
 
@@ -1310,7 +1328,8 @@ go test -race ./internal/service/ai/bot/service/scache/...  通过
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 真实 embedding 标定（mid/high 阈值） | 未执行 | §10.3 报告模板为空 |
+| 标定工具 `cmd/tools/scache-calibrate` | 已实现 | 含 `-check` 逐类复核；纯计算部分有单测 |
+| 真实 embedding 标定（mid/high 阈值） | 未执行 | 标定集 `calib.jsonl` 需真实 query，尚未采集；阈值仍是占位值 |
 | 假命中率（FHR）评测 | 未执行 | 无真实标定集，不得填数 |
 | 压测（QPS/P99/内存） | 未执行 | §15.4 留空 |
 | `mode=on` 灰度放量 | 未开启 | 默认 `mode=shadow` |

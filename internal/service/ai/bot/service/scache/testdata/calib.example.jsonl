@@ -1,0 +1,8 @@
+{"q1":"怎么关闭自动续费","q2":"自动续费如何取消","label":"hit"}
+{"q1":"发票怎么开？","q2":"如何开发票","label":"hit"}
+{"q1":"怎么关闭自动续费","q2":"怎么开启自动续费","label":"miss","type":"negation"}
+{"q1":"500元能买什么","q2":"1000元能买什么","label":"miss","type":"number"}
+{"q1":"北京到上海的航班","q2":"上海到北京的航班","label":"miss","type":"entity"}
+{"q1":"今天天气怎么样","q2":"下个月天气怎么样","label":"miss","type":"time"}
+{"q1":"第二个方案多少钱","q2":"这个多少钱","label":"miss","type":"anaphora"}
+{"q1":"怎么联系客服","q2":"客服电话是多少","label":"miss","type":"intent"}
