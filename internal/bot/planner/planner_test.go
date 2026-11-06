@@ -311,7 +311,7 @@ func TestTruncateRunes_ChineseNotCut(t *testing.T) {
 
 // TestFormatResults_TruncatesByRune 单步结果截断后必须是合法 UTF-8（会作为 prompt 发给模型）。
 func TestFormatResults_TruncatesByRune(t *testing.T) {
-	long := strings.Repeat("中文结果", maxStepOutputKB*1024/4+1)
+	long := strings.Repeat("中文结果", maxStepOutputBytes/4+1)
 	got := FormatResults([]StepResult{
 		{Step: PlanStep{ID: 1, Description: "第一步"}, Output: long, Success: true},
 	})

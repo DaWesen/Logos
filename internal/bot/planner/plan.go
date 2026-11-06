@@ -105,7 +105,6 @@ const (
 
 	MaxReplanCount = 2 // v2 放开到 2，配合失效传播做一次纠错 + 一次兜底
 
-	maxStepOutputKB    = 16 // 保留给既有测试与配置说明
 	maxStepOutputBytes = 16 * 1024
 	maxPriorBytes      = 48 * 1024
 )
