@@ -964,7 +964,8 @@ curl -X POST http://localhost:8888/api/v1/vector/text-search \
 ### 三条设计约束
 
 1. **不重复**：原样投回原始 key 与 value，沿用原始 `message_id`，由下游主键幂等兜底；
-   分区键不变，保证同一会话的消息仍然落在同一分区，回放不打乱顺序。
+   分区键不变，保证同一会话的消息仍然落在同一分区，回放不打乱顺序；原始 Kafka header
+   也随信封一起往返，租户/追踪/灰度标记不会因为回放而丢失。
 2. **不倾泻**：`-rate` 限速（默认 50 条/秒）+ `-limit` 限量（默认 100 条）。限速基准取
    「当前时刻」而不是「上次理论时刻 + 间隔」，长时间停顿后不追赶欠下的额度，避免限速
    退化成一次突发。
@@ -985,6 +986,34 @@ curl -X POST http://localhost:8888/api/v1/vector/text-search \
 
 `source_topic` 缺失或 JSON 损坏必须报错，绝不猜一个目标 topic 投回去；设了窗口但记录
 没有 `dead_lettered_at`（字段上线前的旧死信）计入 `SkippedUnknownTime`，不做回放。
+
+### 元数据往返
+
+死信信封新增 `headers` 字段，写入时保存原始消息的全部 Kafka header，回放时先还原、
+再覆盖本轮的回放标记。顺序不能反：旧信封里可能残留上一轮的
+`x-logos-replay-count` 与 `x-logos-replayed-from`，先写标记会被旧值覆盖，
+循环保护与溯源同时失效。
+
+回放轮次取「信封 `replay_count` 字段」与「原始 header 计数」的较大值：
+该字段是后加的，升级前写入的信封只有 header 计数；只读字段会让计数归零，
+「回放→再失败→再死信」的保护在升级后被绕过。
+
+旧信封没有 `headers` 字段时解析为 nil，回放照常进行，只写回放标记——
+新增字段不改变旧数据的可回放性。
+
+### 回放可观测
+
+回放结果计入 `logos.kafka.replay.count`，标签 `result` 取固定枚举：
+
+| result | 含义 | 告警建议 |
+|--------|------|---------|
+| `replayed` | 成功投回源 topic | 突增说明有一批积压被放出 |
+| `quarantined` | 死信体损坏，已转存隔离队列 | 出现即需人看，通常意味着上游写了坏数据 |
+| `failed` | 投回失败，位点未提交 | 与下游错误率一起看，持续非零说明故障未恢复 |
+| `commit_error` | 已投回但死信位点提交失败 | 会重复回放，靠下游幂等兜底，需关注 |
+
+标签只取固定枚举，不拼接 topic 与错误文本：回放调用频率低，但标签基数一旦被
+用户输入撑开，代价会长期留在指标后端，排查时反而不如直接看日志。
 
 ### 使用方式
 
@@ -1019,11 +1048,13 @@ go run ./cmd/tool/dlq-replay -source-topic chat_messages -json
 
 ### 自动化测试覆盖
 
-`pkg/mq/dead_letter_replay_test.go`（19 个用例，全部走注入的 source/sink 桩，不依赖 Kafka）：
+`pkg/mq/dead_letter_replay_test.go`（22 个用例，全部走注入的 source/sink 桩，不依赖 Kafka）：
 
 - **筛选**：源 topic 过滤、窗口边界（左闭右开）、无时刻、轮次超限各自计数正确，且都不提交位点；
 - **投递**：原样保留 key/value、写回 `x-logos-replay-count` 与 `x-logos-replayed-from`、
   分区键不变；
+- **元数据保真**：原始 header 逐项还原；旧信封里的回放标记被本轮值覆盖；
+  旧格式只有 header 计数时，上限判断仍然生效；
 - **限速**：按注入时钟推进，`-rate` 为负时不等待，停顿后不追赶欠额度；
 - **损坏隔离**：非法 JSON 转存 quarantine 后才提交；隔离写失败则位点不提交并返回错误；
 - **失败账目**：投回失败计入 `Failed` 且位点不提交；提交失败计入 `CommitErrors` 但消息已放出；
