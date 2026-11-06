@@ -1273,4 +1273,48 @@ semantic_cache:
 
 **任何一步没有真实数据，就在文档里写"未测"，不要填空。** 这份文档的价值在于可信，不在于好看。
 
+---
+
+## §20 实现状态（2026-11-06）
+
+### 20.1 已落地
+
+| 模块 | 状态 | 位置 |
+|---|---|---|
+| 七维 Scope（tenant/bot/user/KBVersion/prompt/model/embedding）与隔离 | 已实现 | `scache/scope.go` |
+| 归一化、PromptHash、SHA-256 精确层 | 已实现 | `scache/normalize.go` |
+| 槽位抽取与硬门控（否定/数字/实体/路线方向） | 已实现 | `scache/slots.go` |
+| 进程内索引、TTL、容量与字节上限淘汰 | 已实现 | `scache/index.go` |
+| 判定流水线（精确 → 探活 → 向量 → 槽位 → 灰区判官） | 已实现 | `scache/cache.go` |
+| 灰区判官与七维 Scope 校验 | 已实现 | `scache/judge.go` |
+| 伪流式回放（分片节奏 + 预算） | 已实现 | `scache/replay.go` |
+| 有界写队列 + 固定 worker | 已实现 | `scache/cache.go` |
+| Redis 持久化与不可用降级（进程内继续命中） | 已实现 | `scache/cache.go` |
+| KBVersion 失效与 `BumpKBVersion` | 已实现 | `scache/signal.go` |
+| 熔断与指标（命中/拒绝原因/判官/写队列） | 已实现 | `scache/breaker.go`、`pkg/obs/metrics.go` |
+| Bot 非流式与流式接入（工具轮、planner、注入命中禁止写入） | 已实现 | `bot.go`、`semantic_cache.go` |
+
+关键正确性约束：灰区判官只裁决**最终会被返回的那一条候选**。实现上先按槽位过滤出兼容候选，再取 `compatible[0]` 交给判官，避免"判官批准候选 2、实际返回候选 1"的假命中。
+
+### 20.2 已验证
+
+```text
+go build ./...                                       通过
+go test ./internal/service/ai/bot/service/...        通过
+go test -race ./internal/service/ai/bot/service/scache/...  通过
+```
+
+单测覆盖：归一化、Scope 顺序与空 UserID、PromptHash、槽位门控（含路线问句尾巴）、精确命中不调用 embedding、embedding 失败降级、shadow 不返回、兼容候选优先、灰区无判官、准入禁区、TTL、KBVersion 失效、伪流式回放、并发访问、Close 幂等。
+
+### 20.3 尚未完成
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 真实 embedding 标定（mid/high 阈值） | 未执行 | §10.3 报告模板为空 |
+| 假命中率（FHR）评测 | 未执行 | 无真实标定集，不得填数 |
+| 压测（QPS/P99/内存） | 未执行 | §15.4 留空 |
+| `mode=on` 灰度放量 | 未开启 | 默认 `mode=shadow` |
+
+**默认 `mode=shadow`**：完整判定并记录指标，但不返回缓存答案，用户可见行为与 `off` 一致。切换 `mode=on` 前必须完成阈值标定并在配置中填写 `calibrated_for`；没有真实数据就不放量。
+
 
