@@ -1136,6 +1136,28 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 就看不出闸门到底挡下了什么。消息统计里的 `pending` 也同步改为
 `PENDING + PROCESSING`，否则一批处理中的消息会从看板上消失。
 
+### 跨服务业务幂等：`message_id` → `request_id` → 确定性主键
+
+消费端的 `PROCESSING` 闸门只解决「同一条 Kafka 消息不被并发执行」，它依赖
+`queue_messages` 里还有这条记录。消息记录被清理、消费端状态丢失，或者下游
+已经被调用但消费端没来得及标记时，闸门本身无法判断业务是否已经执行过。
+
+因此把幂等键跟着业务实体走：消费者从事件里取出 `message_id`，作为
+`QuestionReq.request_id` 通过 gRPC 传给问答服务；问答服务用它派生确定性主键
+`qa:<request_id>`（超过 64 字节时用 SHA-256 收敛，避免数据库截断后碰撞），
+并在**限流、检索、模型调用之前**先查这条记录。
+
+- **命中且用户、问题都一致**：直接返回已落库的答案、置信度与原始
+  `question_id`/`timestamp`，不再调用模型，也不消耗限流配额。
+- **命中但用户或问题不一致**：返回 `ErrQARequestIDConflict`，不能把别人的答案
+  返回给当前调用方，也不能让调用方拿到与请求内容不符的答案。
+- **并发写入撞唯一键**：`CreateQARecord` 失败后按同一确定性主键回查，返回先写入者
+  的答案，把「两个实例同时处理同一条消息」收敛成一次成功问答。
+- **没有 `request_id`**：保持原有 UUID 主键与行为，普通 HTTP 问答不受影响。
+
+这一层不依赖 `queue_messages` 是否还在，也不依赖消费端是否成功写入 `PROCESSED`，
+是消费端闸门之外的第二次兜底。
+
 ### 自动化测试覆盖
 
 `service/message_test.go` 与 `dao/claim_test.go`：
@@ -1147,21 +1169,31 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 - 终态写入瞬时失败重试到成功；持续失败时只调用一次模型且不归还认领；
 - 生命周期 ctx 已取消时仍能写完成态；
 - 缺少 `message_id`、记录不存在时退回原有行为，不静默丢消息；
+- `message_id` 原样透传为 `request_id`，缺少 `message_id` 时传空字符串；
 - `duplicateReason` 的状态到枚举映射。
+
+`internal/service/ai/question/service/question_idempotency_test.go`：
+
+- `qaRecordID` 短 ID 保留原文、长 ID 固定 64 字符、同输入稳定且不同输入不碰撞；
+- 命中已有记录时返回原答案与原标识，不再次写库；
+- 不同用户、不同问题复用同一个 `request_id` 都返回冲突；
+- 空 `request_id` 保持 UUID 行为，不查询幂等记录；
+- 并发写入唯一键冲突后回查已有记录，返回先写入者的答案。
 
 ```bash
 go test ./internal/service/messaging/message/... -count=1
 go test ./internal/service/messaging/message/... -count=1 -race
+go test ./internal/service/ai/question/... -count=1 -race
 ```
 
 ### 已知边界
 
 - 单测用 stub 与 GORM DryRun 断言 SQL，**没有在真实 PostgreSQL 上跑多实例并发集成测试**；
   条件 `UPDATE` 的原子性依赖数据库行锁，上线前应在预发环境用两个消费者压测同一条消息。
-- `AskQuestion` 把「调模型」和「写问答记录」封装在一次调用里，返回错误时 handler
-  无法区分是哪一步失败，统一归还认领并重试，仍存在「模型成功、记录写失败」导致重复
-  调模型的窗口。要彻底消除，需要让问答服务返回结构化失败阶段，或把答案落库拆成
-  可幂等的独立步骤。
+- 跨服务幂等只能覆盖「答案已经落库」的情况。如果模型调用成功、但 `CreateQARecord`
+  一次都没有写成功，重放时仍会再调一次模型；本轮消除的是「记录已写成功但消费端
+  未标记 / 记录被清理」这一窗口，不能宣称彻底消除所有外部副作用窗口。要再进一步，
+  需要把模型调用结果先持久化为「处理中」记录，或引入模型侧的去重键。
 - 终态持续写失败后记录会停在 `PROCESSING`；租约过期只让它「可被接管」，不会自动
   修复状态。当前依赖 `logos.kafka.finalize.failure.count` 告警 + 人工把记录修正为
   `PROCESSED`，没有内置对账任务。
