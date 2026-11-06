@@ -664,3 +664,96 @@ func TestReplay_CloseReleasesSource(t *testing.T) {
 		t.Fatalf("Close 必须释放死信 reader")
 	}
 }
+
+// TestReplay_RestoresOriginalHeadersAndOverridesReplayMarkers 验证回放的元数据保真：
+// 原始 header 要原样还原，回放标记要以本轮为准，不能被信封里的旧值覆盖。
+// 少了任何一半，回放出去的消息都和原消息不是同一条。
+func TestReplay_RestoresOriginalHeadersAndOverridesReplayMarkers(t *testing.T) {
+	env := validEnvelope("chat_messages", "chat-1", "msg-1", nil, 1)
+	env.Headers = map[string]string{
+		"x-tenant-id":      "tenant-7",
+		"x-trace-id":       "trace-abc",
+		HeaderReplayCount:  "1",
+		HeaderReplayedFrom: "stale.dlq",
+	}
+
+	source := newFakeSource(dlqRecord(t, 1, env))
+	sink := newFakeReplaySink()
+	r, _ := newTestReplayer(source, sink, ReplayConfig{DLQTopic: "chat_messages.dlq", RatePerSecond: -1})
+
+	if _, err := r.Replay(context.Background()); err != nil {
+		t.Fatalf("Replay 返回错误: %v", err)
+	}
+
+	sent := sink.sentFor("chat_messages")
+	if len(sent) != 1 {
+		t.Fatalf("应投回 1 条，got %d", len(sent))
+	}
+	if got := sent[0].Headers["x-tenant-id"]; got != "tenant-7" {
+		t.Fatalf("租户 header 丢失: %q", got)
+	}
+	if got := sent[0].Headers["x-trace-id"]; got != "trace-abc" {
+		t.Fatalf("追踪 header 丢失: %q", got)
+	}
+	// 旧值分别是 1 和 stale.dlq：必须以本轮为准，否则循环保护与溯源都会失真。
+	if got := sent[0].Headers[HeaderReplayCount]; got != "2" {
+		t.Fatalf("回放轮次应覆盖为 2，got %q", got)
+	}
+	if got := sent[0].Headers[HeaderReplayedFrom]; got != "chat_messages.dlq" {
+		t.Fatalf("来源死信 topic 应覆盖为本次，got %q", got)
+	}
+}
+
+// TestReplay_LegacyHeaderCountStillTripsLoopGuard 覆盖旧格式死信：
+// replay_count 字段是后加的，升级前的信封只有 header 里的计数。
+// 只读字段会让计数从 0 重新开始，循环保护形同虚设。
+func TestReplay_LegacyHeaderCountStillTripsLoopGuard(t *testing.T) {
+	env := validEnvelope("chat_messages", "chat-1", "msg-1", nil, 0)
+	env.Headers = map[string]string{HeaderReplayCount: strconv.Itoa(defaultReplayMaxReplayCount)}
+
+	source := newFakeSource(dlqRecord(t, 1, env))
+	sink := newFakeReplaySink()
+	r, _ := newTestReplayer(source, sink, ReplayConfig{DLQTopic: "chat_messages.dlq", RatePerSecond: -1})
+
+	report, err := r.Replay(context.Background())
+	if err != nil {
+		t.Fatalf("Replay 返回错误: %v", err)
+	}
+	if report.SkippedReplayLimit != 1 || report.Replayed != 0 {
+		t.Fatalf("旧信封的 header 计数必须参与上限判断: %+v", report)
+	}
+	if len(source.commits) != 0 {
+		t.Fatalf("超限消息不得提交位点")
+	}
+}
+
+// TestBuildDeadLetterPayload_PreservesOriginalHeaders 验证死信阶段就把 header 存进信封。
+// 回放能还原的前提是写入时没有丢；nil header 不能生成空对象，否则旧格式字节会变。
+func TestBuildDeadLetterPayload_PreservesOriginalHeaders(t *testing.T) {
+	msg := &Message{
+		Topic:   "chat_messages",
+		Key:     "chat-1",
+		Value:   []byte(`{"id":"m-1"}`),
+		Headers: map[string]string{"x-tenant-id": "tenant-7"},
+	}
+	payload, err := buildDeadLetterPayload(msg, errors.New("db timeout"))
+	if err != nil {
+		t.Fatalf("构造死信体失败: %v", err)
+	}
+	env, err := parseDeadLetterEnvelope(payload)
+	if err != nil {
+		t.Fatalf("解析死信体失败: %v", err)
+	}
+	if got := env.Headers["x-tenant-id"]; got != "tenant-7" {
+		t.Fatalf("死信信封未保留原始 header: %v", env.Headers)
+	}
+
+	msg.Headers = nil
+	payload, err = buildDeadLetterPayload(msg, errors.New("db timeout"))
+	if err != nil {
+		t.Fatalf("构造无 header 死信体失败: %v", err)
+	}
+	if strings.Contains(string(payload), `"headers"`) {
+		t.Fatalf("空 header 不应写进信封: %s", payload)
+	}
+}

@@ -12,6 +12,7 @@ import (
 
 	"Logos/config"
 	"Logos/pkg/logger"
+	"Logos/pkg/obs"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -34,6 +35,15 @@ const (
 
 // HeaderQuarantineReason 记录一条死信记录被隔离的原因。
 const HeaderQuarantineReason = "x-logos-quarantine-reason"
+
+// 回放指标的结果枚举。取固定值而不是拼接 topic/错误文本：
+// 标签基数一旦被用户输入撑开，指标后端的存储与查询都会退化成日志。
+const (
+	replayResultReplayed    = "replayed"
+	replayResultQuarantined = "quarantined"
+	replayResultFailed      = "failed"
+	replayResultCommitError = "commit_error"
+)
 
 // 回放停止原因，供 CLI 与告警区分「正常跑完」和「被截断」。
 const (
@@ -248,8 +258,10 @@ func (r *DeadLetterReplayer) Replay(ctx context.Context) (*ReplayReport, error) 
 			}
 			if cErr := r.commit(ctx, km); cErr != nil {
 				report.CommitErrors++
+				obs.RecordKafkaReplay(ctx, replayResultCommitError)
 			}
 			report.Quarantined++
+			obs.RecordKafkaReplay(ctx, replayResultQuarantined)
 			logger.Error("死信记录损坏，已转入隔离队列",
 				logger.StringField("dlq_topic", km.Topic),
 				logger.IntField("partition", km.Partition),
@@ -265,12 +277,15 @@ func (r *DeadLetterReplayer) Replay(ctx context.Context) (*ReplayReport, error) 
 		if !r.inWindow(env, report) {
 			continue
 		}
-		if env.ReplayCount >= maxReplays {
+		// 轮次取「信封字段」与「原始 header」的较大值：字段上线前写入的旧信封
+		// 只有 header 里的计数，只读字段会让循环保护从 0 重新开始。
+		replayCount := replayCountOf(env)
+		if replayCount >= maxReplays {
 			report.SkippedReplayLimit++
 			logger.Warn("死信消息回放轮次已达上限，保留在死信队列等待人工处理",
 				logger.StringField("source_topic", env.SourceTopic),
 				logger.StringField("key", env.Key),
-				logger.IntField("replay_count", env.ReplayCount),
+				logger.IntField("replay_count", replayCount),
 				logger.IntField("max_replay_count", maxReplays))
 			continue
 		}
@@ -295,12 +310,10 @@ func (r *DeadLetterReplayer) Replay(ctx context.Context) (*ReplayReport, error) 
 			nextAllowed = r.now().Add(interval)
 		}
 
-		headers := map[string]string{
-			HeaderReplayedFrom: km.Topic,
-			HeaderReplayCount:  strconv.Itoa(env.ReplayCount + 1),
-		}
+		headers := replayHeaders(env, km.Topic, replayCount)
 		if err := r.sink.SendWithHeaders(ctx, env.SourceTopic, env.Key, env.Value, headers); err != nil {
 			report.Failed++
+			obs.RecordKafkaReplay(ctx, replayResultFailed)
 			logger.Error("死信回放投回源 topic 失败，位点未提交",
 				logger.StringField("source_topic", env.SourceTopic),
 				logger.StringField("key", env.Key),
@@ -310,8 +323,10 @@ func (r *DeadLetterReplayer) Replay(ctx context.Context) (*ReplayReport, error) 
 
 		report.Replayed++
 		report.incTopic(env.SourceTopic)
+		obs.RecordKafkaReplay(ctx, replayResultReplayed)
 		if err := r.commit(ctx, km); err != nil {
 			report.CommitErrors++
+			obs.RecordKafkaReplay(ctx, replayResultCommitError)
 			logger.Warn("死信已回放但位点提交失败，重启后可能重复回放",
 				logger.StringField("dlq_topic", km.Topic),
 				logger.Int64Field("offset", km.Offset),
@@ -431,4 +446,40 @@ func replayCountFromMessage(msg *Message) int {
 		return 0
 	}
 	return n
+}
+
+// replayCountOf 返回一条死信记录实际累计的回放轮次。
+//
+// 信封的 replay_count 字段是主口径，但旧版本写入的信封只有 header 里的计数。
+// 两者取较大值，保证计数单调：回放只会让轮次变大，不会因为读到旧格式而归零，
+// 否则「回放→再失败→再死信」的循环保护会在升级后被绕过。
+func replayCountOf(env *deadLetterEnvelope) int {
+	if env == nil {
+		return 0
+	}
+	count := env.ReplayCount
+	if count < 0 {
+		count = 0
+	}
+	if raw, ok := env.Headers[HeaderReplayCount]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && n > count {
+			count = n
+		}
+	}
+	return count
+}
+
+// replayHeaders 组装回放时要写回的 header：先还原原始元数据，再覆盖回放标记。
+//
+// 顺序不能反：旧信封的 headers 里可能残留上一轮的 x-logos-replay-count，
+// 先写标记再合并原始 header 会被旧值覆盖，循环保护随即失效。
+// x-logos-replayed-from 也必须指向本次的死信 topic，而不是更早那一次。
+func replayHeaders(env *deadLetterEnvelope, dlqTopic string, replayCount int) map[string]string {
+	headers := make(map[string]string, len(env.Headers)+2)
+	for k, v := range env.Headers {
+		headers[k] = v
+	}
+	headers[HeaderReplayedFrom] = dlqTopic
+	headers[HeaderReplayCount] = strconv.Itoa(replayCount + 1)
+	return headers
 }

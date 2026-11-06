@@ -505,6 +505,13 @@ type deadLetterEnvelope struct {
 	DeadLetteredAt *time.Time `json:"dead_lettered_at,omitempty"`
 	// ReplayCount 是已累计的回放轮次，用于阻断「回放→再失败→再死信→再回放」的循环。
 	ReplayCount int `json:"replay_count,omitempty"`
+	// Headers 保留原始消息的 Kafka header。
+	//
+	// 回放不是「把字节倒回去」就算完：租户、追踪、灰度标记这类链路元数据都在
+	// header 里，丢了它们，回放出去的消息和原消息就不是同一条——下游可能按
+	// 租户分片、按 trace 采样，行为会和首次消费不一致。旧信封没有该字段，
+	// 解析为 nil，回放时只写回放标记，仍然兼容。
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // buildDeadLetterPayload 构造死信消息体。
@@ -536,6 +543,7 @@ func buildDeadLetterPayload(msg *Message, cause error) ([]byte, error) {
 		// 回放过的消息再次进死信时，轮次继续沿用上游 header 里的计数，
 		// 否则每一轮都会被当成「第一次回放」，循环保护永远不会触发。
 		ReplayCount: replayCountFromMessage(msg),
+		Headers:     msg.Headers,
 	})
 }
 
