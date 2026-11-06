@@ -992,9 +992,12 @@ TestFormatResults_TruncatesByRune
 1. step2 与 step7 之间存在依赖路径（2→3→7）；
 2. step7 的 violation 指向 step2，`seeds = [2]`，不是 `[7]`；
 3. `stale = {2,3,7}` 及 2、3 的所有下游；
-4. 不在下游的 step4/5/6 结果被复用，`exec` 调用次数 = 8 − 3 + 新增步骤数；
+4. 不在下游的 step4/5/6/8 结果被复用，各只执行 1 次；step2/3/7 在失效前各执行 1 次，
+   patch 后由新链替换而不是重复执行。总 `exec` 次数 = 原 8 次 + 新链步骤数；
 5. 只发生 1 次 replan；
-6. 最终 `Synthesize` 的 prompt 中，step2 的正文不出现，只出现"【已失效】"。
+6. 最终 `Synthesize` 的 prompt 中，step2/3/7 的正文均不出现。成功应用 patch 时，
+   被替换的失效分支整体不进入 prompt；无法重规划（`degraded`）时，失效步骤以
+   "【已失效】"占位，正文仍然被剔除。
 
 ---
 
