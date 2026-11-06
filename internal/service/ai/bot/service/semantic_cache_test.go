@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	botmodel "Logos/internal/service/ai/bot/model"
+	"Logos/internal/service/ai/bot/service/scache"
 )
 
 func TestCosineSimilarity_IdenticalVectors(t *testing.T) {
@@ -68,6 +69,48 @@ func TestSemanticCache_EmbedFailureMeansMiss(t *testing.T) {
 	})
 	if _, ok := c.Lookup(t.Context(), nil, "u1", "你好"); ok {
 		t.Error("embed failure should result in cache miss")
+	}
+}
+
+func TestCalibratedForMatches(t *testing.T) {
+	tests := []struct {
+		cal   string
+		model string
+		want  bool
+	}{
+		{"bge-m3/1024", "bge-m3", true},
+		{"BAAI/bge-m3/1024", "BAAI/bge-m3", true},
+		{"bge-m3/1024", "text-embedding-3-small", false},
+		{"bge-m3", "bge-m3", true},
+		{"bge-m3/1024", "", false},
+		{"", "bge-m3", false},
+	}
+	for _, tt := range tests {
+		if got := calibratedForMatches(tt.cal, tt.model); got != tt.want {
+			t.Errorf("calibratedForMatches(%q, %q) = %v, want %v", tt.cal, tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestSemanticCache_ModeForDowngradesOnModelMismatch(t *testing.T) {
+	c := &SemanticCache{
+		defaultMode:      scache.ModeOn,
+		calibratedFor:    "bge-m3/1024",
+		globalEmbedModel: "bge-m3",
+	}
+	if got := c.modeFor(nil); got != scache.ModeOn {
+		t.Errorf("matching model should keep mode=on, got %q", got)
+	}
+
+	bot := &botmodel.Bot{EmbeddingModel: "text-embedding-3-small"}
+	if got := c.modeFor(bot); got != scache.ModeShadow {
+		t.Errorf("mismatched per-bot embedding should downgrade to shadow, got %q", got)
+	}
+
+	// Bot 显式关闭缓存时不能被降级逻辑重新打开。
+	bot.Config = map[string]string{"enable_semantic_cache": "false"}
+	if got := c.modeFor(bot); got != scache.ModeOff {
+		t.Errorf("explicit off must win, got %q", got)
 	}
 }
 

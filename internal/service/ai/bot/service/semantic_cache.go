@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"time"
 
 	"Logos/config"
@@ -10,6 +12,7 @@ import (
 	"Logos/internal/service/ai/bot/service/scache"
 	"Logos/pkg/cache"
 	"Logos/pkg/eino"
+	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 )
 
@@ -23,8 +26,12 @@ type EmbedForBotFunc func(ctx context.Context, bot *botmodel.Bot, text string) (
 // 把 embedding 适配成 scache.EmbedFunc。判定、索引、持久化和降级全部
 // 留在 scache 包内，避免业务代码再次出现一套「差不多」的缓存逻辑。
 type SemanticCache struct {
-	core  *scache.Cache
-	embed EmbedForBotFunc
+	core             *scache.Cache
+	embed            EmbedForBotFunc
+	defaultMode      scache.Mode
+	calibratedFor    string
+	globalEmbedModel string
+	calibWarnOnce    sync.Once
 }
 
 // NewSemanticCache 保留 v1 构造函数签名，供已有装配代码平滑迁移。
@@ -50,7 +57,16 @@ func NewSemanticCacheWithJudge(addr, password string, db int, embed EmbedForBotF
 	if err != nil {
 		return &SemanticCache{embed: embed}
 	}
-	return &SemanticCache{core: core, embed: embed}
+	sc := &SemanticCache{
+		core:          core,
+		embed:         embed,
+		defaultMode:   cfg.Mode,
+		calibratedFor: cfg.CalibratedFor,
+	}
+	if app := config.TryGetConfig(); app != nil {
+		sc.globalEmbedModel = app.Eino.EmbeddingModel
+	}
+	return sc
 }
 
 func semanticCacheConfig(judge scache.JudgeFunc) (scache.Config, error) {
@@ -134,7 +150,7 @@ func (c *SemanticCache) Lookup(ctx context.Context, bot *botmodel.Bot, userID, q
 		Scope: c.scopeFor(ctx, bot, userID),
 		Query: query,
 		Embed: c.embedFunc(bot),
-		Mode:  scacheModeForBot(bot),
+		Mode:  c.modeFor(bot),
 	})
 	if result.Decision.Hit() {
 		obs.RecordSemanticCache(ctx, "lookup", "hit")
@@ -164,7 +180,7 @@ func (c *SemanticCache) StoreWithMeta(ctx context.Context, bot *botmodel.Bot, us
 		Source:            source,
 		ToolCalled:        toolCalled,
 		InjectionGuardHit: injectionGuardHit,
-		Mode:              scacheModeForBot(bot),
+		Mode:              c.modeFor(bot),
 	})
 }
 
@@ -247,6 +263,48 @@ func scacheModeForBot(bot *botmodel.Bot) scache.Mode {
 		return mode
 	}
 	return ""
+}
+
+// modeFor 解析「全局默认 + Bot 覆盖」，并执行阈值标定绑定校验。
+//
+// 配置里的 calibrated_for 记录的是「这套阈值是在哪个 embedding 上标出的」。
+// 换了 embedding 模型却继续用旧阈值，相似度分布会整体漂移，0.95 可能从
+// 「几乎相同」变成「只是同领域」。这里在 mode=on 且模型对不上时降级为
+// shadow：仍然完整计算并记录指标，但不把答案返回给用户。
+func (c *SemanticCache) modeFor(bot *botmodel.Bot) scache.Mode {
+	mode := scacheModeForBot(bot)
+	if mode == "" {
+		mode = c.defaultMode
+	}
+	if mode != scache.ModeOn || c.calibratedFor == "" {
+		return mode
+	}
+	model := c.globalEmbedModel
+	if bot != nil && bot.EmbeddingModel != "" {
+		model = bot.EmbeddingModel
+	}
+	if calibratedForMatches(c.calibratedFor, model) {
+		return mode
+	}
+	c.calibWarnOnce.Do(func() {
+		logger.Warn("语义缓存阈值与 embedding 模型不匹配，已降级为 shadow",
+			logger.StringField("calibrated_for", c.calibratedFor),
+			logger.StringField("embedding_model", model))
+	})
+	return scache.ModeShadow
+}
+
+// calibratedForMatches 判断标定标识是否对应当前模型。
+//
+// 约定格式为 "<model>/<dim>"，但模型名本身可能带斜杠（BAAI/bge-m3），
+// 所以只做前缀匹配，不按 "/" 切分后再比较。
+func calibratedForMatches(calibratedFor, model string) bool {
+	cal := strings.TrimSpace(calibratedFor)
+	name := strings.TrimSpace(model)
+	if cal == "" || name == "" {
+		return false
+	}
+	return cal == name || strings.HasPrefix(cal, name+"/")
 }
 
 // cosineSimilarity 保留为纯函数，供既有测试与外部调试使用。
