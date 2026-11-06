@@ -7,10 +7,10 @@
 
 > **实现状态（2026-11-06）**
 >
-> - **已实现**：D2 连续同角色消息合并、D3 rune-safe 截断、D1 长期记忆改为 per-user 消息注入。
-> - **回归测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`。
-> - **未实现**：D4 分页拉取（仍是最近 60 条）、P1–P4 全部内容。
-> - **已执行验证**：`go test ./... -count=1`、`go test -race ./internal/service/ai/bot/service/... ./internal/bot/agent/... ./internal/bot/memory/...`、`go build ./...`、`go vet ./...` 全部通过。
+> - **已实现（P0 全部）**：D1 长期记忆改为 per-user 消息注入、D2 连续同角色消息合并、D3 rune-safe 截断、D4 分页回溯历史（100 条/页，最多 500 条，目标预算 6000 + 2000 token）。
+> - **回归测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`。
+> - **未实现**：P1–P4 全部内容。
+> - **已执行验证（收尾）**：`go build ./...`、`go test ./internal/service/ai/bot/service/... ./internal/bot/agent/...`、`go vet ./internal/service/ai/bot/service/... ./internal/bot/agent/...` 全部通过。
 > - §1、§2 与附录 A 描述的是 **P0 改造前**的基线；本文其余数字与分层仍是设计目标，不是已上线事实。
 
 ---
