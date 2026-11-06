@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 
 	"Logos/pkg/client"
 )
@@ -14,12 +16,21 @@ func NewQuestionClientAdapter(c *client.QuestionClient) *QuestionClientAdapter {
 	return &QuestionClientAdapter{QuestionClient: c}
 }
 
-func (a *QuestionClientAdapter) AskQuestion(ctx context.Context, question string, userID *string) (interface{ GetID() string }, error) {
+func (a *QuestionClientAdapter) AskQuestion(
+	ctx context.Context,
+	question string,
+	userID *string,
+	requestID string,
+) (interface{ GetID() string }, error) {
 	var uid int64
 	if userID != nil {
-		return nil, nil
+		parsed, err := strconv.ParseInt(*userID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("解析问答用户 ID 失败: %w", err)
+		}
+		uid = parsed
 	}
-	_, err := a.QuestionClient.AskQuestion(ctx, question, uid)
+	_, err := a.QuestionClient.AskQuestionWithRequestID(ctx, question, uid, requestID)
 	if err != nil {
 		return nil, err
 	}

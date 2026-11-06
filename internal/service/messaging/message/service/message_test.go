@@ -20,17 +20,21 @@ type fakeAnswer struct{}
 func (fakeAnswer) GetID() string { return "answer-1" }
 
 type fakeQuestionService struct {
-	calls  int
-	err    error
-	gotCtx context.Context
-	ctxErr error
-	block  bool
+	calls    int
+	err      error
+	gotCtx   context.Context
+	ctxErr   error
+	gotReqID string
+	gotQuest string
+	block    bool
 }
 
-func (f *fakeQuestionService) AskQuestion(ctx context.Context, _ string, _ *string) (interface{ GetID() string }, error) {
+func (f *fakeQuestionService) AskQuestion(ctx context.Context, question string, _ *string, requestID string) (interface{ GetID() string }, error) {
 	f.calls++
 	f.gotCtx = ctx
 	f.ctxErr = ctx.Err()
+	f.gotQuest = question
+	f.gotReqID = requestID
 	if f.block {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -911,6 +915,29 @@ func TestHandleGenericMessage_QAClaimDeniedSkipsModel(t *testing.T) {
 	}
 }
 
+// message_id 必须原样透传为问答服务的 request_id：
+// 消费端认领只覆盖「消息表还在」的场景，跨服务幂等要靠这个业务键。
+func TestHandleGenericMessage_QAPassesMessageIDAsRequestID(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-42","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("正常问答不应报错: %v", err)
+	}
+	if question.gotReqID != "m-42" {
+		t.Fatalf("request_id = %q, want m-42", question.gotReqID)
+	}
+	if question.gotQuest != "hello" {
+		t.Fatalf("question = %q, want hello", question.gotQuest)
+	}
+}
+
 // 认领失败但记录是 PENDING/FAILED 时不能直接提交 offset：
 // PENDING 可能只是对方刚释放认领的竞争窗口，重试一次就能重新认领；
 // FAILED 则应交给重试耗尽后的死信，而不是静默跳过。
@@ -1047,6 +1074,9 @@ func TestHandleGenericMessage_QAMissingMessageIDSkipsClaim(t *testing.T) {
 	}
 	if question.calls != 1 {
 		t.Fatalf("没有 message_id 仍应处理, calls = %d", question.calls)
+	}
+	if question.gotReqID != "" {
+		t.Fatalf("没有 message_id 时应传空 request_id, got %q", question.gotReqID)
 	}
 }
 

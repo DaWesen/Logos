@@ -61,7 +61,7 @@ var ErrMessageNotClaimed = dao.ErrMessageNotClaimed
 var newMessageConsumer = mq.NewConsumer
 
 type QuestionService interface {
-	AskQuestion(ctx context.Context, question string, userID *string) (interface{ GetID() string }, error)
+	AskQuestion(ctx context.Context, question string, userID *string, requestID string) (interface{ GetID() string }, error)
 }
 
 type MessageService interface {
@@ -604,7 +604,9 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 		// 串行消费下会牺牲吞吐，但换来 at-least-once；要提升吞吐应把
 		// 任务先持久化再异步处理，而不是吞掉错误。
 		answerCtx, cancel := context.WithTimeout(ctx, qaAnswerTimeout)
-		_, err = s.questionService.AskQuestion(answerCtx, content, nil)
+		// message_id 同时是消费端的认领键和问答服务的业务幂等键：
+		// 即使消息记录被清理、消费端状态丢失，重放仍能命中已落库的答案。
+		_, err = s.questionService.AskQuestion(answerCtx, content, nil, messageID)
 		cancel()
 		if err != nil {
 			if claimed {
