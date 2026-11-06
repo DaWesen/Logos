@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"Logos/internal/bot/toolerr"
+
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 )
@@ -536,5 +538,54 @@ func TestInvoker_RetrySharesTotalTimeout(t *testing.T) {
 	}
 	if n := stub.callCount(); n != 1 {
 		t.Fatalf("总超时耗尽后不应继续重试，执行了 %d 次", n)
+	}
+}
+
+// TestInvoker_PermanentSentinelsNotRetried 参数、权限、工具不存在这三类
+// 失败重试多少次结果都一样，必须一次就返回，避免把确定性错误拖成慢请求。
+func TestInvoker_PermanentSentinelsNotRetried(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"tool_not_found", fmt.Errorf("lookup: %w", toolerr.ErrToolNotFound)},
+		{"invalid_args", fmt.Errorf("decode: %w", toolerr.ErrInvalidArgs)},
+		{"permission", fmt.Errorf("acl: %w", toolerr.ErrPermission)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubTool{name: "kb", err: tt.err}
+			inv := NewInvoker(time.Second)
+			inv.retryBase = time.Millisecond
+			wrapped := inv.Wrap(stub, ToolPolicy{ReadOnly: true, Retryable: true})
+
+			if _, err := wrapped.(tool.InvokableTool).InvokableRun(context.Background(), `{}`); !errors.Is(err, tt.err) {
+				t.Fatalf("want wrapped sentinel, got %v", err)
+			}
+			if n := stub.callCount(); n != 1 {
+				t.Fatalf("永久失败不应重试，执行了 %d 次", n)
+			}
+		})
+	}
+}
+
+// TestInvoker_RateLimitedIsRetried 限流是典型的瞬时失败：工具层用同一套
+// 哨兵错误标记后，重试逻辑不需要认识具体供应商的错误码。
+func TestInvoker_RateLimitedIsRetried(t *testing.T) {
+	stub := &stubTool{
+		name: "kb",
+		out:  "recovered",
+		errs: []error{toolerr.ErrRateLimited, nil},
+	}
+	inv := NewInvoker(time.Second)
+	inv.retryBase = time.Millisecond
+	wrapped := inv.Wrap(stub, ToolPolicy{ReadOnly: true, Retryable: true})
+
+	got, err := wrapped.(tool.InvokableTool).InvokableRun(context.Background(), `{}`)
+	if err != nil || got != "recovered" {
+		t.Fatalf("got %q, err %v", got, err)
+	}
+	if n := stub.callCount(); n != 2 {
+		t.Fatalf("限流应重试一次，执行了 %d 次", n)
 	}
 }

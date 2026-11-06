@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"Logos/internal/bot/toolerr"
 	"Logos/pkg/obs"
 	"Logos/pkg/strutil"
 )
@@ -29,15 +30,15 @@ var (
 	// ErrDeadlock 依赖图无法继续推进，正常不应出现，出现即调度 bug。
 	ErrDeadlock = errors.New("planner dependency graph deadlocked")
 	// ErrToolNotFound 工具不存在，重试没有意义。
-	ErrToolNotFound = errors.New("tool not found")
+	ErrToolNotFound = toolerr.ErrToolNotFound
 	// ErrInvalidArgs 工具参数非法，重试没有意义。
-	ErrInvalidArgs = errors.New("invalid tool arguments")
+	ErrInvalidArgs = toolerr.ErrInvalidArgs
 	// ErrPermission 权限不足，重试没有意义。
-	ErrPermission = errors.New("permission denied")
+	ErrPermission = toolerr.ErrPermission
 	// ErrRateLimited 上游限流，属于可重试的瞬时失败。
-	ErrRateLimited = errors.New("rate limited")
+	ErrRateLimited = toolerr.ErrRateLimited
 	// ErrTransient 供工具层包装超时、5xx、连接重置等瞬时错误。
-	ErrTransient = errors.New("transient failure")
+	ErrTransient = toolerr.ErrTransient
 	// ErrEmptyStepOutput 步骤成功返回但既无正文也无事实，视为失败。
 	// 空字符串如果被当成成功，会进入综合阶段并产生一个"看起来正常"的空答案。
 	ErrEmptyStepOutput = errors.New("empty step output")
@@ -67,18 +68,7 @@ func ClassifyError(err error) FailKind {
 	if err == nil {
 		return FailPermanent
 	}
-	switch {
-	case errors.Is(err, context.Canceled):
-		return FailPermanent
-	case errors.Is(err, ErrRateLimited), errors.Is(err, ErrTransient),
-		errors.Is(err, context.DeadlineExceeded):
-		return FailTransient
-	case errors.Is(err, ErrToolNotFound), errors.Is(err, ErrInvalidArgs),
-		errors.Is(err, ErrPermission):
-		return FailPermanent
-	}
-	var timeout interface{ Timeout() bool }
-	if errors.As(err, &timeout) && timeout.Timeout() {
+	if toolerr.IsTransient(err) {
 		return FailTransient
 	}
 	return FailPermanent

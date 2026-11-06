@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"Logos/internal/bot/toolbudget"
+	"Logos/internal/bot/toolerr"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
 
@@ -112,9 +113,25 @@ type permanentToolError struct{ err error }
 func (e *permanentToolError) Error() string { return e.err.Error() }
 func (e *permanentToolError) Unwrap() error { return e.err }
 
+// isPermanentToolError 判断一次失败是否值得重试。
+//
+// 内部包装（panic、熔断拒绝）与工具层显式哨兵错误共用同一个判定；
+// 未知错误仍然保留「可重试」的旧行为，避免第三方工具因为还没接入
+// 哨兵错误就突然失去重试能力。
 func isPermanentToolError(err error) bool {
 	var permanent *permanentToolError
-	return errors.As(err, &permanent)
+	if errors.As(err, &permanent) {
+		return true
+	}
+	switch {
+	case errors.Is(err, toolerr.ErrToolNotFound),
+		errors.Is(err, toolerr.ErrInvalidArgs),
+		errors.Is(err, toolerr.ErrPermission),
+		errors.Is(err, context.Canceled):
+		return true
+	default:
+		return false
+	}
 }
 
 // Invoker 统一的工具执行器：超时、panic 隔离、并发上限、同参去重、只读缓存。
@@ -332,11 +349,21 @@ func classifyToolResult(err error) string {
 	if err == nil {
 		return "ok"
 	}
-	if errors.Is(err, context.Canceled) {
+	switch {
+	case errors.Is(err, context.Canceled):
 		return "canceled"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	case errors.Is(err, toolerr.ErrRateLimited):
+		return "rate_limited"
+	case errors.Is(err, toolerr.ErrTransient):
+		return "transient"
+	case errors.Is(err, toolerr.ErrToolNotFound):
+		return "not_found"
+	case errors.Is(err, toolerr.ErrInvalidArgs):
+		return "invalid_args"
+	case errors.Is(err, toolerr.ErrPermission):
+		return "permission"
 	}
 	var permanent *permanentToolError
 	if errors.As(err, &permanent) {
