@@ -235,7 +235,13 @@ func (c *Cache) finishHit(ctx context.Context, result LookupResult, decision Dec
 	c.idx.touch(entry.ScopeHash, entry.ID)
 	c.sig.remember(entry.ScopeHash, entry.NormQuery, entry.Vec, now)
 
-	obs.RecordSCacheLookup(ctx, string(decision))
+	// 一次 Lookup 只能记一次结论。shadow 模式下对外结论是 miss_shadowed，
+	// 不能再额外记一条 hit_*，否则命中率分母会被同一次请求重复计数。
+	effective := decision
+	if mode == ModeShadow {
+		effective = MissShadowed
+	}
+	obs.RecordSCacheLookup(ctx, string(effective))
 	obs.RecordSCacheSimilarity(ctx, string(decision), similarity)
 	logger.Info("语义缓存命中",
 		logger.StringField("event", "scache_hit"),
@@ -249,7 +255,6 @@ func (c *Cache) finishHit(ctx context.Context, result LookupResult, decision Dec
 		result.ShadowDecision = decision
 		result.Decision = MissShadowed
 		result.Answer = ""
-		obs.RecordSCacheLookup(ctx, string(MissShadowed))
 		obs.RecordSCacheShadow(ctx, string(decision), similarity)
 	}
 	return result
