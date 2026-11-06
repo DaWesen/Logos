@@ -27,6 +27,7 @@ var (
 	kafkaDuplicateNum    metric.Int64Counter
 	kafkaFinalizeFailNum metric.Int64Counter
 	qaIdempotencyNum     metric.Int64Counter
+	qaAnswerNum          metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -80,7 +81,11 @@ func initReliabilityMetrics() {
 	)
 	qaIdempotencyNum, _ = meter.Int64Counter(
 		"logos.qa.idempotency.count",
-		metric.WithDescription("问答业务幂等结果计数（result=hit/conflict/concurrent_hit）"),
+		metric.WithDescription("问答业务幂等结果计数（result=hit/conflict/concurrent_hit/degraded_hit/healed）"),
+	)
+	qaAnswerNum, _ = meter.Int64Counter(
+		"logos.qa.answer.count",
+		metric.WithDescription("问答实际生成结果计数（result=ok/degraded）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -213,11 +218,25 @@ func RecordMessageFinalizeFailure(ctx context.Context, topic string) {
 // hit 说明重放/重复投递被下游兜住，没有再次调用模型；concurrent_hit 说明
 // 两个实例同时执行、后写入者回查到了先写入的答案；conflict 则可能是调用方
 // 复用了别人的幂等键，或同一键携带了不同问题，需要按错误日志排查。
+// degraded_hit 表示命中的是兜底文案而不是终态答案，服务端会重新生成；
+// healed 表示这次重试真正生成了回答，并通过条件更新覆盖了降级记录。
 // result 只接受固定枚举，不把 request_id 放进标签，避免高基数。
 func RecordQAIdempotency(ctx context.Context, result string) {
 	reliabilityOnce.Do(initReliabilityMetrics)
 	if qaIdempotencyNum != nil {
 		qaIdempotencyNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordQAAnswer 记录一次问答生成结果。
+//
+// 降级不是错误：接口仍然返回 200，但 answer 只是占位文案。只统计请求
+// 成功率会把「模型全挂、每次都在返回兜底文本」显示成 100% 可用，
+// 因此必须把 ok 和 degraded 分开，降级率才是模型链路的真实健康度。
+func RecordQAAnswer(ctx context.Context, result string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if qaAnswerNum != nil {
+		qaAnswerNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 	}
 }
 
