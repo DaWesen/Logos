@@ -1328,7 +1328,6 @@ go test -race ./internal/service/ai/bot/service/scache/...  通过
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 标定工具 `cmd/tools/scache-calibrate` | 已实现 | 含 `-check` 逐类复核；纯计算部分有单测 |
 | 真实 embedding 标定（mid/high 阈值） | 未执行 | 标定集 `calib.jsonl` 需真实 query，尚未采集；阈值仍是占位值 |
 | 假命中率（FHR）评测 | 未执行 | 无真实标定集，不得填数 |
 | 压测（QPS/P99/内存） | 未执行 | §15.4 留空 |
