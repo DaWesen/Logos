@@ -953,6 +953,96 @@ curl -X POST http://localhost:8888/api/v1/vector/text-search \
 
 ---
 
+## 死信回放测试（dlq-replay）
+
+### 背景
+
+消费者重试耗尽后，消息被转存到 `<topic>.dlq`。如果只有写入、没有出口，死信队列
+就只是「有地方堆积」：下游修好了，那批消息仍然躺在里面，只能人工逐条处理。
+`cmd/tool/dlq-replay` 补的是这最后一公里——把死信按原样投回源 topic。
+
+### 三条设计约束
+
+1. **不重复**：原样投回原始 key 与 value，沿用原始 `message_id`，由下游主键幂等兜底；
+   分区键不变，保证同一会话的消息仍然落在同一分区，回放不打乱顺序。
+2. **不倾泻**：`-rate` 限速（默认 50 条/秒）+ `-limit` 限量（默认 100 条）。限速基准取
+   「当前时刻」而不是「上次理论时刻 + 间隔」，长时间停顿后不追赶欠下的额度，避免限速
+   退化成一次突发。
+3. **不自锁**：`x-logos-replay-count` 通过 Kafka header 跨轮累计，达到 `-max-replay-count`
+   （默认 3）后不再回放，留在死信里交人工。同一条消息反复失败说明不是下游抖动。
+
+### 关键语义：过滤不等于处理完成
+
+源 topic 不匹配、窗口外、缺少时刻、回放轮次超限这四类条目**一律不提交位点**。
+过滤只是「这次不动它」，提交位点等于永久放弃。只有三种情况才提交：
+
+- 投回成功；
+- 死信体损坏且已成功转入 `<dlq>.quarantine`；
+- 显式 `-limit` 达标后正常退出（此时未处理的下次接着来）。
+
+死信体损坏时先转存隔离队列（保留原始字节 + partition/offset + 原因 header），
+**隔离写成功后才提交**；隔离写失败立即上抛并停止，因为「写失败 + 提交」等于永久丢失。
+
+`source_topic` 缺失或 JSON 损坏必须报错，绝不猜一个目标 topic 投回去；设了窗口但记录
+没有 `dead_lettered_at`（字段上线前的旧死信）计入 `SkippedUnknownTime`，不做回放。
+
+### 使用方式
+
+```bash
+# 1. 先看规模：默认 dry-run，一条都不会投出去
+go run ./cmd/tool/dlq-replay -source-topic chat_messages
+
+# 2. 只回放故障窗口内的消息，限量限速，显式确认
+go run ./cmd/tool/dlq-replay -source-topic chat_messages \
+  -since 2026-11-05T02:00:00Z -until 2026-11-05T03:00:00Z \
+  -limit 200 -rate 20 -dry-run=false -yes
+
+# 3. 交给脚本/告警消费
+go run ./cmd/tool/dlq-replay -source-topic chat_messages -json
+```
+
+| 参数 | 默认 | 说明 |
+|-----|------|------|
+| `-dlq-topic` | 空 | 死信 topic；留空由 `-source-topic` 推导 `<topic>.dlq` |
+| `-source-topic` | 空 | 只回放该源 topic 的死信；留空不做源过滤 |
+| `-group` | `dead-letter-replay` | 读死信的消费组，决定上次回放到哪 |
+| `-since` / `-until` | 空 | 故障窗口（左闭右开，RFC3339）；`-until` 缺省表示不设上界 |
+| `-limit` | 100 | 本次最多实际回放条数；0 表示不限量 |
+| `-rate` | 50 | 每秒回放上限；负数不限速 |
+| `-max-replay-count` | 3 | 单条累计回放轮次上限；负数放开 |
+| `-dry-run` | true | 只统计不投递；真实回放需同时给 `-dry-run=false` 与 `-yes` |
+| `-timeout` | 2m | 整轮时长上限，到点退出并交出已完成账目 |
+| `-json` | false | 以 JSON 输出账目 |
+
+退出码：`0` 账目自洽（无失败）；`1` 存在投回/隔离失败或中途取消；`2` 参数或前置条件
+不满足，一条都没动过。Ctrl-C 与超时同样返回完整账目，因为运维最需要知道已经放回多少条。
+
+### 自动化测试覆盖
+
+`pkg/mq/dead_letter_replay_test.go`（19 个用例，全部走注入的 source/sink 桩，不依赖 Kafka）：
+
+- **筛选**：源 topic 过滤、窗口边界（左闭右开）、无时刻、轮次超限各自计数正确，且都不提交位点；
+- **投递**：原样保留 key/value、写回 `x-logos-replay-count` 与 `x-logos-replayed-from`、
+  分区键不变；
+- **限速**：按注入时钟推进，`-rate` 为负时不等待，停顿后不追赶欠额度；
+- **损坏隔离**：非法 JSON 转存 quarantine 后才提交；隔离写失败则位点不提交并返回错误；
+- **失败账目**：投回失败计入 `Failed` 且位点不提交；提交失败计入 `CommitErrors` 但消息已放出；
+- **收尾**：`-limit`、`-dry-run`、ctx 取消、拉取 EOF、拉取错误重试各自给出正确 `StopReason`。
+
+```bash
+go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
+```
+
+### 已知边界
+
+- 真实 Kafka reader 在没有新消息时**不会返回 EOF**，所以一轮扫描的收尾依赖 `-limit` 或
+  `-timeout`；这不是缺陷，是消费模型的固有行为，文档与 `-help` 都已写明。
+- `<dlq>.quarantine` 与 `<topic>.dlq` 一样，需要 broker 预先建 topic（或开启 auto-create），
+  否则隔离写入会失败并中止本轮——这是刻意的：宁可停下，也不静默丢证据。
+- 回放不做内容改写，下游必须已经具备按 `message_id` 的幂等能力；否则重复投递会变成重复消息。
+
+---
+
 ## 已修复问题列表
 
 | 问题 | 位置 | 修复时间 |
