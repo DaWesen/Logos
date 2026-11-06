@@ -267,6 +267,61 @@ func TestFormatResults_TruncatesByRune(t *testing.T) {
 	}
 }
 
+// TestTruncateBytes_MultibyteBoundary 覆盖 T16：max 正好落在 UTF-8
+// 序列中间时，必须回退到字符起始位置。半个汉字既会让部分模型直接 400，
+// 也会在流式输出里变成乱码。
+func TestTruncateBytes_MultibyteBoundary(t *testing.T) {
+	const marker = "...(截断)"
+	text := "中文结果测试" // 每个汉字 3 字节，max 很容易落在序列中间
+
+	for max := 1; max <= len(text); max++ {
+		got := truncateBytes(text, max)
+		if !utf8.ValidString(got) {
+			t.Fatalf("max=%d 产生了非法 UTF-8: %q", max, got)
+		}
+		if len(got) > max+len(marker) {
+			t.Fatalf("max=%d 截断后长度 %d 超过上限 %d", max, len(got), max+len(marker))
+		}
+	}
+
+	if got := truncateBytes("你好世界", 4); got != "你"+marker {
+		t.Fatalf("max 落在第二个字中间时应回退到首字边界，got %q", got)
+	}
+}
+
+// TestFormatResults_TruncatesByBytes 覆盖 T17：上限是 16KB 字节而不是
+// 16K 字符。中文按字节计会被更早截断，正文长度应落在上限附近而非翻三倍。
+func TestFormatResults_TruncatesByBytes(t *testing.T) {
+	const marker = "...(截断)"
+	long := strings.Repeat("中", 20*1024/3) // 约 20KB，单字 3 字节
+	if len(long) <= maxStepOutputBytes {
+		t.Fatalf("测试输入应超过 %d 字节，got %d", maxStepOutputBytes, len(long))
+	}
+
+	got := FormatResults([]StepResult{
+		{Step: PlanStep{ID: 1, Description: "第一步"}, Output: long, Success: true},
+	})
+	if !utf8.ValidString(got) {
+		t.Fatal("按字节截断后产生了非法 UTF-8")
+	}
+
+	const prefix = "步骤 1：第一步【成功】\n结果："
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("结果前綴不符：%q", got)
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(got, prefix), "\n\n")
+	if !strings.HasSuffix(body, marker) {
+		t.Fatalf("超限结果缺少截断标记，正文长度=%d", len(body))
+	}
+	if len(body) > maxStepOutputBytes+len(marker) {
+		t.Errorf("正文 %d 字节超过上限 %d", len(body), maxStepOutputBytes+len(marker))
+	}
+	// 回退最多跨过一个 3 字节字符，因此保留正文与上限的误差应小于 4 字节。
+	if len(body) < maxStepOutputBytes-4+len(marker) {
+		t.Errorf("正文只保留了 %d 字节，离上限 %d 太远", len(body), maxStepOutputBytes)
+	}
+}
+
 func mustPlan(t *testing.T, n int) *Plan {
 	t.Helper()
 	plan := &Plan{Goal: "目标", Steps: makeSteps(n)}
