@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"Logos/internal/bot/ctxmem"
 	"Logos/internal/service/ai/bot/model"
 	"Logos/pkg/logger"
 
@@ -39,6 +40,10 @@ type BotRepository interface {
 
 	AddMessage(ctx context.Context, message *model.Message) error
 	GetMessages(ctx context.Context, conversationId string, limit int, beforeTime *time.Time) ([]*model.Message, error)
+	CountUserTurns(ctx context.Context, conversationId string) (int, error)
+
+	SaveConversationSlot(ctx context.Context, slot *model.ConversationSlot) error
+	ListConversationSlots(ctx context.Context, conversationId string) ([]*model.ConversationSlot, error)
 
 	CreatePrompt(ctx context.Context, prompt *model.Prompt) error
 	UpdatePrompt(ctx context.Context, prompt *model.Prompt) error
@@ -230,6 +235,76 @@ func (r *botRepository) GetMessages(ctx context.Context, conversationId string, 
 	var messages []*model.Message
 	err := query.Order("created_at DESC").Limit(limit).Find(&messages).Error
 	return messages, err
+}
+
+func (r *botRepository) CountUserTurns(ctx context.Context, conversationId string) (int, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Message{}).
+		Where("conversation_id = ? AND role = ?", conversationId, "user").
+		Count(&count).Error
+	return int(count), err
+}
+
+// SaveConversationSlot 在事务内完成「查当前值 → 决定是否作废旧值 → 插入新值」。
+//
+// 冲突规则放在 ctxmem.ResolveSlot（纯函数）里，DAO 只负责持久化，
+// 这样 T7 这类用例可以不起 DB 直接验证。
+func (r *botRepository) SaveConversationSlot(ctx context.Context, slot *model.ConversationSlot) error {
+	if slot.ID == "" {
+		slot.ID = uuid.NewString()
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rows []*model.ConversationSlot
+		err := tx.Where("conversation_id = ? AND key = ? AND superseded_by = ?",
+			slot.ConversationID, slot.Key, "").
+			Order("created_at ASC, id ASC").
+			Find(&rows).Error
+		if err != nil {
+			return err
+		}
+
+		current := make([]ctxmem.Slot, 0, len(rows))
+		for _, row := range rows {
+			current = append(current, ctxmemSlot(row))
+		}
+		supersedeIDs, skip := ctxmem.ResolveSlot(current, ctxmemSlot(slot))
+		if skip {
+			return nil
+		}
+		for _, id := range supersedeIDs {
+			if err := tx.Model(&model.ConversationSlot{}).
+				Where("id = ?", id).
+				Update("superseded_by", slot.ID).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(slot).Error
+	})
+}
+
+func (r *botRepository) ListConversationSlots(ctx context.Context, conversationId string) ([]*model.ConversationSlot, error) {
+	var slots []*model.ConversationSlot
+	err := r.db.WithContext(ctx).
+		Where("conversation_id = ?", conversationId).
+		Order("key ASC, created_at ASC, id ASC").
+		Find(&slots).Error
+	return slots, err
+}
+
+func ctxmemSlot(slot *model.ConversationSlot) ctxmem.Slot {
+	return ctxmem.Slot{
+		ID:             slot.ID,
+		ConversationID: slot.ConversationID,
+		Key:            slot.Key,
+		Value:          slot.Value,
+		Kind:           slot.Kind,
+		SourceMsgID:    slot.SourceMsgID,
+		SourceRole:     slot.SourceRole,
+		TurnIndex:      slot.TurnIndex,
+		SupersededBy:   slot.SupersededBy,
+		Confidence:     slot.Confidence,
+		CreatedAt:      slot.CreatedAt,
+	}
 }
 
 func (r *botRepository) CreatePrompt(ctx context.Context, prompt *model.Prompt) error {

@@ -12,6 +12,7 @@ import (
 	"Logos/config"
 	"Logos/internal/bot/agent"
 	"Logos/internal/bot/coordinator"
+	"Logos/internal/bot/ctxmem"
 	botmemory "Logos/internal/bot/memory"
 	"Logos/internal/bot/planner"
 	"Logos/internal/bot/provider"
@@ -1145,17 +1146,9 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 		}
 	}
 
-	// 上下文压缩：预算内装最近消息，溢出部分滚动摘要为背景
-	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
-		return s.fetchHistoryMessages(ctx, conversationID)
-	}, s.summaryChat)
-
-	// 长期记忆是 per-user 数据，只能作为本轮消息注入。Agent 实例由
-	// AgentManager 按 bot.ID 缓存，写进 system prompt 会把第一个用户的
-	// 记忆固化给之后所有用户（D1 跨用户泄漏）。
-	if len(historyMessages) > 0 {
-		historyMessages = append(s.buildMemoryContextMessages(ctx, bot, userID, content), historyMessages...)
-	}
+	// 上下文装配：长期记忆 + 会话事实槽 + 摘要 + 预算内原文。
+	// 预算从模型窗口推导，调用方不再持有 6000 这类写死常量。
+	historyMessages := s.buildConversationContext(ctx, bot, userID, userMsg)
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏（不拒绝对话，避免误伤）
 	if hit, pattern := DetectPromptInjection(content); hit {
@@ -1398,15 +1391,9 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		}
 	}
 
-	// 上下文压缩：预算内装最近消息，溢出部分滚动摘要为背景
-	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
-		return s.fetchHistoryMessages(ctx, conversationID)
-	}, s.summaryChat)
-
-	// 同 SendMessage：记忆只进本轮消息，不进按 bot 缓存的 Agent system prompt。
-	if len(historyMessages) > 0 {
-		historyMessages = append(s.buildMemoryContextMessages(ctx, bot, userID, content), historyMessages...)
-	}
+	// 同 SendMessage：记忆与事实槽都只进本轮消息，不进按 bot 缓存的
+	// Agent system prompt，否则会把第一个用户的数据固化给所有人（D1）。
+	historyMessages := s.buildConversationContext(ctx, bot, userID, userMsg)
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏
 	if hit, pattern := DetectPromptInjection(content); hit {
@@ -2050,10 +2037,14 @@ func (s *botServiceImpl) createChatModelForBot(bot *botmodel.Bot) (model.BaseCha
 
 // fetchHistoryMessages 分页回溯会话历史：压缩层需要的近期原文 + 摘要原料
 // 一次取回，避免固定 60 条窗口让 overflow 永远为空。
-func (s *botServiceImpl) fetchHistoryMessages(ctx context.Context, conversationID string) ([]*botmodel.Message, error) {
+//
+// tokenTarget 由调用方按模型窗口推导后传入；传 0 表示只按条数上限回溯。
+func (s *botServiceImpl) fetchHistoryMessages(
+	ctx context.Context, conversationID string, tokenTarget int,
+) ([]*botmodel.Message, error) {
 	return collectHistoryPages(func(before *time.Time, limit int) ([]*botmodel.Message, error) {
 		return s.repo.GetMessages(ctx, conversationID, limit, before)
-	}, historyPageSize, historyFetchMax, historyFetchTokenTarget)
+	}, historyPageSize, historyFetchMax, tokenTarget)
 }
 
 // buildMemoryContextMessages 把长期记忆渲染成本轮请求的 user/assistant 消息。
@@ -2129,17 +2120,9 @@ func (s *botServiceImpl) publishBotEvent(ctx context.Context, action, botID, use
 }
 
 // estimateTokenCount 本地估算文本 token 数，仅在供应商未返回 usage 时兜底。
-// 混合中英文按字符类型分别估算：ASCII 约 4 字符/token，CJK 约 1 字符/0.6 token。
+// 口径统一收敛到 ctxmem，避免计费、预算、摘要三处各算一套。
 func estimateTokenCount(text string) int {
-	var asciiCount, nonASCIICount int
-	for _, r := range text {
-		if r < 128 {
-			asciiCount++
-		} else {
-			nonASCIICount++
-		}
-	}
-	return int(float64(asciiCount)*0.25+float64(nonASCIICount)*0.6) + 50
+	return ctxmem.EstimateText(text)
 }
 
 // tokenUsage 优先取 eino 采集到的真实 usage（供应商返回的 prompt/completion tokens），

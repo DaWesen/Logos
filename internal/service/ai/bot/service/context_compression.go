@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"Logos/internal/bot/ctxmem"
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/logger"
 	"Logos/pkg/singleflight"
@@ -31,16 +32,10 @@ import (
 //  4. 摘要 LLM 调用失败时降级为直接截断（即原有行为），主流程不受影响。
 
 const (
-	// historyTokenBudget 历史消息的 token 预算（输入侧粗估，不含 system prompt）
-	historyTokenBudget = 6000
 	// historyPageSize 分页回溯时单次拉取的条数。
 	historyPageSize = 100
 	// historyFetchMax 单次请求最多回溯的条数，避免超长会话把 DB 拉爆。
 	historyFetchMax = 500
-	// historyFetchTokenTarget 回溯目标：预算之上再多取一段溢出量。
-	// 只拉到预算刚好装满时 overflow 往往不足 minOverflowToSummarize，
-	// 摘要仍然不会触发；多取 2000 token 才能保证早期消息真的进入摘要。
-	historyFetchTokenTarget = historyTokenBudget + 2000
 	// minOverflowToSummarize 溢出消息少于此数不值得摘要
 	minOverflowToSummarize = 4
 	// summaryRenderRuneLimit 单条消息进入摘要 prompt 的最大字符数。
@@ -95,24 +90,28 @@ func NewConversationCompressor() *ConversationCompressor {
 type chatFunc func(ctx context.Context, prompt string) (string, error)
 
 // BuildContextMessages 构建带上下文压缩的对话消息：
-// 预算内装最近消息，溢出部分滚动摘要为对话背景。
-// fetchMessages 拉取该会话最近的消息（按时间倒序）。
+// 预算内按轮装最近消息，溢出部分滚动摘要为对话背景。
+//
+// msgs 必须是 created_at DESC（与 repo.GetMessages 一致）。预算由调用方
+// 从模型窗口推导后传入，压缩器不再持有任何写死的 6000/12000 常量。
+// workingBudget 与 episodicBudget 的单位都是 token，且已扣除消息固定开销。
 func (cc *ConversationCompressor) BuildContextMessages(
 	ctx context.Context,
 	conversationID string,
-	fetchMessages func() ([]*botmodel.Message, error),
+	msgs []*botmodel.Message,
+	workingBudget, episodicBudget int,
 	chat chatFunc,
 ) []*schema.Message {
-	msgs, err := fetchMessages()
-	if err != nil || len(msgs) == 0 {
+	if len(msgs) == 0 {
 		return nil
 	}
 
-	kept, overflow := packMessagesByBudget(msgs, historyTokenBudget)
+	kept, overflow := packMessagesByBudget(msgs, workingBudget)
 
 	var background string
-	if len(overflow) >= minOverflowToSummarize {
+	if len(overflow) >= minOverflowToSummarize && episodicBudget > 0 {
 		background = cc.summarizeOverflow(ctx, conversationID, overflow, chat)
+		background = ctxmem.TruncateToTokens(background, episodicBudget, contextTokenEstimator)
 	}
 
 	out := toSchemaMessages(kept)
@@ -125,6 +124,18 @@ func (cc *ConversationCompressor) BuildContextMessages(
 		}, out...)
 	}
 	return out
+}
+
+// SummaryTokens 返回当前摘要注入后的估算 token（含 user/assistant 两条消息开销）。
+// 调用方用它作为 Episodic 层的 Demand。
+func (cc *ConversationCompressor) SummaryTokens(conversationID string) int {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+	state, ok := cc.states[conversationID]
+	if !ok || state.summary == "" {
+		return 0
+	}
+	return ctxmem.EstimateText(state.summary) + 100
 }
 
 // messagePageFetcher 按游标拉取一页消息，返回结果必须是 created_at DESC。
@@ -306,18 +317,17 @@ func (s *botServiceImpl) summaryChat(ctx context.Context, prompt string) (string
 // packMessagesByBudget 按 token 预算从最新往回装载消息（纯函数，可单测）。
 // msgs 为按时间倒序（最新在前）；返回 kept（预算内，按时间正序）、
 // overflow（预算外更早的消息，按时间倒序）。
-// 最新的第一条消息无条件保留（即使单条超预算），保证当前对话不丢。
+//
+// 装载单位是「轮」：assistant(tool_calls) 与它的 tool 结果必须同进同出。
+// 最新一轮单独超预算时，ctxmem 会保留最后一条并做 rune-safe 截断，
+// 保证当前问题不丢，同时不突破 I1。
 func packMessagesByBudget(msgs []*botmodel.Message, budgetTokens int) (kept, overflow []*botmodel.Message) {
-	used := 0
-	for i, m := range msgs {
-		cost := estimateTokenCount(m.Content)
-		if i > 0 && used+cost > budgetTokens {
-			// 从这条开始全部溢出
-			return reverseChronological(msgs[:i]), msgs[i:]
-		}
-		used += cost
+	if len(msgs) == 0 {
+		return nil, nil
 	}
-	return reverseChronological(msgs), nil
+	chronological := toCtxmemMessages(msgs)
+	keptMessages, overflowMessages, _ := ctxmem.PackWorking(chronological, budgetTokens, contextTokenEstimator)
+	return fromCtxmemMessages(keptMessages), reverseChronological(fromCtxmemMessages(overflowMessages))
 }
 
 // reverseChronological 倒序（最新在前）转为时间正序（最早在前）
@@ -401,4 +411,38 @@ func truncateRunes(s string, limit int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:limit]) + "..."
+}
+
+// contextTokenEstimator 统一估算口径；测试可替换为固定值实现。
+var contextTokenEstimator ctxmem.TokenEstimator = ctxmem.DefaultEstimator{}
+
+// toCtxmemMessages 把存储模型转成装配层的消息视图（DESC → 时间正序）。
+func toCtxmemMessages(msgs []*botmodel.Message) []ctxmem.Message {
+	out := make([]ctxmem.Message, 0, len(msgs))
+	for i := len(msgs) - 1; i >= 0; i-- {
+		msg := msgs[i]
+		if msg == nil {
+			continue
+		}
+		out = append(out, ctxmem.Message{
+			ID:        msg.ID,
+			Role:      msg.Role,
+			Content:   msg.Content,
+			CreatedAt: msg.CreatedAt,
+		})
+	}
+	return out
+}
+
+func fromCtxmemMessages(messages []ctxmem.Message) []*botmodel.Message {
+	out := make([]*botmodel.Message, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, &botmodel.Message{
+			ID:        message.ID,
+			Role:      message.Role,
+			Content:   message.Content,
+			CreatedAt: message.CreatedAt,
+		})
+	}
+	return out
 }

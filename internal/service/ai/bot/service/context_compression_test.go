@@ -48,7 +48,7 @@ func TestPackMessagesByBudget_AllWithinBudget(t *testing.T) {
 func TestPackMessagesByBudget_OverflowsOldest(t *testing.T) {
 	// 每条 ~800 tokens（3000 字节 × 0.25 + 50），10 条 = 8000 > 6000 预算
 	msgs := makeMsgs(10, 3000)
-	kept, overflow := packMessagesByBudget(msgs, historyTokenBudget)
+	kept, overflow := packMessagesByBudget(msgs, 6000)
 
 	if len(kept) < 2 {
 		t.Fatalf("expected at least 2 kept, got %d", len(kept))
@@ -83,14 +83,13 @@ func TestBuildContextMessages_ShortHistoryNoSummary(t *testing.T) {
 	cc := NewConversationCompressor()
 	msgs := makeMsgs(4, 100)
 
-	fetch := func() ([]*botmodel.Message, error) { return msgs, nil }
 	chatCalled := false
 	chat := func(ctx context.Context, prompt string) (string, error) {
 		chatCalled = true
 		return "summary", nil
 	}
 
-	out := cc.BuildContextMessages(t.Context(), "conv-1", fetch, chat)
+	out := cc.BuildContextMessages(t.Context(), "conv-1", msgs, 5000, 2000, chat)
 	if len(out) != 4 {
 		t.Fatalf("expected 4 messages (no background), got %d", len(out))
 	}
@@ -104,12 +103,11 @@ func TestBuildContextMessages_LongHistoryGetsBackground(t *testing.T) {
 	// 40 条 × ~1050 tokens，远超 6000 预算 → 大量溢出
 	msgs := makeMsgs(40, 1000)
 
-	fetch := func() ([]*botmodel.Message, error) { return msgs, nil }
 	chat := func(ctx context.Context, prompt string) (string, error) {
 		return "用户与助手讨论了项目架构。", nil
 	}
 
-	out := cc.BuildContextMessages(t.Context(), "conv-1", fetch, chat)
+	out := cc.BuildContextMessages(t.Context(), "conv-1", msgs, 6000, 2000, chat)
 
 	// 开头两轮是「对话背景」
 	if len(out) < 3 {
@@ -126,7 +124,7 @@ func TestBuildContextMessages_LongHistoryGetsBackground(t *testing.T) {
 		chatCalls++
 		return "用户与助手讨论了项目架构。", nil
 	}
-	cc.BuildContextMessages(t.Context(), "conv-1", fetch, chat2)
+	cc.BuildContextMessages(t.Context(), "conv-1", msgs, 6000, 2000, chat2)
 	if chatCalls != 0 {
 		t.Errorf("cached summary should avoid re-summarization, chat called %d times", chatCalls)
 	}
@@ -136,12 +134,11 @@ func TestBuildContextMessages_SummaryFailureDegradesGracefully(t *testing.T) {
 	cc := NewConversationCompressor()
 	msgs := makeMsgs(40, 1000)
 
-	fetch := func() ([]*botmodel.Message, error) { return msgs, nil }
 	chat := func(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("LLM unavailable")
 	}
 
-	out := cc.BuildContextMessages(t.Context(), "conv-1", fetch, chat)
+	out := cc.BuildContextMessages(t.Context(), "conv-1", msgs, 6000, 2000, chat)
 	// 摘要失败 → 无背景前缀，仅保留预算内历史（降级为直接截断）
 	for _, m := range out {
 		if strings.Contains(m.Content, "对话此前的内容摘要") {
@@ -153,11 +150,10 @@ func TestBuildContextMessages_SummaryFailureDegradesGracefully(t *testing.T) {
 	}
 }
 
-func TestBuildContextMessages_FetchErrorReturnsNil(t *testing.T) {
+func TestBuildContextMessages_EmptyHistoryReturnsNil(t *testing.T) {
 	cc := NewConversationCompressor()
-	fetch := func() ([]*botmodel.Message, error) { return nil, fmt.Errorf("db error") }
-	if out := cc.BuildContextMessages(t.Context(), "conv-1", fetch, nil); out != nil {
-		t.Errorf("fetch error should return nil, got %d messages", len(out))
+	if out := cc.BuildContextMessages(t.Context(), "conv-1", nil, 6000, 2000, nil); out != nil {
+		t.Errorf("empty history should return nil, got %d messages", len(out))
 	}
 }
 

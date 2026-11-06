@@ -108,6 +108,29 @@ type UserMemory struct {
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+// ConversationSlot 单次会话内的结构化事实槽。
+//
+// 与 UserMemory 是两个东西：UserMemory 描述「这个人是谁」（跨会话、月级 TTL），
+// ConversationSlot 描述「这次对话里出现了什么」（订单号、金额、日期，与会话同寿）。
+// 把订单号写进 UserMemory 会让下个月的提问命中三个月前的旧值。
+type ConversationSlot struct {
+	ID             string `gorm:"primaryKey;size:36" json:"id"`
+	ConversationID string `gorm:"index:idx_conversation_slots_lookup,priority:1;size:100;not null" json:"conversationId"`
+	Key            string `gorm:"index:idx_conversation_slots_lookup,priority:2;size:64;not null" json:"key"`
+	Value          string `gorm:"type:text;not null" json:"value"`
+	Kind           string `gorm:"size:16" json:"kind"` // id / number / date / amount / entity
+	// SourceMsgID 该值首次出现的消息。I3 要求它非空且可查。
+	SourceMsgID string `gorm:"size:36;not null" json:"sourceMsgId"`
+	// SourceRole 区分 user / assistant / tool，冲突消解只在同来源内做更正。
+	SourceRole string `gorm:"size:16" json:"sourceRole"`
+	TurnIndex  int    `json:"turnIndex"`
+	// SupersededBy 被哪条槽位取代。非空表示这是历史值，注入时要带更正说明。
+	SupersededBy string    `gorm:"size:36;index" json:"supersededBy"`
+	Confidence   float64   `gorm:"type:decimal(3,2)" json:"confidence"`
+	CreatedAt    time.Time `gorm:"autoCreateTime;index:idx_conversation_slots_lookup,priority:3" json:"createdAt"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updatedAt"`
+}
+
 // JSONMap JSON映射类型
 type JSONMap map[string]string
 
@@ -165,7 +188,7 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 
 // AutoMigrate 自动迁移数据库表
 func AutoMigrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{}, &PlanRun{}, &PlanStepRecord{}); err != nil {
+	if err := db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{}, &ConversationSlot{}, &PlanRun{}, &PlanStepRecord{}); err != nil {
 		return err
 	}
 
