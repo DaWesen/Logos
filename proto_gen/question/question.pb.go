@@ -96,13 +96,17 @@ func (x *QuestionReq) GetRequestId() string {
 
 // 回答响应
 type AnswerResp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BaseResp      *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
-	Answer        string                 `protobuf:"bytes,2,opt,name=answer,proto3" json:"answer,omitempty"`
-	Confidence    float64                `protobuf:"fixed64,3,opt,name=confidence,proto3" json:"confidence,omitempty"`
-	Sources       []string               `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
-	QuestionId    string                 `protobuf:"bytes,5,opt,name=question_id,json=questionId,proto3" json:"question_id,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	BaseResp   *common.BaseResp       `protobuf:"bytes,1,opt,name=base_resp,json=baseResp,proto3" json:"base_resp,omitempty"`
+	Answer     string                 `protobuf:"bytes,2,opt,name=answer,proto3" json:"answer,omitempty"`
+	Confidence float64                `protobuf:"fixed64,3,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	Sources    []string               `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
+	QuestionId string                 `protobuf:"bytes,5,opt,name=question_id,json=questionId,proto3" json:"question_id,omitempty"`
+	Timestamp  int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// degraded 表示这次回答没有真正经过模型（模型未配置、调用失败或超时），
+	// answer 只是兜底文案。调用方不能把它当成一次成功回答：
+	// Kafka 消费端会据此重试，幂等键也会允许后续成功回答覆盖这条降级记录。
+	Degraded      bool `protobuf:"varint,7,opt,name=degraded,proto3" json:"degraded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -179,17 +183,26 @@ func (x *AnswerResp) GetTimestamp() int64 {
 	return 0
 }
 
+func (x *AnswerResp) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
+}
+
 // 问答历史
 type QARecord struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Question      string                 `protobuf:"bytes,2,opt,name=question,proto3" json:"question,omitempty"`
-	Answer        string                 `protobuf:"bytes,3,opt,name=answer,proto3" json:"answer,omitempty"`
-	Confidence    float64                `protobuf:"fixed64,4,opt,name=confidence,proto3" json:"confidence,omitempty"`
-	UserId        int64                  `protobuf:"varint,5,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Timestamp     int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	Feedback      *string                `protobuf:"bytes,7,opt,name=feedback,proto3,oneof" json:"feedback,omitempty"`
-	Rating        *int32                 `protobuf:"varint,8,opt,name=rating,proto3,oneof" json:"rating,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Id         string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Question   string                 `protobuf:"bytes,2,opt,name=question,proto3" json:"question,omitempty"`
+	Answer     string                 `protobuf:"bytes,3,opt,name=answer,proto3" json:"answer,omitempty"`
+	Confidence float64                `protobuf:"fixed64,4,opt,name=confidence,proto3" json:"confidence,omitempty"`
+	UserId     int64                  `protobuf:"varint,5,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Timestamp  int64                  `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Feedback   *string                `protobuf:"bytes,7,opt,name=feedback,proto3,oneof" json:"feedback,omitempty"`
+	Rating     *int32                 `protobuf:"varint,8,opt,name=rating,proto3,oneof" json:"rating,omitempty"`
+	// degraded 为 true 的历史记录仍是兜底文案，前端可以提示用户重试。
+	Degraded      bool `protobuf:"varint,9,opt,name=degraded,proto3" json:"degraded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -278,6 +291,13 @@ func (x *QARecord) GetRating() int32 {
 		return *x.Rating
 	}
 	return 0
+}
+
+func (x *QARecord) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
 }
 
 // 历史记录请求
@@ -627,7 +647,7 @@ const file_ai_question_proto_rawDesc = "" +
 	"request_id\x18\x04 \x01(\tR\trequestId\x1a:\n" +
 	"\fContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcc\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe8\x01\n" +
 	"\n" +
 	"AnswerResp\x12-\n" +
 	"\tbase_resp\x18\x01 \x01(\v2\x10.common.BaseRespR\bbaseResp\x12\x16\n" +
@@ -638,7 +658,8 @@ const file_ai_question_proto_rawDesc = "" +
 	"\asources\x18\x04 \x03(\tR\asources\x12\x1f\n" +
 	"\vquestion_id\x18\x05 \x01(\tR\n" +
 	"questionId\x12\x1c\n" +
-	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\"\xfb\x01\n" +
+	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\x12\x1a\n" +
+	"\bdegraded\x18\a \x01(\bR\bdegraded\"\x97\x02\n" +
 	"\bQARecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\bquestion\x18\x02 \x01(\tR\bquestion\x12\x16\n" +
@@ -649,7 +670,8 @@ const file_ai_question_proto_rawDesc = "" +
 	"\auser_id\x18\x05 \x01(\x03R\x06userId\x12\x1c\n" +
 	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\x12\x1f\n" +
 	"\bfeedback\x18\a \x01(\tH\x00R\bfeedback\x88\x01\x01\x12\x1b\n" +
-	"\x06rating\x18\b \x01(\x05H\x01R\x06rating\x88\x01\x01B\v\n" +
+	"\x06rating\x18\b \x01(\x05H\x01R\x06rating\x88\x01\x01\x12\x1a\n" +
+	"\bdegraded\x18\t \x01(\bR\bdegradedB\v\n" +
 	"\t_feedbackB\t\n" +
 	"\a_rating\"V\n" +
 	"\n" +

@@ -31,8 +31,17 @@ type VectorService interface {
 	SearchSimilar(ctx context.Context, text string, topK int) ([]string, error)
 }
 
+// ChatClient 抽象出问答真正依赖的模型能力。
+//
+// 只依赖这两个方法而不是具体的 *eino.EinoManager，测试里才能注入
+// 「第一次失败、第二次成功」的模型，验证降级记录会被后续重试覆盖。
+type ChatClient interface {
+	HasChatModel() bool
+	Chat(ctx context.Context, messages []string) (string, error)
+}
+
 type QAService interface {
-	AskQuestion(ctx context.Context, content string, userID int64, context map[string]string, requestID string) (string, float64, []string, string, int64, error)
+	AskQuestion(ctx context.Context, content string, userID int64, context map[string]string, requestID string) (string, float64, []string, string, int64, bool, error)
 	BatchAskQuestions(ctx context.Context, questions []string, userID int64) (map[string]string, error)
 	GetHistory(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error)
 	SubmitFeedback(ctx context.Context, questionID string, feedback string, rating *int32) error
@@ -41,7 +50,7 @@ type QAService interface {
 
 type qaServiceImpl struct {
 	qaRepo           dao.QARepository
-	einoClient       *eino.EinoManager
+	chat             ChatClient
 	knowledgeService KnowledgeService
 	searchService    SearchService
 	vectorService    VectorService
@@ -58,14 +67,19 @@ var ErrQARequestIDConflict = errors.New("qa: request_id already used by another 
 const qaRecordIDMaxLen = 64
 
 func NewQAService(qaRepo dao.QARepository, einoClient *eino.EinoManager, knowledgeService KnowledgeService, searchService SearchService, vectorService VectorService) QAService {
-	return &qaServiceImpl{
+	svc := &qaServiceImpl{
 		qaRepo:           qaRepo,
-		einoClient:       einoClient,
 		knowledgeService: knowledgeService,
 		searchService:    searchService,
 		vectorService:    vectorService,
 		cache:            cache.NewRedisCache(),
 	}
+	// 不能把 typed nil 直接装进接口：接口本身非 nil，调用 HasChatModel
+	// 会打到 nil 接收者上。初始化失败时保持 chat 为 nil，走降级分支。
+	if einoClient != nil {
+		svc.chat = einoClient
+	}
+	return svc
 }
 
 func (s *qaServiceImpl) AskQuestion(
@@ -74,50 +88,66 @@ func (s *qaServiceImpl) AskQuestion(
 	userID int64,
 	context map[string]string,
 	requestID string,
-) (string, float64, []string, string, int64, error) {
+) (string, float64, []string, string, int64, bool, error) {
 	logger.Info("Processing question",
 		logger.StringField("content", content),
 		logger.Int64Field("user_id", userID),
 		logger.StringField("request_id", requestID))
 
 	if content == "" {
-		return "", 0, nil, "", 0, errors.New("question content cannot be empty")
+		return "", 0, nil, "", 0, false, errors.New("question content cannot be empty")
 	}
 
 	questionID := uuid.New().String()
+	// 命中降级记录时不是「已完成」，而是同一个逻辑请求还没成功。此时要
+	// 重新执行，并跳过限流：重试不是用户发起的新请求，不应该再吃一次配额。
+	retryingDegraded := false
 	if requestID != "" {
 		questionID = qaRecordID(requestID)
 		// 幂等查询必须放在限流之前：重放已经完成的问题不应该再消耗配额，
 		// 更不能因为限流把「已有答案」变成一次失败。
 		existing, err := s.qaRepo.GetQARecord(ctx, questionID)
 		if err != nil {
-			return "", 0, nil, "", 0, fmt.Errorf("查询幂等问答记录失败: %w", err)
+			return "", 0, nil, "", 0, false, fmt.Errorf("查询幂等问答记录失败: %w", err)
 		}
 		if existing != nil {
 			if existing.UserID != userID {
 				obs.RecordQAIdempotency(ctx, "conflict")
-				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+				return "", 0, nil, "", 0, false, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 			}
 			if existing.Question != content {
 				obs.RecordQAIdempotency(ctx, "conflict")
-				return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+				return "", 0, nil, "", 0, false, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 			}
-			obs.RecordQAIdempotency(ctx, "hit")
-			logger.Info("命中幂等问答记录，跳过模型调用",
-				logger.StringField("request_id", requestID),
-				logger.StringField("question_id", existing.ID))
-			return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, nil
+			if existing.Degraded {
+				// 降级答案只是占位文本，不能当成幂等终态返回。继续往下走，
+				// 用同一个确定性主键重新生成，成功后再覆盖这条记录。
+				obs.RecordQAIdempotency(ctx, "degraded_hit")
+				logger.Info("命中降级问答记录，重新生成",
+					logger.StringField("request_id", requestID),
+					logger.StringField("question_id", existing.ID))
+				retryingDegraded = true
+			} else {
+				obs.RecordQAIdempotency(ctx, "hit")
+				logger.Info("命中幂等问答记录，跳过模型调用",
+					logger.StringField("request_id", requestID),
+					logger.StringField("question_id", existing.ID))
+				return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, false, nil
+			}
 		}
 	}
 
-	if err := s.checkQuestionRateLimit(ctx, userID); err != nil {
-		return "", 0, nil, "", 0, err
+	if !retryingDegraded {
+		if err := s.checkQuestionRateLimit(ctx, userID); err != nil {
+			return "", 0, nil, "", 0, false, err
+		}
 	}
 
 	timestamp := time.Now().Unix()
 
 	var answer string
 	confidence := 0.8
+	degraded := false
 	sources := []string{}
 	backgroundInfo := []string{}
 
@@ -157,7 +187,7 @@ func (s *qaServiceImpl) AskQuestion(
 		}
 	}
 
-	if s.einoClient != nil && s.einoClient.HasChatModel() {
+	if s.chat != nil && s.chat.HasChatModel() {
 		prompt := "You are a helpful AI assistant. Please answer the user's question based on the following information.\n\n"
 		if len(backgroundInfo) > 0 {
 			prompt += "Reference information:\n"
@@ -174,11 +204,12 @@ func (s *qaServiceImpl) AskQuestion(
 		}
 
 		var err error
-		answer, err = s.einoClient.Chat(ctx, messages)
+		answer, err = s.chat.Chat(ctx, messages)
 		if err != nil {
 			logger.Warn("Failed to answer using Eino, using default answer", logger.ErrorField(err))
 			answer = "Thank you for your question. We are currently working on answering it. Please try again later."
 			confidence = 0.5
+			degraded = true
 		} else {
 			confidence = 0.9
 		}
@@ -186,6 +217,13 @@ func (s *qaServiceImpl) AskQuestion(
 		logger.Warn("Eino client not initialized, using default answer")
 		answer = "Thank you for your question. Our AI assistant is being prepared. Please try again later."
 		confidence = 0.5
+		degraded = true
+	}
+
+	if degraded {
+		obs.RecordQAAnswer(ctx, "degraded")
+	} else {
+		obs.RecordQAAnswer(ctx, "ok")
 	}
 
 	record := &model.QARecord{
@@ -195,6 +233,7 @@ func (s *qaServiceImpl) AskQuestion(
 		Confidence: confidence,
 		UserID:     userID,
 		Timestamp:  timestamp,
+		Degraded:   degraded,
 	}
 
 	err := s.qaRepo.CreateQARecord(ctx, record)
@@ -206,20 +245,51 @@ func (s *qaServiceImpl) AskQuestion(
 			if getErr == nil && existing != nil {
 				if existing.UserID != userID || existing.Question != content {
 					obs.RecordQAIdempotency(ctx, "conflict")
-					return "", 0, nil, "", 0, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
+					return "", 0, nil, "", 0, false, fmt.Errorf("%w: %s", ErrQARequestIDConflict, requestID)
 				}
-				obs.RecordQAIdempotency(ctx, "concurrent_hit")
+				if existing.Degraded && !degraded {
+					// 本次真正生成了回答：用条件更新把降级记录升级成正常记录。
+					// 条件更新保证多个重试实例里只有一个能覆盖，后到的回查即可。
+					upgraded, upgradeErr := s.qaRepo.ReplaceDegradedAnswer(ctx, questionID, answer, confidence)
+					if upgradeErr != nil {
+						logger.Error("覆盖降级问答记录失败，本次回答未能落库",
+							logger.StringField("question_id", questionID),
+							logger.ErrorField(upgradeErr))
+						// 模型已经给出了正常回答，不能因为落库失败又把占位文案返回给
+						// 用户；历史记录的不一致留给日志与下一次重试收敛。
+						return answer, confidence, sources, questionID, existing.Timestamp, false, nil
+					}
+					if upgraded {
+						obs.RecordQAIdempotency(ctx, "healed")
+						logger.Info("降级问答记录已被成功回答覆盖",
+							logger.StringField("request_id", requestID),
+							logger.StringField("question_id", questionID))
+						return answer, confidence, sources, questionID, existing.Timestamp, false, nil
+					}
+					// 没抢到说明另一个实例已经覆盖成功，优先返回它的答案。
+					latest, latestErr := s.qaRepo.GetQARecord(ctx, questionID)
+					if latestErr == nil && latest != nil && !latest.Degraded {
+						return latest.Answer, latest.Confidence, sources, latest.ID, latest.Timestamp, false, nil
+					}
+					// 条件更新没生效、回查也没拿到更新后的记录：本次答案依然
+					// 是有效的，优先返回它，而不是退回占位文案。
+					return answer, confidence, sources, questionID, existing.Timestamp, false, nil
+				}
+				if !existing.Degraded {
+					obs.RecordQAIdempotency(ctx, "concurrent_hit")
+				}
 				logger.Warn("幂等问答记录已被并发写入，返回已有答案",
 					logger.StringField("request_id", requestID),
-					logger.StringField("question_id", existing.ID))
-				return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, nil
+					logger.StringField("question_id", existing.ID),
+					logger.BoolField("degraded", existing.Degraded))
+				return existing.Answer, existing.Confidence, []string{}, existing.ID, existing.Timestamp, existing.Degraded, nil
 			}
 		}
 		logger.Error("Failed to create QA record", logger.ErrorField(err))
-		return answer, confidence, sources, questionID, timestamp, fmt.Errorf("answered but failed to record: %w", err)
+		return answer, confidence, sources, questionID, timestamp, degraded, fmt.Errorf("answered but failed to record: %w", err)
 	}
 
-	return answer, confidence, sources, questionID, timestamp, nil
+	return answer, confidence, sources, questionID, timestamp, degraded, nil
 }
 
 // qaRecordID 从调用方幂等键派生确定性主键。
@@ -243,7 +313,7 @@ func (s *qaServiceImpl) BatchAskQuestions(ctx context.Context, questions []strin
 	answers := make(map[string]string)
 
 	for _, q := range questions {
-		answer, _, _, _, _, err := s.AskQuestion(ctx, q, userID, nil, "")
+		answer, _, _, _, _, _, err := s.AskQuestion(ctx, q, userID, nil, "")
 		if err != nil {
 			logger.Warn("Failed to process question",
 				logger.StringField("question", q),
@@ -302,7 +372,7 @@ func (s *qaServiceImpl) GetRecommendedQuestions(ctx context.Context, userID int6
 
 	var questions []string
 
-	if s.einoClient != nil && s.einoClient.HasChatModel() {
+	if s.chat != nil && s.chat.HasChatModel() {
 		history, _, err := s.qaRepo.ListQARecords(ctx, userID, 1, 10)
 		if err != nil {
 			logger.Warn("Failed to get user history for recommendations", logger.ErrorField(err))
@@ -320,7 +390,7 @@ func (s *qaServiceImpl) GetRecommendedQuestions(ctx context.Context, userID int6
 			prompt += "\n请基于用户兴趣生成相关的延伸问题。"
 		}
 
-		result, err := s.einoClient.Chat(ctx, []string{prompt})
+		result, err := s.chat.Chat(ctx, []string{prompt})
 		if err != nil {
 			logger.Warn("Eino生成推荐问题失败", logger.ErrorField(err))
 		} else if result != "" {

@@ -25,6 +25,10 @@ message AnswerResp {
   repeated string sources = 4;
   string question_id = 5;
   int64 timestamp = 6;
+  // degraded 表示这次回答没有真正经过模型（模型未配置、调用失败或超时），
+  // answer 只是兜底文案。调用方不能把它当成一次成功回答：
+  // Kafka 消费端会据此重试，幂等键也会允许后续成功回答覆盖这条降级记录。
+  bool degraded = 7;
 }
 
 // 问答历史
@@ -37,6 +41,8 @@ message QARecord {
   int64 timestamp = 6;
   optional string feedback = 7;
   optional int32 rating = 8;
+  // degraded 为 true 的历史记录仍是兜底文案，前端可以提示用户重试。
+  bool degraded = 9;
 }
 
 // 历史记录请求

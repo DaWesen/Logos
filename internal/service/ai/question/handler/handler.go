@@ -48,6 +48,7 @@ func convertModelQARecordToProtoQARecord(record *model.QARecord) *pb.QARecord {
 	if record.Rating != nil {
 		result.Rating = record.Rating
 	}
+	result.Degraded = record.Degraded
 	return result
 }
 
@@ -60,7 +61,7 @@ func (s *QAServiceImpl) AskQuestion(ctx context.Context, req *pb.QuestionReq) (*
 		reqContext = req.Context
 	}
 
-	answer, confidence, sources, questionID, timestamp, err := s.QAService.AskQuestion(
+	answer, confidence, sources, questionID, timestamp, degraded, err := s.QAService.AskQuestion(
 		ctx, req.Content, req.UserId, reqContext, req.RequestId)
 	if err != nil {
 		logger.Error("Failed to ask question", logger.ErrorField(err))
@@ -74,6 +75,7 @@ func (s *QAServiceImpl) AskQuestion(ctx context.Context, req *pb.QuestionReq) (*
 	resp.Sources = sources
 	resp.QuestionId = questionID
 	resp.Timestamp = timestamp
+	resp.Degraded = degraded
 
 	return resp, nil
 }

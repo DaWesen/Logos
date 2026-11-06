@@ -13,6 +13,7 @@ import (
 type QARepository interface {
 	CreateQARecord(ctx context.Context, record *model.QARecord) error
 	GetQARecord(ctx context.Context, id string) (*model.QARecord, error)
+	ReplaceDegradedAnswer(ctx context.Context, id, answer string, confidence float64) (bool, error)
 	ListQARecords(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error)
 	UpdateFeedback(ctx context.Context, questionID string, feedback string, rating *int32) error
 }
@@ -51,6 +52,34 @@ func (r *qaRepository) GetQARecord(ctx context.Context, id string) (*model.QARec
 		return nil, err
 	}
 	return &record, nil
+}
+
+// ReplaceDegradedAnswer 用真正生成的回答覆盖同一条降级记录。
+//
+// 用条件更新而不是「先查再写」：两个重试实例可能同时拿到同一个降级记录，
+// 只有第一个把 degraded 从 true 改成 false 的实例应该生效，后到的实例
+// 通过 RowsAffected=0 得知自己没抢到，回查即可拿到先写入的答案。
+// 这样既避免了覆盖别人已经生成的正常答案，也不需要额外加分布式锁。
+func (r *qaRepository) ReplaceDegradedAnswer(
+	ctx context.Context,
+	id string,
+	answer string,
+	confidence float64,
+) (bool, error) {
+	result := r.db.WithContext(ctx).Model(&model.QARecord{}).
+		Where("id = ? AND degraded = ?", id, true).
+		Updates(map[string]interface{}{
+			"answer":     answer,
+			"confidence": confidence,
+			"degraded":   false,
+		})
+	if result.Error != nil {
+		logger.Error("Failed to replace degraded QA answer",
+			logger.StringField("question_id", id),
+			logger.ErrorField(result.Error))
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 func (r *qaRepository) ListQARecords(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error) {
