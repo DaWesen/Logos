@@ -863,3 +863,101 @@ func TestPlan_MarkStaleUsesStateMachine(t *testing.T) {
 		t.Errorf("stale 应重置为 pending，got %s", got)
 	}
 }
+
+// TestExecute_PatchModifiedDoneStepRerunsItAndDownstream 覆盖一个容易漏掉的边界：
+// patch 修改的步骤可能不在本次失效集合里（例如 violation 指向的是下游），
+// 但它已经产出的结果同样不能复用，必须连同下游一起重跑。
+func TestExecute_PatchModifiedDoneStepRerunsItAndDownstream(t *testing.T) {
+	plan := testPlan(t,
+		PlanStep{ID: 1, Description: "读取原文件"},
+		PlanStep{ID: 2, Description: "解析文件", DependsOn: []int{1}},
+		PlanStep{ID: 3, Description: "生成报告", DependsOn: []int{2}},
+	)
+	patch := `{"reasoning":"读取方式需要调整","operations":[
+		{"op":"modify","id":1,"patch":{"description":"重新读取原文件并探测编码"}}]}`
+	chat := &fakeChat{responses: []string{patch}}
+	p := NewPlanner(chat.call)
+
+	var mu sync.Mutex
+	counts := map[int]int{}
+	exec := func(ctx context.Context, step PlanStep, prior string) (StepOutcome, error) {
+		mu.Lock()
+		counts[step.ID]++
+		attempt := counts[step.ID]
+		mu.Unlock()
+		out := StepOutcome{Output: fmt.Sprintf("out-%d-v%d", step.ID, attempt)}
+		if step.ID == 3 && attempt == 1 {
+			out.Violations = []Violation{{
+				StepID: 2, Claim: "解析口径错误", Reason: "需要按新的读取结果重新解析",
+			}}
+		}
+		return out, nil
+	}
+
+	run, err := p.Execute(t.Context(), plan, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run.Status != RunCompleted || run.Replans != 1 {
+		t.Fatalf("status=%s replans=%d err=%v", run.Status, run.Replans, run.Err)
+	}
+	for _, id := range []int{1, 2, 3} {
+		if counts[id] != 2 {
+			t.Errorf("step%d 应因定义变更重跑一次，counts=%v", id, counts)
+		}
+	}
+	if plan.Step(1).Output != "out-1-v2" {
+		t.Errorf("step1 应使用重跑结果，got %q", plan.Step(1).Output)
+	}
+	if !plan.AllDone() {
+		t.Errorf("重跑后应全部完成：%+v", plan.Steps)
+	}
+}
+
+func TestParseVerifyResponse_ProtocolCompatibility(t *testing.T) {
+	tests := []struct {
+		name       string
+		resp       string
+		wantOK     bool
+		wantReason string
+	}{
+		{
+			name:       "新协议 holds=false",
+			resp:       `{"holds":false,"reason":"缺少权限"}`,
+			wantOK:     false,
+			wantReason: "缺少权限",
+		},
+		{
+			name:   "新协议 holds=true",
+			resp:   `{"holds":true}`,
+			wantOK: true,
+		},
+		{
+			name:       "旧协议 valid=false 仍然生效",
+			resp:       `{"valid":false,"reason":"已过期"}`,
+			wantOK:     false,
+			wantReason: "已过期",
+		},
+		{
+			name:   "字段缺失按校验不可用放行",
+			resp:   `{"reason":"模型没给结论"}`,
+			wantOK: true,
+		},
+		{
+			name:   "非 JSON 放行",
+			resp:   `看起来成立`,
+			wantOK: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ok, reason := parseVerifyResponse(tt.resp)
+			if ok != tt.wantOK {
+				t.Errorf("ok=%v want=%v", ok, tt.wantOK)
+			}
+			if reason != tt.wantReason {
+				t.Errorf("reason=%q want=%q", reason, tt.wantReason)
+			}
+		})
+	}
+}

@@ -98,9 +98,19 @@ func GoalHash(goal string) string {
 //
 // 只包含逻辑输入（步骤定义 + 前序结果），不包含 attempt：
 // 重试必须命中同一条记录，否则"重试"会变成"再执行一次副作用"。
+//
+// assumptions / expects 也必须进入指纹：patch 允许只改这两项而不改描述，
+// 如果指纹不变，一个已经执行过的副作用步骤会拿旧前提下的结果直接重放。
+// 这两段按"有值才追加"的方式拼接，保证未声明前提/预期的老记录哈希不变。
 func StepInputHash(step PlanStep, prior string) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%d\n%s\n%s\n%s\n", step.ID, step.Tool, step.Description, prior)
+	for _, assumption := range step.Assumptions {
+		fmt.Fprintf(h, "a:%s\n", assumption)
+	}
+	if strings.TrimSpace(step.Expects) != "" {
+		fmt.Fprintf(h, "e:%s\n", step.Expects)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

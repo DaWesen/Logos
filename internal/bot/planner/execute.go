@@ -730,7 +730,8 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			run.Status = RunDegraded
 			break
 		}
-		if err := plan.ApplyPatch(patch); err != nil {
+		affected, err := plan.ApplyPatchTracked(patch)
+		if err != nil {
 			run.Err = err
 			run.Status = RunDegraded
 			break
@@ -739,6 +740,20 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			run.Err = err
 			run.Status = RunDegraded
 			break
+		}
+		// patch 允许修改已完成的步骤（描述/工具/前提/预期/依赖）。
+		// 这些字段变了，旧结果就不再对应新的步骤定义，必须连同下游一起重跑；
+		// 只依赖"失效集合"无法覆盖这种情况，因为被修改的步骤可能根本不在集合里。
+		if stale := plan.Propagate(affected); len(stale) > 0 {
+			reasons := make(map[int]string, len(affected))
+			for _, id := range affected {
+				reasons[id] = "步骤定义被 patch 修改"
+			}
+			if err := markStale(plan, stale, reasons, emitter); err != nil {
+				run.Status = RunFailed
+				run.Err = err
+				break
+			}
 		}
 		plan.Revision++
 		run.Replans++
@@ -1259,9 +1274,9 @@ type verifyResult struct {
 }
 
 const verifyAssumptionsPrompt = `你是执行前校验器。判断给定步骤的前提是否成立。
-只能依据提供的已知事实；没有证据时不要臆测，按成立处理。
+只能依据提供的已知事实；证据不足时按不成立处理，不要臆测。
 输出 JSON，不要输出其他内容：
-{"valid": true, "reason": "简短理由"}`
+{"holds": true, "reason": "简短理由"}`
 
 const verifyExpectsPrompt = `你是执行结果校验器。判断步骤产出是否满足预期。
 只判断"是否达到预期"，不要评价文风或补充答案。
@@ -1340,13 +1355,24 @@ func (p *Planner) verifyExpects(ctx context.Context, step PlanStep,
 
 func parseVerifyResponse(resp string) (bool, string) {
 	var out struct {
-		Valid  bool   `json:"valid"`
+		// 兼容两版协议：v2 规格用 holds，早期实现用 valid。
+		// 用指针区分"没返回字段"和"返回了 false"：前者是校验不可用，
+		// 应放行；后者是明确的"前提不成立"，必须进入重规划。
+		Holds  *bool  `json:"holds"`
+		Valid  *bool  `json:"valid"`
 		Reason string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(strutil.ExtractJSON(resp)), &out); err != nil {
 		return true, ""
 	}
-	return out.Valid, out.Reason
+	switch {
+	case out.Holds != nil:
+		return *out.Holds, out.Reason
+	case out.Valid != nil:
+		return *out.Valid, out.Reason
+	default:
+		return true, ""
+	}
 }
 
 // collectInvalidations 汇总失败步骤与被 violation 指向的步骤。
