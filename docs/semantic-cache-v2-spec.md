@@ -1306,6 +1306,13 @@ semantic_cache:
 | 伪流式回放（分片节奏 + 预算） | 已实现 | `scache/replay.go` |
 | 有界写队列 + 固定 worker | 已实现 | `scache/cache.go` |
 | Redis 持久化与不可用降级（进程内继续命中） | 已实现 | `scache/cache.go` |
+| 精确层 Redis Hash（重启后精确命中不调用 embedding） | 已实现 | `scache/cache.go` |
+| 单 Lua 脚本原子写入 bucket/index/exact/meta/用户反查索引 | 已实现 | `scache/cache.go` |
+| 用户级失效 `ForgetUser`（反查索引，不全量扫描） | 已实现 | `scache/cache.go`、`scache/index.go` |
+| 按问题时效分档 TTL（价格/库存/活动走 `PriceTTL`） | 已实现 | `scache/cache.go`、`scache/config.go` |
+| 个人数据问句拒绝入库（订单/余额/账号/发票等） | 已实现 | `scache/cache.go` |
+| embedding 请求合并（scope + 归一化问题 key） | 已实现 | `scache/cache.go` |
+| 同 scope + 同问题写入串行化，避免并发写坏索引 | 已实现 | `scache/cache.go` |
 | KBVersion 失效与 `BumpKBVersion` | 已实现 | `scache/signal.go` |
 | 熔断与指标（命中/拒绝原因/判官/写队列） | 已实现 | `scache/breaker.go`、`pkg/obs/metrics.go` |
 | Bot 非流式与流式接入（工具轮、planner、注入命中禁止写入） | 已实现 | `bot.go`、`semantic_cache.go` |
@@ -1317,12 +1324,15 @@ semantic_cache:
 ### 20.2 已验证
 
 ```text
-go build ./...                                       通过
-go test ./internal/service/ai/bot/service/...        通过
-go test -race ./internal/service/ai/bot/service/scache/...  通过
+go build ./...                                                 通过
+go vet ./...                                                   通过
+go test ./internal/service/ai/bot/service/... -count=1         通过
+go test -race ./internal/service/ai/bot/service/scache/... -count=1  通过
+go test ./internal/bot/planner/... -count=1                    通过
+go test ./... -count=1                                         通过
 ```
 
-单测覆盖：归一化、Scope 顺序与空 UserID、PromptHash、槽位门控（含路线问句尾巴）、精确命中不调用 embedding、embedding 失败降级、shadow 不返回、兼容候选优先、灰区无判官、准入禁区、TTL、KBVersion 失效、伪流式回放、并发访问、Close 幂等。
+单测覆盖：归一化、Scope 顺序与空 UserID、PromptHash、槽位门控（含路线问句尾巴）、精确命中不调用 embedding、重启后从 Redis 精确层命中且不调用 embedding、embedding 失败降级、shadow 不返回、兼容候选优先、灰区无判官、准入禁区（含个人数据）、TTL 分档、KBVersion 失效、`ForgetUser` 清理多 scope、并发 embedding 合并、伪流式回放、并发访问、Close 幂等。
 
 ### 20.3 尚未完成
 
