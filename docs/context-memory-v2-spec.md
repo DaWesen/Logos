@@ -5,21 +5,33 @@
 > 目标包：`internal/service/ai/bot/service`（上下文组装）、`internal/bot/agent`（消费侧）、`internal/bot/memory`（长期记忆，仅接线）
 > 要求：按 P0 → P4 分阶段落地，每阶段可独立合入、独立回滚、独立验证。
 
-> **实现状态（2026-11-06）**
+> **实现状态（2026-11-06，面试版本冻结）**
 >
-> - **已实现（P0 全部）**：D1 长期记忆改为 per-user 消息注入、D2 连续同角色消息合并、D3 rune-safe 截断、D4 分页回溯历史（100 条/页，最多 500 条，目标预算 6000 + 2000 token）。
-> - **已实现（P0 收尾）**：
->   - 摘要状态由 `map[string]*summaryState` 改为存值 + 锁内整体替换，读者不会再看到被并发改写的半成品。
->   - 同一会话的摘要回源走 singleflight（key = conversationID），并发请求只打一次模型，等待者共享同一结果与同一错误。
->   - 摘要正文在落状态前 `TrimSpace` 并截断到 300 rune（含省略号），空摘要按失败处理；prompt 里的"300 字以内"不再被当作模型保证。
-> - **已实现（P1）**：
->   - 新增 `internal/bot/ctxmem` 装配原语：统一 `TokenEstimator`（含 tool call 的函数名与参数）、按模型窗口推导历史预算 `H`、四层配额 `Allocate`、按轮装配 `PackWorking`、结构化事实槽 `ExtractSlots/ResolveSlot/RenderSlots`。
->   - 新增 `conversation_slots` 表与同步抽取落库；事实值必须是源消息子串，同来源后一轮更正旧值并保留更正说明，跨来源（user/tool）并存，不按 Confidence 裁决真假。
->   - 两个发送入口统一走 `buildConversationContext`：先扣除 system prompt、长期记忆、当前问题与工具 schema 预留，再按 `H` 分页拉历史、分配各层预算，最后按「长期记忆 → 事实槽 → 摘要 → 原文」注入。
->   - 历史预算不再使用固定 6000 token；`bot.Config["context_window"]`（兼容 `context_window_tokens`）可配置，非法值告警后回退 32768，并受 2048 下限保护。
-> - **回归与新增测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`、`TestSummarizeOverflow_*`，以及 `ctxmem` 下的 `TestDeriveHistoryBudget_*`、`TestPackWorking_*`、`TestExtractSlots_*`、`TestResolveSlot_*`、`TestRenderSlots_*`。
-> - **未实现（面试版本冻结范围）**：P2 检索层、P3 的结构化摘要与全量观测指标、P4 摘要状态外置与多副本。`Allocate` 的保底/竞争/回收已作为 P1 预算切分实现，但不代表 P3 的指标与结构化摘要已完成。
-> - **已执行验证（收尾）**：`go build ./...`、`go vet ./...`、`go test ./internal/bot/ctxmem/... ./internal/service/ai/bot/... -count=1` 全部通过。以上均为本地单机验证，未做压测、灰度、故障注入或多副本一致性验证。
+> - **P0（已完成）**：D1 长期记忆改为 per-user 消息注入、D2 连续同角色消息合并、D3 rune-safe 截断、D4 分页回溯历史。
+> - **P0 收尾（已完成）**：摘要状态改为锁内整体替换；同会话摘要回源走 singleflight；摘要落库前截断到 300 rune，空摘要按失败处理。
+> - **P1（已完成）**：`internal/bot/ctxmem` 提供统一 `TokenEstimator`、按模型窗口推导历史预算、四层配额 `Allocate`、按轮装配 `PackWorking`、结构化事实槽；`conversation_slots` 同步落库；两个发送入口统一走 `buildConversationContext`。
+> - **P2（代码与单测完成）**：
+>   - 字符 bigram 倒排 + BM25（`K1=1.2`、`B=0.75`），避免把订单号交给向量相似度做近似匹配。
+>   - 三触发规则 T1/T2/T3（指代 + 已有槽位、新单号、显式回溯）；同一句话在不同轮次走同一路径，便于复现。
+>   - BM25 与槽位精确路做 RRF 融合（`rrfK=60`、槽位路权重 `2.0`）；注入带 `[第 N 轮 · 角色]` 出处与冲突裁决规则。
+>   - `IndexCache` 按 `Fingerprint(len:lastID)` 判重建，TTL 10 分钟、最多 64 个会话；检索超时 200ms，超时只丢该层。
+>   - 单测：`TestSearchFindsOrderFromTurnThree`（200 轮中召回第 3 轮订单）、`TestSlotExactMatchOutranksKeywordOnly`、`TestRenderHitsWithSourceAndBudget`、`TestIndexCacheReuseAndFingerprint`。
+> - **P3（代码与单测完成）**：
+>   - 结构化摘要 JSON 契约：`background/facts/decisions/open_items/rejected`；兼容旧纯文本摘要。
+>   - `ValidateFacts` 要求 `facts.value` 必须是原文子串，编造值被丢弃并计入 `ctx.summary_fact.drop`；`RenderStructured` 按 rejected → decisions → open_items → background → facts 的顺序裁剪，输出确定。
+>   - 指标接入 `pkg/obs/metrics.go`：`ctx.assemble.duration`、`ctx.tokens`、`ctx.omitted.count`、`ctx.degraded.count`、`ctx.slot.*`、`ctx.retrieval.*`、`ctx.summary.*`、`ctx.invariant.violation.count`。
+>   - 单测：`TestValidateFactsDropsHallucination`、`TestRenderStructuredDropsRejectedBeforeFacts`、`TestRenderStructuredIsDeterministic`、`TestBuildContext_WorkingNeverStartsWithTool`。
+> - **P4（代码与单测完成）**：
+>   - `SummaryStore` 抽象 + 进程内 CAS 实现；Redis 实现使用 Hash + Lua 比较 `created_ms/up_to` 后写入，并设置 30 天 TTL。
+>   - 有 Redis 配置时 Redis 为主、进程内为兜底；任一侧写成功即视为本轮可用，避免缓存抖动触发熔断。
+>   - 摘要链路具备 singleflight、3 次/5 分钟熔断、stale-while-revalidate；摘要失败只降级该层。
+>   - 单测：`TestSummarizeOverflow_ConcurrentSameConversationRunsOnce`、`TestBuildContext_SummaryTimeoutKeepsWorking`、`TestSummaryOrderUsesTimestampThenID`。
+> - **已执行验证**：`gofmt`、`go build ./...`、`go vet ./...`、`go test ./... -count=1` 全部通过（本地单机）。
+> - **未验证（不得写成线上收益）**：
+>   - 未做真实 Redis 多副本/故障注入，CAS 只由单测和代码审查覆盖。
+>   - 未做 800 轮压测，**没有可引用的 P99 数字**；T14 仍是待测项。
+>   - 未做灰度、双写差异比对，也没有真实流量下的召回率/幻觉率/成本下降数据。
+>   - 未用真实 embedding 做对照实验；“订单号不适合向量召回”是设计判断，不是实测结论。
 > - §1、§2 与附录 A 描述的是 **P0 改造前**的基线；本文其余数字与分层仍是设计目标，不是已上线事实。
 
 ---
