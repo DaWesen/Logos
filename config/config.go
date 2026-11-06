@@ -85,6 +85,9 @@ type Planner struct {
 	MaxSteps int `mapstructure:"max_steps"`
 	// MaxReplans 整轮重规划次数上限。
 	MaxReplans int `mapstructure:"max_replans"`
+	// DisableReplan 显式关闭重规划；用于只读评估或严格成本上限场景。
+	// 单独的布尔开关让 max_replans: 0 不再与"未配置"混淆。
+	DisableReplan bool `mapstructure:"disable_replan"`
 	// MaxConcurrency 层内并发上限（硬上限 4）。
 	MaxConcurrency int `mapstructure:"max_concurrency"`
 	// MaxLLMCalls 规划 + 执行 + 综合共享的模型调用次数上限。

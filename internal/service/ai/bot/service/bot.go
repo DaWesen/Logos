@@ -299,6 +299,7 @@ func (s *botServiceImpl) plannerConfig() planner.Config {
 	if p.MaxReplans > 0 {
 		cfg.MaxReplans = p.MaxReplans
 	}
+	cfg.DisableReplan = p.DisableReplan
 	if p.MaxConcurrency > 0 {
 		cfg.MaxConcurrency = p.MaxConcurrency
 	}
@@ -341,9 +342,12 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 	if err != nil {
 		return "", fmt.Errorf("任务规划失败: %w", err)
 	}
+	steps, edges, maxDepth := planner.PlanStats(plan)
 	logger.Info("Planner 已生成计划",
 		logger.StringField("goal", plan.Goal),
-		logger.IntField("steps", len(plan.Steps)),
+		logger.IntField("steps", steps),
+		logger.IntField("edges", edges),
+		logger.IntField("max_depth", maxDepth),
 		logger.StringField("mode", mode))
 
 	if mode != "dag" && onProgress != nil {
