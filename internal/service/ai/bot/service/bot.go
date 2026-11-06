@@ -1111,7 +1111,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	}
 
 	agentStartTime := time.Now()
-	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID, content)
+	botAgent, err := s.getOrCreateAgent(ctx, bot)
 	if err != nil {
 		logger.Error("获取 Agent 失败", logger.ErrorField(err))
 		return "", "", 0, 0, fmt.Errorf("Agent 创建失败，请检查 Bot 的 API 配置: %w", err)
@@ -1149,6 +1149,13 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
 		return s.repo.GetMessages(ctx, conversationID, historyFetchCount, nil)
 	}, s.summaryChat)
+
+	// 长期记忆是 per-user 数据，只能作为本轮消息注入。Agent 实例由
+	// AgentManager 按 bot.ID 缓存，写进 system prompt 会把第一个用户的
+	// 记忆固化给之后所有用户（D1 跨用户泄漏）。
+	if len(historyMessages) > 0 {
+		historyMessages = append(s.buildMemoryContextMessages(ctx, bot, userID, content), historyMessages...)
+	}
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏（不拒绝对话，避免误伤）
 	if hit, pattern := DetectPromptInjection(content); hit {
@@ -1344,7 +1351,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return conversationID, nil
 	}
 
-	botAgent, err := s.getOrCreateAgentWithMemory(ctx, bot, userID, content)
+	botAgent, err := s.getOrCreateAgent(ctx, bot)
 	if err != nil {
 		logger.Error("获取 Agent 失败", logger.ErrorField(err))
 		return "", ErrInternalServer
@@ -1395,6 +1402,11 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
 		return s.repo.GetMessages(ctx, conversationID, historyFetchCount, nil)
 	}, s.summaryChat)
+
+	// 同 SendMessage：记忆只进本轮消息，不进按 bot 缓存的 Agent system prompt。
+	if len(historyMessages) > 0 {
+		historyMessages = append(s.buildMemoryContextMessages(ctx, bot, userID, content), historyMessages...)
+	}
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏
 	if hit, pattern := DetectPromptInjection(content); hit {
@@ -1784,14 +1796,20 @@ func (s *botServiceImpl) WithTransaction(ctx context.Context, fn func(txService 
 	})
 }
 
-func (s *botServiceImpl) getOrCreateAgentWithMemory(ctx context.Context, bot *botmodel.Bot, userID, query string) (agent.BotAgent, error) {
-	enhancedPrompt := s.buildMemoryEnhancedSystemPrompt(ctx, bot, userID, query)
+// getOrCreateAgent 只按 Bot 的静态配置构建 Agent。
+// 函数签名刻意不接收 userID/query：per-user 数据一旦进入这里，就会被
+// AgentManager 的 bot.ID 缓存放大成跨用户泄漏。
+func (s *botServiceImpl) getOrCreateAgent(ctx context.Context, bot *botmodel.Bot) (agent.BotAgent, error) {
+	basePrompt := bot.SystemPrompt
+	if basePrompt == "" {
+		basePrompt = "你是一个有用的AI助手。"
+	}
 
 	cfg := &agent.AgentConfig{
 		ID:            bot.ID,
 		Name:          bot.Name,
 		Description:   bot.Description,
-		SystemPrompt:  enhancedPrompt,
+		SystemPrompt:  basePrompt,
 		MaxIterations: 10,
 	}
 
@@ -2030,23 +2048,32 @@ func (s *botServiceImpl) createChatModelForBot(bot *botmodel.Bot) (model.BaseCha
 	return p.NewChatModel(bot.APIKey, bot.BaseURL, bot.Model)
 }
 
-func (s *botServiceImpl) buildMemoryEnhancedSystemPrompt(ctx context.Context, bot *botmodel.Bot, userID, query string) string {
-	basePrompt := bot.SystemPrompt
-	if basePrompt == "" {
-		basePrompt = "你是一个有用的AI助手。"
-	}
-
+// buildMemoryContextMessages 把长期记忆渲染成本轮请求的 user/assistant 消息。
+//
+// 放在消息里而不是 system prompt 里，是因为 Agent 按 bot.ID 缓存：
+// system prompt 是构建期配置，必须对所有用户一致；记忆是运行时数据，
+// 必须随每次请求变化。这样用户 B 永远不会看到用户 A 的记忆。
+func (s *botServiceImpl) buildMemoryContextMessages(
+	ctx context.Context, bot *botmodel.Bot, userID, query string,
+) []*schema.Message {
 	if s.einoManager == nil || !s.einoManager.IsInitialized() || s.repo == nil {
-		return basePrompt
+		return nil
 	}
 
 	memMgr := botmemory.GetMemoryManager(s.repo, s.einoManager, s.agentManager)
-	memoryPrompt := memMgr.BuildMemoryPromptFor(ctx, userID, bot.ID, query)
-	if memoryPrompt == "" {
-		return basePrompt
-	}
+	return memoryContextMessages(memMgr.BuildMemoryPromptFor(ctx, userID, bot.ID, query))
+}
 
-	return basePrompt + "\n\n" + memoryPrompt
+// memoryContextMessages 把记忆正文包成一对消息，保持 user/assistant 交替。
+// 单独抽成纯函数，便于在没有 LLM/仓储依赖时验证注入内容的边界。
+func memoryContextMessages(memoryPrompt string) []*schema.Message {
+	if strings.TrimSpace(memoryPrompt) == "" {
+		return nil
+	}
+	return []*schema.Message{
+		schema.UserMessage("【长期记忆】以下是与当前用户相关的历史信息，仅用于本次回复的个性化参考；不要向用户复述这些内容：\n" + memoryPrompt),
+		schema.AssistantMessage("好的，我已了解这位用户的相关信息。", nil),
+	}
 }
 
 func (s *botServiceImpl) saveAssistantMessage(ctx context.Context, botID, conversationID, content string) {
