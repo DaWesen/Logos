@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	botmodel "Logos/internal/service/ai/bot/model"
@@ -242,5 +245,93 @@ func TestRenderMessages_TruncatesChineseByRune(t *testing.T) {
 	body := strings.TrimSuffix(strings.TrimPrefix(out, "用户: "), "...\n")
 	if got := utf8.RuneCountInString(body); got != summaryRenderRuneLimit {
 		t.Errorf("expected %d runes kept, got %d", summaryRenderRuneLimit, got)
+	}
+}
+
+// TestSummarizeOverflow_CapsSummaryLength 摘要 prompt 里的「300 字以内」
+// 只是请求，模型可能返回更长的正文；必须在落状态前截断，否则摘要会随轮次膨胀。
+func TestSummarizeOverflow_CapsSummaryLength(t *testing.T) {
+	cc := NewConversationCompressor()
+	overflow := makeMsgs(5, 1000)
+
+	got := cc.summarizeOverflow(t.Context(), "conv-cap", overflow, func(context.Context, string) (string, error) {
+		return strings.Repeat("中", 1000), nil
+	})
+
+	if got == "" {
+		t.Fatal("summary should not be empty")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("summary must stay valid UTF-8")
+	}
+	if n := utf8.RuneCountInString(got); n > summaryMaxRunes {
+		t.Fatalf("summary length = %d, want <= %d", n, summaryMaxRunes)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("overlong summary should carry ellipsis, got suffix %q", got[len(got)-10:])
+	}
+}
+
+// TestSummarizeOverflow_ConcurrentSameConversationRunsOnce 同一会话的并发请求
+// 必须共享一次摘要回源；否则同一批历史会被重复送给模型，既浪费 token，
+// 也让多个摘要结果争抢同一个状态。该用例同时用于 go test -race。
+func TestSummarizeOverflow_ConcurrentSameConversationRunsOnce(t *testing.T) {
+	cc := NewConversationCompressor()
+	overflow := makeMsgs(10, 1000)
+
+	const callers = 8
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+
+	chat := func(ctx context.Context, _ string) (string, error) {
+		calls.Add(1)
+		startedOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+			return "同一会话的共享摘要", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+
+	results := make([]string, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			results[idx] = cc.summarizeOverflow(t.Context(), "conv-concurrent", overflow, chat)
+		}(i)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("summary call did not start")
+	}
+
+	// 等其余调用者都进入 singleflight，再放行第一次回源，避免测试靠 sleep 猜时序。
+	deadline := time.Now().Add(2 * time.Second)
+	for cc.summaryGroup.Waiters("conv-concurrent") < callers-1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := cc.summaryGroup.Waiters("conv-concurrent"); got != callers-1 {
+		close(release)
+		wg.Wait()
+		t.Fatalf("waiters = %d, want %d", got, callers-1)
+	}
+
+	close(release)
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("summary calls = %d, want 1", got)
+	}
+	for i, got := range results {
+		if got != "同一会话的共享摘要" {
+			t.Errorf("caller %d got summary %q", i, got)
+		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/logger"
+	"Logos/pkg/singleflight"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -45,6 +46,11 @@ const (
 	// summaryRenderRuneLimit 单条消息进入摘要 prompt 的最大字符数。
 	// 用 rune 而不是 byte：中文一字三字节，按字节切会把多字节序列拦腰截断。
 	summaryRenderRuneLimit = 500
+	// summaryMaxRunes 摘要正文的硬上限。prompt 里的「300 字以内」只是请求，
+	// 模型并不保证遵守；不在这里截断，摘要会随轮次膨胀并反过来挤占历史预算。
+	summaryMaxRunes = 300
+	// summaryTimeout 单次摘要 LLM 调用的超时；singleflight 的回源也必须受同一上限约束。
+	summaryTimeout = 30 * time.Second
 )
 
 // contextSummaryPrompt 让 LLM 把早期对话合并为简洁背景
@@ -64,8 +70,12 @@ const contextSummaryPrompt = `请把以下「已有对话摘要」与「新增�
 // ConversationCompressor 按会话维护滚动摘要
 type ConversationCompressor struct {
 	mu sync.RWMutex
-	// conversationID -> 摘要状态（进程内缓存，重启后降级为直接截断）
-	states map[string]*summaryState
+	// conversationID -> 摘要状态（进程内缓存，重启后降级为直接截断）。
+	// 存值而不是指针：摘要完成后整体替换，读者不会看到被并发改写的半成品。
+	states map[string]summaryState
+	// 同一会话的并发请求只回源一次；等待者各有自己的 ctx，客户端断开不会
+	// 把其他请求一起取消。
+	summaryGroup *singleflight.Group[string]
 }
 
 type summaryState struct {
@@ -75,7 +85,10 @@ type summaryState struct {
 }
 
 func NewConversationCompressor() *ConversationCompressor {
-	return &ConversationCompressor{states: make(map[string]*summaryState)}
+	return &ConversationCompressor{
+		states:       make(map[string]summaryState),
+		summaryGroup: singleflight.NewGroup[string](summaryTimeout),
+	}
 }
 
 // chatFunc 摘要用的 LLM 调用（与主对话模型解耦，便于测试注入）
@@ -202,13 +215,32 @@ func (cc *ConversationCompressor) summarizeOverflow(
 		return ""
 	}
 
+	summary, _, err := cc.summaryGroup.Do(ctx, conversationID, func(fillCtx context.Context) (string, error) {
+		return cc.refreshSummary(fillCtx, conversationID, overflow, chat)
+	})
+	if err != nil {
+		// 摘要失败降级：丢弃溢出（等同直接截断）。等待者拿到同一个错误，
+		// 不会各自再打一次已经失败的模型。
+		logger.Warn("对话上下文摘要失败，降级为截断",
+			logger.StringField("conversation_id", conversationID),
+			logger.ErrorField(err))
+		return ""
+	}
+	return summary
+}
+
+// refreshSummary 在 singleflight 的回源函数里执行，负责读取最新摘要点、
+// 生成合并摘要并以整体替换的方式发布。状态只在锁内读写，模型调用不持锁。
+func (cc *ConversationCompressor) refreshSummary(
+	ctx context.Context, conversationID string, overflow []*botmodel.Message, chat chatFunc,
+) (string, error) {
 	cc.mu.RLock()
-	state := cc.states[conversationID]
+	state, hasState := cc.states[conversationID]
 	cc.mu.RUnlock()
 
 	// 找出上次摘要点之后新溢出的消息
 	var fresh []*botmodel.Message
-	if state != nil {
+	if hasState {
 		for _, m := range overflow {
 			if m.ID == state.upToMsgID {
 				break
@@ -217,46 +249,46 @@ func (cc *ConversationCompressor) summarizeOverflow(
 		}
 		// 无新溢出：直接复用已有摘要
 		if len(fresh) == 0 {
-			return state.summary
+			return state.summary, nil
 		}
 	} else {
 		fresh = overflow
 	}
 
 	prevSummary := "（无，本次为首次摘要）"
-	if state != nil && state.summary != "" {
+	if hasState && state.summary != "" {
 		prevSummary = state.summary
 	}
 
 	prompt := fmt.Sprintf(contextSummaryPrompt, prevSummary, renderMessages(fresh))
 
-	summaryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	summaryCtx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
 	summary, err := chat(summaryCtx, prompt)
 	if err != nil {
-		// 摘要失败降级：丢弃溢出（等同直接截断）
-		logger.Warn("对话上下文摘要失败，降级为截断",
-			logger.StringField("conversation_id", conversationID),
-			logger.ErrorField(err))
-		return ""
+		return "", err
 	}
 
-	if state == nil {
-		state = &summaryState{}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return "", errors.New("摘要模型返回空内容")
 	}
-	state.summary = summary
-	state.upToMsgID = overflow[0].ID // overflow[0] 是溢出区最新的一条
-	state.createdAt = time.Now()
+	// 保留 3 个 rune 给省略号，确保最终正文不超过 300 字。
+	summary = truncateRunes(summary, summaryMaxRunes-3)
 
 	cc.mu.Lock()
-	cc.states[conversationID] = state
+	cc.states[conversationID] = summaryState{
+		summary:   summary,
+		upToMsgID: overflow[0].ID, // overflow[0] 是溢出区最新的一条
+		createdAt: time.Now(),
+	}
 	cc.mu.Unlock()
 
 	logger.Info("对话上下文已压缩",
 		logger.StringField("conversation_id", conversationID),
 		logger.IntField("overflow_count", len(overflow)),
 		logger.IntField("fresh_count", len(fresh)))
-	return summary
+	return summary, nil
 }
 
 // summaryChat 摘要用的 LLM 调用：使用全局 EinoManager
