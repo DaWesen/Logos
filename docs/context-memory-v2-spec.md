@@ -12,9 +12,14 @@
 >   - 摘要状态由 `map[string]*summaryState` 改为存值 + 锁内整体替换，读者不会再看到被并发改写的半成品。
 >   - 同一会话的摘要回源走 singleflight（key = conversationID），并发请求只打一次模型，等待者共享同一结果与同一错误。
 >   - 摘要正文在落状态前 `TrimSpace` 并截断到 300 rune（含省略号），空摘要按失败处理；prompt 里的"300 字以内"不再被当作模型保证。
-> - **回归测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`、`TestSummarizeOverflow_CapsSummaryLength`、`TestSummarizeOverflow_ConcurrentSameConversationRunsOnce`。
-> - **未实现**：P1–P4 全部内容。
-> - **已执行验证（收尾）**：`go build ./...`、`go vet ./...`、`go test ./... -count=1` 全部通过；`go test -race ./internal/service/ai/bot/service -run TestSummarizeOverflow_ConcurrentSameConversationRunsOnce` 通过。以上均为本地单机验证，未做压测、灰度或故障注入。
+> - **已实现（P1）**：
+>   - 新增 `internal/bot/ctxmem` 装配原语：统一 `TokenEstimator`（含 tool call 的函数名与参数）、按模型窗口推导历史预算 `H`、四层配额 `Allocate`、按轮装配 `PackWorking`、结构化事实槽 `ExtractSlots/ResolveSlot/RenderSlots`。
+>   - 新增 `conversation_slots` 表与同步抽取落库；事实值必须是源消息子串，同来源后一轮更正旧值并保留更正说明，跨来源（user/tool）并存，不按 Confidence 裁决真假。
+>   - 两个发送入口统一走 `buildConversationContext`：先扣除 system prompt、长期记忆、当前问题与工具 schema 预留，再按 `H` 分页拉历史、分配各层预算，最后按「长期记忆 → 事实槽 → 摘要 → 原文」注入。
+>   - 历史预算不再使用固定 6000 token；`bot.Config["context_window"]`（兼容 `context_window_tokens`）可配置，非法值告警后回退 32768，并受 2048 下限保护。
+> - **回归与新增测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`、`TestSummarizeOverflow_*`，以及 `ctxmem` 下的 `TestDeriveHistoryBudget_*`、`TestPackWorking_*`、`TestExtractSlots_*`、`TestResolveSlot_*`、`TestRenderSlots_*`。
+> - **未实现（面试版本冻结范围）**：P2 检索层、P3 的结构化摘要与全量观测指标、P4 摘要状态外置与多副本。`Allocate` 的保底/竞争/回收已作为 P1 预算切分实现，但不代表 P3 的指标与结构化摘要已完成。
+> - **已执行验证（收尾）**：`go build ./...`、`go vet ./...`、`go test ./internal/bot/ctxmem/... ./internal/service/ai/bot/... -count=1` 全部通过。以上均为本地单机验证，未做压测、灰度、故障注入或多副本一致性验证。
 > - §1、§2 与附录 A 描述的是 **P0 改造前**的基线；本文其余数字与分层仍是设计目标，不是已上线事实。
 
 ---
