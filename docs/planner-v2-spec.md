@@ -1123,5 +1123,65 @@ internal/service/ai/bot/model/bot.go:112    JSONMap 实现（JSONBlob 照抄）
 
 > 这是一个带失效传播的 Plan-and-Execute 执行器：步骤显式声明前提与依赖，执行中把"前序结论被推翻"作为一等信号上报，沿依赖图定位需要重跑的步骤，用 patch 而非重写来修订计划，未受影响的结果直接复用；副作用步骤带幂等键，执行记录落库以支持中断续跑。
 
+---
+
+## 20. 实现状态（2026-11-06）
+
+### 20.1 已落地
+
+| 能力 | 位置 |
+|---|---|
+| DAG 数据模型、状态机、环/引用/effect 校验 | `internal/bot/planner/plan.go` |
+| 分层并发调度、副作用串行、预算、失败分级与重试 | `internal/bot/planner/execute.go` |
+| 失效传播与 `stale`（含未知 `step_id` 忽略并告警） | `plan.go`、`execute.go` |
+| patch 协议 `add / modify / remove / replace_from`，clone 应用 + 整体回滚 | `internal/bot/planner/patch.go` |
+| 运行记录接口、输入指纹、续跑窗口、`PlanStats` | `internal/bot/planner/store.go` |
+| 规划 / 重规划 / 前提与产出校验 / 综合 prompt | `internal/bot/planner/planner.go` |
+| 持久化模型与 DAO（`plan_runs` / `plan_step_records`） | `internal/service/ai/bot/model/plan.go`、`internal/service/ai/bot/dao/plan_run.go` |
+| `Mode=legacy|dag` 与 per-Bot 覆盖、`disable_replan`、`persist_runs` | `internal/service/ai/bot/service/bot.go`、`config/config.go` |
+| 指标与结构化日志 | `pkg/obs/metrics.go`、`execute.go` |
+
+### 20.2 已验证
+
+```text
+go build ./...                                       通过
+go test ./internal/bot/planner/... -count=1          通过
+go test ./internal/service/ai/bot/service/...        通过
+go test ./... -count=1                               通过
+go vet ./internal/bot/planner/...                    通过
+```
+
+§15 用例落点（均为可执行断言，不是人工检查）：
+
+| 用例 | 测试 |
+|---|---|
+| T1 | `TestExecute_DAGOrderAndParallelism`、`TestExecute_ParallelLayerPreReserve` |
+| T2/T3/T4 | `TestValidatePlan_DependencyGraph`（含环路径 `1 -> 2 -> 1`） |
+| T5 | `TestExecute_ViolationPatchReusesUnaffectedResults`、`TestExecute_GoldenInvalidationPropagation` |
+| T6 | `TestExecute_UnknownViolationIsIgnored` |
+| T7 | `TestExecute_TransientRetryDoesNotReplan` |
+| T8 | `TestPlanner_ExecutePlan_FailureTriggersReplan` |
+| T9 | `TestExecute_ReplanBudgetTerminatesDegraded` |
+| T10 | `TestExecute_GoldenInvalidationPropagation`（`replace_from` 指向中间步骤） |
+| T11 | `TestApplyPatch_UnknownOperationKeepsPlan` |
+| T12 | `TestApplyPatch_CycleRollsBackWholePlan` |
+| T13 | `TestExecute_BudgetExhausted`、`TestExecute_ExactBudgetStillCompletes` |
+| T14 | `TestExecute_ProgressEventsAreOrdered`（`-race`） |
+| T15 | `TestExecuteWith_ReplaysCompletedSideEffect` |
+| T16/T17 | `TestTruncateBytes_MultibyteBoundary`、`TestFormatResults_TruncatesByBytes` |
+| T18 | `TestExecuteWith_ResumeSkipsCompletedReadOnlySteps` |
+
+额外覆盖了 patch 修改已完成步骤时下游重跑、token 预算覆盖步骤 prompt、失败正文不进入综合 prompt、取消时仍写终态、验证失败 fail-open 等边界。
+
+### 20.3 尚未完成 / 已知限制
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `AvgReActCalls` 真实分布回填 | 未执行 | 预算推导仍按 3 估算，需用 `planner_llm_calls_per_run` 的生产分布校准 |
+| 持久化 DAO 集成测试 | 未执行 | `dao.NewPlanRunStore` 依赖真实 PostgreSQL；续跑语义用内存 `fakeStore` 覆盖，DAO 的 SQL 与索引尚未在 CI 中跑过 |
+| 跨进程崩溃续跑 | 未执行 | 单测验证了"从 checkpoint 恢复"的逻辑；"kill -9 后重启续跑"需要部署环境验证 |
+| 长稳压测 | 未执行 | 未测量分层并发在真实工具延迟下的收益，不得填数 |
+| 线上灰度 | 未开启 | 代码默认 `mode=legacy`，`planner.enabled=false`；`dag` 与 `persist_runs` 均需显式打开 |
+
 
 

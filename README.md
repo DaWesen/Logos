@@ -102,7 +102,7 @@ Logos 是一个面向多人在线的即时通讯系统，内置可自部署的 A
 - **MCP 工具集成**：Bot 可调用外部工具（天气查询、代码执行、Web 搜索、计算器等），扩展能力边界
 - **MCP 代码执行沙箱**：多层防护——环境变量白名单（服务密钥不泄漏给被执行代码）、超时硬上限 + 进程树终止、输出/代码大小限额、全局并发限制；设置 `LOGOS_CODE_SANDBOX=docker` 时升级为容器级隔离（`--network none --memory 128m`，无网络、只读挂载）
 - **工具执行内核**：所有只读检索工具共用一套策略——20s 总超时（覆盖所有重试）、16 路并发上限、同参调用合并、单条 32k/单轮 48k 结果预算；可重试错误按 100→200→400ms 退避，最多 3 次尝试；连续 5 次失败后熔断 30s，冷却后只放一个半开探针。重试、熔断、缓存只对 `ReadOnly`/`Cacheable` 工具生效，MCP 等有副作用工具即使误配 `Retryable` 也不会重复执行；调用方取消不计入熔断，同参等待者也能随自己的 ctx 取消
-- **语义缓存**：语义相似的重复问题直接返回缓存答案（Redis + 向量余弦相似度 ≥ 0.90 命中），省一次 LLM 调用、毫秒级响应；Redis 不可用时自动降级直通
+- **语义缓存**：命中要同时过七维 Scope（tenant/bot/user/KBVersion/prompt/model/embedding）隔离、PromptHash 精确层、向量相似度与槽位硬门控（否定、数字、实体、路线方向任一不一致直接拒绝），灰区再交给判官复核——宁可多一次模型调用，也不返回"像但不是"的答案。进程内索引承担热读，Redis 只做持久层；写入走有界队列 + 固定 worker，best-effort 不阻塞回答，队列满只丢缓存不影响主链路；知识库更新通过 KBVersion 让旧条目立即失效。默认 `mode=off`，`shadow` 只判定记指标、不返回缓存答案，用于零风险观测命中率与假命中
 - **缓存三件套**：击穿（缓存过期瞬间并发回源）用 `pkg/singleflight` 合并成一次，等待者随自己的 ctx 取消、回源用 `WithoutCancel` + 超时避免被单个客户端拖死；穿透（查不存在的实体）写 60s 空值标记，实体写回时立即清除；雪崩（同时过期）由 TTL 抖动（±10%）把失效时间摊开。`logos.cache.fill.count{result=fill/shared/error}` 能量化拦截比例
 - **缓存调用有自己的预算**：Redis 读 200ms、写 500ms，超时/错误即降级回源，不会因为依赖抖动把请求拖到 gRPC 的 30s 超时；`logos.cache.redis.count{op,result}` 把 `miss / timeout / error` 分开统计，避免正常未命中稀释错误率。预算覆盖**全部**方法（批量、Hash、List、Set、ZSet、Pipeline、Ping），不是只包 `Get/Set`——只包一部分等于没有预算，未包装的调用照样会把 goroutine 挂到调用方超时；静态测试会拦住新增方法绕过 `runOp/runErr`
 - **长对话上下文压缩**：历史消息按 token 预算装载，超出预算的早期对话滚动摘要为「对话背景」注入（按会话缓存，均摊成本 O(新溢出消息数)）；摘要失败自动降级为截断，不阻塞主流程
@@ -633,6 +633,14 @@ Gateway 层额外提供多级限流。各层按职责分档，阈值必须相互
 | `logos.llm.parse.count` | Counter | `module`、`result=ok/failed` | AI 结构化输出解析成功/失败数（memory/moderation/summary/extraction） |
 | `logos.llm.repair.count` | Counter | `module`、`result=fixed/failed` | 解析失败后一次定向修复的结果，用于判断修复是否值得 |
 | `logos.ai.semantic_cache.count` | Counter | `op=lookup/store`、`result=hit/miss/error/unavailable/disabled` | 语义缓存命中与故障，命中率直接对应省下的 LLM 调用 |
+| `logos.planner.runs.count` | Counter | `status=completed/degraded/budget_exhausted/blocked/failed` | 一轮规划执行的终态；`degraded` 占比直接反映计划稳定性 |
+| `logos.planner.steps.count` | Counter | `status=done/failed`、`effect=none/idempotent/side_effect` | 步骤级成功率与副作用步骤占比 |
+| `logos.planner.step.duration` | Histogram | `effect` | 单步耗时分布，区分只读检索与副作用工具 |
+| `logos.planner.replans.count` | Counter | `reason=failure/violation` | 重规划来源：执行失败，还是前序结论被推翻 |
+| `logos.planner.stale_steps.count` | Counter | 无 | 失效传播作废的步骤数；突增说明模型给出的前提经常不成立 |
+| `logos.planner.budget_exhausted.count` | Counter | `kind=calls/tokens/wallclock` | 预算耗尽的具体维度，用于回调 `max_llm_calls` / `max_tokens` |
+| `logos.planner.replayed_steps.count` | Counter | 无 | 副作用步骤命中 checkpoint 重放、实际未再调用工具的次数 |
+| `logos.planner.llm_calls_per_run` | Histogram | 无 | 单轮调用次数分布，用于回填预算推导里的 `AvgReActCalls` |
 | `logos.es.request.count` | Counter | `index`、`operation`、`result=ok/failed/canceled` | Elasticsearch 访问结果，取消与真实失败分开计数 |
 | `logos.es.request.duration` | Histogram | `index`、`operation`、`result` | Elasticsearch 访问耗时，可直接算检索 P95 |
 | `logos.db.statement.duration` | Histogram | `operation=query/create/update/delete/row`、`table`、`result=ok/failed` | GORM 统一埋点，所有 DAO 自动获得 SQL 耗时分布 |
