@@ -1318,6 +1318,8 @@ semantic_cache:
 | Bot 非流式与流式接入（工具轮、planner、注入命中禁止写入） | 已实现 | `bot.go`、`semantic_cache.go` |
 | `calibrated_for` 与 embedding 模型绑定，不匹配降级 shadow | 已实现 | `semantic_cache.go` |
 | 阈值标定工具与 `-check` 回归 | 已实现 | `cmd/tools/scache-calibrate`、`scache/calibrate` |
+| 精确层独立 TTL（`ExactTTL`，且不长于条目 TTL） | 已实现 | `scache/cache.go` |
+| 命中计数并发安全（索引条目副本替换，不在原地改 `Hits`） | 已实现 | `scache/index.go` |
 
 关键正确性约束：灰区判官只裁决**最终会被返回的那一条候选**。实现上先按槽位过滤出兼容候选，再取 `compatible[0]` 交给判官，避免"判官批准候选 2、实际返回候选 1"的假命中。
 
@@ -1334,7 +1336,33 @@ go test ./... -count=1                                         通过
 
 单测覆盖：归一化、Scope 顺序与空 UserID、PromptHash、槽位门控（含路线问句尾巴）、精确命中不调用 embedding、重启后从 Redis 精确层命中且不调用 embedding、embedding 失败降级、shadow 不返回、兼容候选优先、灰区无判官、准入禁区（含个人数据）、TTL 分档、KBVersion 失效、`ForgetUser` 清理多 scope、并发 embedding 合并、伪流式回放、并发访问、Close 幂等。
 
-### 20.3 尚未完成
+集成测试把 §15.2 的六个场景落到了包内：
+
+| 测试 | 验证点 |
+|---|---|
+| `TestIntegration_WriteThenRead` | 写入后同 query 精确命中 |
+| `TestIntegration_ParaphraseHitsVector` | 改写句走向量命中 |
+| `TestIntegration_TTLExpiry` | 条目过期后不再命中 |
+| `TestIntegration_ConcurrentStore` | 100 goroutine 并发写，条目数与预期一致，`-race` 无告警 |
+| `TestIntegration_Eviction` | 超过 scope 上限后淘汰旧条目 |
+| `TestIntegration_KBBumpInvalidates` | `BumpKBVersion` 后立即 miss |
+
+另补 `TestPersistExactTTLUsesConfiguredValue`：配置的精确层 TTL 更短时生效，更长时被条目 TTL 截断。
+
+测试没有按 §15.2 给 `pkg/cache` 增加 `NewMemoryCache()`，而是使用 `scache` 包内的 `fakeRedis`。原因很具体：生产写入依赖单条 Lua 脚本原子更新 bucket/index/exact/meta/用户反查索引，通用内存 Cache 若要支持 `EvalSha`，等于在测试里重新实现一遍 Redis 脚本语义，反而更容易测出假绿。`fakeRedis` 只实现被测路径需要的最小命令集，并记录 key TTL，供 TTL 断言使用。
+
+### 20.3 本地基准
+
+`scripts/bench/scache` 是进程内合成基准：不连 Redis、不调用 embedding、只有一个 scope，判官关闭。它测量的是精确命中与本地向量检索的判定成本，**不是线上 P99/QPS**，也不能写进简历当作生产数据。
+
+```text
+go run ./scripts/bench/scache
+go run ./scripts/bench/scache -entries 200 -lookups 50000 -dim 256
+```
+
+输出包含 p50/p95/p99、max、mean、单线程 QPS，以及本地索引条目数与估算字节。基准默认关闭命中日志，否则逐条 `scache_hit` 会主导测量结果；线上每条命中仍有 Info 日志，这层成本不在基准数字里。用途只有一个：改索引、槽位门控或判定顺序后，在同一台机器上做前后回归比较。
+
+### 20.4 尚未完成
 
 | 项 | 状态 | 说明 |
 |---|---|---|
