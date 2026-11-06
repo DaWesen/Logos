@@ -265,8 +265,8 @@ func (s *botServiceImpl) plannerChat(ctx context.Context, systemPrompt, userProm
 }
 
 // chatWithPlanner Plan-and-Execute 路径：
-// 生成计划 → 逐步用带工具的 ReAct Agent 执行（进度经 onProgress 回调）→ 综合作答。
-// 每步不带聊天历史（任务模式专注当前目标），失败自动重规划一次。
+// 生成计划 → 按依赖图用带工具的 ReAct Agent 执行（进度经 onProgress 回调）→ 综合作答。
+// 每步不带聊天历史（任务模式专注当前目标），失败时按预算做最多两次 patch 重规划。
 func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, botAgent agent.BotAgent, mode string, onProgress func(string)) (string, error) {
 	plan, err := s.planner.CreatePlan(ctx, content)
 	if err != nil {

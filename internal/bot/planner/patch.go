@@ -229,12 +229,9 @@ func (p *Plan) ApplyPatchTracked(patch *PlanPatch) ([]int, error) {
 			}
 			victims := clone.Propagate([]int{op.ID})
 			for _, id := range victims {
-				s := clone.Step(id)
-				if s == nil || s.Status == StatusSkipped {
-					continue
+				if err := skipForPatch(clone.Step(id), "被 patch 移除"); err != nil {
+					return nil, err
 				}
-				s.Status = StatusSkipped
-				s.StaleReason = "被 patch 移除"
 				affected[id] = true
 			}
 
@@ -246,12 +243,9 @@ func (p *Plan) ApplyPatchTracked(patch *PlanPatch) ([]int, error) {
 			inherited := append([]int(nil), target.DependsOn...)
 			victims := clone.Propagate([]int{op.ID})
 			for _, id := range victims {
-				s := clone.Step(id)
-				if s == nil || s.Status == StatusSkipped {
-					continue
+				if err := skipForPatch(clone.Step(id), "被 patch 替换"); err != nil {
+					return nil, err
 				}
-				s.Status = StatusSkipped
-				s.StaleReason = "被 patch 替换"
 				affected[id] = true
 			}
 			steps, err := buildPatchSteps(op.Steps, local, clone, inherited)
@@ -279,6 +273,27 @@ func (p *Plan) ApplyPatchTracked(patch *PlanPatch) ([]int, error) {
 	}
 	sort.Ints(out)
 	return out, nil
+}
+
+// skipForPatch 通过状态机把步骤标记为 skipped。
+//
+// done 不能直接跳到 skipped；先迁移到 stale 表示"结果已作废"，
+// 再迁移到 skipped 表示"已从计划中移除"。这样审计记录里仍能看出
+// 该步骤曾经成功执行过，而不是凭空消失。
+func skipForPatch(step *PlanStep, reason string) error {
+	if step == nil || step.Status == StatusSkipped {
+		return nil
+	}
+	if step.Status == StatusDone {
+		if err := step.Transition(StatusStale); err != nil {
+			return fmt.Errorf("%w: %v", ErrPatchRejected, err)
+		}
+	}
+	if err := step.Transition(StatusSkipped); err != nil {
+		return fmt.Errorf("%w: %v", ErrPatchRejected, err)
+	}
+	step.StaleReason = reason
+	return nil
 }
 
 func buildPatchSteps(steps []PatchStep, local map[string]int, plan *Plan, inherited []int) ([]PlanStep, error) {
