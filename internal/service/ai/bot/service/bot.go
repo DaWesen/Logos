@@ -413,6 +413,7 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 				logger.IntField("tokens", run.TokensUsed),
 				logger.IntField("stale_steps", run.StaleSteps),
 				logger.IntField("replayed_steps", run.ReplayedSteps),
+				logger.IntField("degrade_stage", run.DegradeStage),
 				logger.DurationField("duration", run.Duration))
 		}
 		if runErr != nil && run != nil {

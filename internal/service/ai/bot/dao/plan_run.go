@@ -124,6 +124,45 @@ func (s *PlanRunStore) AppendStep(ctx context.Context, rec *planner.StepRecord) 
 	return s.db.WithContext(ctx).Create(row).Error
 }
 
+// UpdateStep 把同一步骤的 running 行更新为终态。
+//
+// 开始写 running、结束更新同一行，能把一步的写放大从 2 行降到 1 行；
+// 同时保留了 started_at，续跑时仍能判断这一步是否真的执行过。
+func (s *PlanRunStore) UpdateStep(ctx context.Context, rec *planner.StepRecord) error {
+	if rec == nil {
+		return errors.New("步骤记录为空")
+	}
+	facts, err := json.Marshal(rec.Facts)
+	if err != nil {
+		return err
+	}
+	violations, err := json.Marshal(rec.Violations)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		"attempt":     rec.Attempt,
+		"status":      string(rec.Status),
+		"output":      rec.Output,
+		"facts":       model.JSONBlob(facts),
+		"violations":  model.JSONBlob(violations),
+		"tokens_in":   rec.TokensIn,
+		"tokens_out":  rec.TokensOut,
+		"duration_ms": rec.DurationMs,
+		"error":       rec.Error,
+		"finished_at": rec.FinishedAt,
+	}
+	result := s.db.WithContext(ctx).Model(&model.PlanStepRecord{}).
+		Where("id = ?", rec.ID).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("步骤记录 %s 不存在", rec.ID)
+	}
+	return nil
+}
+
 // FindStepOutput 查同一次运行里输入指纹一致的已完成副作用记录。
 //
 // 只要 input_hash 相同，就说明"这次重试要做的还是同一件事"，
