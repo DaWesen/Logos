@@ -3,6 +3,7 @@ package obs
 import (
 	"context"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -850,9 +851,25 @@ func RecordRateLimitDegraded(ctx context.Context, layer string) {
 
 // 语义缓存指标：命中率直接对应「省了多少次 LLM 调用」。
 // 只看平均耗时看不出收益：miss 也要先做一次 embedding，命中才省掉生成。
+//
+// v2 把判定拆成 decision/similarity/stage 三个维度，原因是一个笼统的
+// hit/miss 无法回答「为什么没命中」：是槽位否决、判官判不同，还是
+// embedding 超时。没有这些区分，调阈值只能靠猜。
 var (
 	semanticCacheOnce    sync.Once
 	semanticCacheCounter metric.Int64Counter
+
+	scacheLookupCounter    metric.Int64Counter
+	scacheStoreCounter     metric.Int64Counter
+	scacheStageDuration    metric.Float64Histogram
+	scacheJudgeCounter     metric.Int64Counter
+	scacheSimilarityHist   metric.Float64Histogram
+	scacheShadowCounter    metric.Int64Counter
+	scacheFalseHitCounter  metric.Int64Counter
+	scacheEvictCounter     metric.Int64Counter
+	scacheEntriesGauge     metric.Int64Gauge
+	scacheColdStartCounter metric.Int64Counter
+	scacheRedisCounter     metric.Int64Counter
 )
 
 func initSemanticCacheMetrics() {
@@ -864,11 +881,56 @@ func initSemanticCacheMetrics() {
 		"logos.ai.semantic_cache.count",
 		metric.WithDescription("语义缓存操作结果（op=lookup/store, result=hit/miss/error/...）"),
 	)
+	scacheLookupCounter, _ = meter.Int64Counter(
+		"logos.scache.lookup",
+		metric.WithDescription("语义缓存判定结果（decision=hit_exact/hit_vector/miss_slot/...）"),
+	)
+	scacheStoreCounter, _ = meter.Int64Counter(
+		"logos.scache.store",
+		metric.WithDescription("语义缓存写入结果（result=ok/queued/dropped_queue_full/rejected_*）"),
+	)
+	scacheStageDuration, _ = meter.Float64Histogram(
+		"logos.scache.lookup.duration",
+		metric.WithDescription("语义缓存各阶段耗时（stage=exact/slot/embed/search/judge）"),
+		metric.WithUnit("s"),
+	)
+	scacheJudgeCounter, _ = meter.Int64Counter(
+		"logos.scache.judge",
+		metric.WithDescription("灰区判官结论（verdict=same/different/timeout/error/unparsable/disabled）"),
+	)
+	scacheSimilarityHist, _ = meter.Float64Histogram(
+		"logos.scache.similarity",
+		metric.WithDescription("命中候选的余弦相似度分布（decision=hit_vector/hit_judge/miss_*）"),
+	)
+	scacheShadowCounter, _ = meter.Int64Counter(
+		"logos.scache.shadow",
+		metric.WithDescription("shadow 模式下本会返回的判定（decision=hit_*）"),
+	)
+	scacheFalseHitCounter, _ = meter.Int64Counter(
+		"logos.scache.false_hit_suspect",
+		metric.WithDescription("疑似假命中信号（reason=reject/reask）"),
+	)
+	scacheEvictCounter, _ = meter.Int64Counter(
+		"logos.scache.evict",
+		metric.WithDescription("因容量上限被淘汰的条目数"),
+	)
+	scacheEntriesGauge, _ = meter.Int64Gauge(
+		"logos.scache.entries",
+		metric.WithDescription("当前进程内索引条目总数"),
+	)
+	scacheColdStartCounter, _ = meter.Int64Counter(
+		"logos.scache.coldstart",
+		metric.WithDescription("冷启动加载结果（result=ok/fail）"),
+	)
+	scacheRedisCounter, _ = meter.Int64Counter(
+		"logos.scache.redis",
+		metric.WithDescription("Redis 持久化依赖状态（result=ok/unavailable）"),
+	)
 }
 
 // RecordSemanticCache 记录一次语义缓存操作。
 // op 取 lookup/store；lookup 的 result 取 hit/miss/error/disabled/unavailable，
-// store 取 ok/failed。
+// store 取 ok/failed。保留 v1 指标名，避免已有看板断档。
 func RecordSemanticCache(ctx context.Context, op, result string) {
 	semanticCacheOnce.Do(initSemanticCacheMetrics)
 	if semanticCacheCounter != nil {
@@ -876,6 +938,97 @@ func RecordSemanticCache(ctx context.Context, op, result string) {
 			attribute.String("op", op),
 			attribute.String("result", result),
 		))
+	}
+}
+
+// RecordSCacheLookup 记录一次判定结论。
+func RecordSCacheLookup(ctx context.Context, decision string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheLookupCounter != nil {
+		scacheLookupCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("decision", decision)))
+	}
+}
+
+// RecordSCacheStore 记录一次写入结果。
+func RecordSCacheStore(ctx context.Context, result string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheStoreCounter != nil {
+		scacheStoreCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordSCacheStage 记录判定流水线单个阶段的耗时。
+func RecordSCacheStage(ctx context.Context, stage string, d time.Duration) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheStageDuration != nil {
+		scacheStageDuration.Record(ctx, d.Seconds(), metric.WithAttributes(attribute.String("stage", stage)))
+	}
+}
+
+// RecordSCacheJudge 记录灰区判官结论。
+func RecordSCacheJudge(ctx context.Context, verdict string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheJudgeCounter != nil {
+		scacheJudgeCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("verdict", verdict)))
+	}
+}
+
+// RecordSCacheSimilarity 记录命中候选的相似度分布。
+func RecordSCacheSimilarity(ctx context.Context, decision string, similarity float64) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheSimilarityHist != nil {
+		scacheSimilarityHist.Record(ctx, similarity, metric.WithAttributes(attribute.String("decision", decision)))
+	}
+}
+
+// RecordSCacheShadow 记录 shadow 模式下本会发生的命中。
+func RecordSCacheShadow(ctx context.Context, decision string, similarity float64) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheShadowCounter != nil {
+		scacheShadowCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("decision", decision),
+			attribute.Float64("similarity", similarity),
+		))
+	}
+}
+
+// RecordSCacheFalseHit 记录疑似假命中信号。
+func RecordSCacheFalseHit(ctx context.Context, reason string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheFalseHitCounter != nil {
+		scacheFalseHitCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+	}
+}
+
+// RecordSCacheEvict 记录一次容量淘汰。
+func RecordSCacheEvict(ctx context.Context, n int) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheEvictCounter != nil && n > 0 {
+		scacheEvictCounter.Add(ctx, int64(n))
+	}
+}
+
+// RecordSCacheEntries 记录当前索引规模。
+func RecordSCacheEntries(ctx context.Context, total int) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheEntriesGauge != nil {
+		scacheEntriesGauge.Record(ctx, int64(total))
+	}
+}
+
+// RecordSCacheColdStart 记录冷启动加载结果。
+func RecordSCacheColdStart(ctx context.Context, result string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheColdStartCounter != nil {
+		scacheColdStartCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordSCacheRedis 记录 Redis 依赖状态。
+func RecordSCacheRedis(ctx context.Context, result string) {
+	semanticCacheOnce.Do(initSemanticCacheMetrics)
+	if scacheRedisCounter != nil {
+		scacheRedisCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 	}
 }
 

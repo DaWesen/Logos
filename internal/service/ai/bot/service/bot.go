@@ -226,9 +226,9 @@ func NewBotService(
 	}
 	// 语义缓存：Redis 惰性拨号，失败自动降级直通
 	if cfg != nil {
-		impl.semanticCache = NewSemanticCache(
+		impl.semanticCache = NewSemanticCacheWithJudge(
 			fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port),
-			cfg.Redis.Password, cfg.Redis.DB, impl.embedForBot,
+			cfg.Redis.Password, cfg.Redis.DB, impl.embedForBot, impl.semanticCacheJudge,
 		)
 	}
 	// 长对话上下文压缩：token 预算 + 滚动摘要
@@ -686,6 +686,7 @@ func (s *botServiceImpl) autoSaveToKnowledgeBase(bot *botmodel.Bot, userContent,
 
 	collectionIDs := strings.Split(collectionIDsStr, ",")
 	text := fmt.Sprintf("用户: %s\n助手: %s", userContent, assistantResponse)
+	savedAny := false
 
 	for _, cid := range collectionIDs {
 		cid = strings.TrimSpace(cid)
@@ -704,10 +705,19 @@ func (s *botServiceImpl) autoSaveToKnowledgeBase(bot *botmodel.Bot, userContent,
 				logger.StringField("collectionID", cid),
 				logger.ErrorField(err))
 		} else {
+			savedAny = true
 			logger.Info("自动存入知识库成功",
 				logger.StringField("collectionID", cid),
 				logger.StringField("vectorID", vectorID))
 		}
+	}
+
+	// 知识库一旦有新内容，旧答案立即失效。只在本轮确实写入成功时推进
+	// 一次版本；每个 collection 各推一次会让版本号无意义地增长。
+	if savedAny && s.semanticCache != nil {
+		bumpCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		s.semanticCache.BumpKBVersion(bumpCtx, bot.ID)
 	}
 }
 
@@ -1085,6 +1095,15 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	}
 	logger.Info("Agent 准备完成", logger.StringField("botID", botID), logger.StringField("elapsed_agent", time.Since(agentStartTime).String()))
 
+	// 工具轮不入缓存：答案可能依赖实时数据或带副作用，复用一次就可能
+	// 把过时/越权结果返回给下一轮。观察者始终挂载，不能只在工具链
+	// 可视化开启时才记录。
+	var toolCalled atomic.Bool
+	ctx = agent.WithToolCallObserver(ctx, func(toolName, args string) {
+		toolCalled.Store(true)
+	})
+	injectionHit := false
+
 	// Plan-and-Execute：开启任务规划模式的 Bot 先规划再逐步执行；
 	// 规划失败自动回退普通对话
 	var plannerResponse string
@@ -1110,6 +1129,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏（不拒绝对话，避免误伤）
 	if hit, pattern := DetectPromptInjection(content); hit {
+		injectionHit = true
 		logger.Warn("检测到疑似 prompt 注入，已注入护栏",
 			logger.StringField("user_id", userID),
 			logger.StringField("pattern", pattern))
@@ -1153,6 +1173,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 		}
 
 		s.saveAssistantMessage(ctx, botID, conversationID, chatResp)
+		s.storeSemanticCacheWithMeta(bot, userID, content, chatResp, "chat", toolCalled.Load(), injectionHit)
 		logger.Info("发送消息成功(简单对话)", logger.StringField("elapsed_total", time.Since(startTime).String()))
 		return chatResp, conversationID, cost, estimatedTokens, nil
 	}
@@ -1203,7 +1224,12 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	s.saveAssistantMessage(ctx, botID, conversationID, response)
 
-	s.storeSemanticCache(bot, userID, content, response)
+	source := "chat"
+	if plannerResponse != "" {
+		// Planner 答案依赖本轮计划与步骤上下文，不复用。
+		source = "planner"
+	}
+	s.storeSemanticCacheWithMeta(bot, userID, content, response, source, toolCalled.Load(), injectionHit)
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
 	safego.Go("bot.auto_save_kb", func() {
@@ -1287,7 +1313,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 
 	// 语义缓存命中：整段答案一次性推送（跳过 LLM，不计费）
 	if cached, ok := s.semanticCache.Lookup(ctx, bot, userID, content); ok {
-		if err := onChunk(cached); err != nil {
+		if err := s.semanticCache.ReplayStream(cached, onChunk); err != nil {
 			return "", err
 		}
 		s.saveAssistantMessage(ctx, botID, conversationID, cached)
@@ -1301,13 +1327,18 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		return "", ErrInternalServer
 	}
 
-	// 工具调用链可视化：开启后把 ReAct 循环中的工具调用决策经 onChunk 推送给前端
-	// （直接调 onChunk 而非 streamOnChunk，避免工具调用提示被写入保存的答案）
-	if toolTraceEnabled(bot) {
-		ctx = agent.WithToolCallObserver(ctx, func(toolName, args string) {
+	// 工具调用观察者始终挂载：即使不开可视化，也要知道本轮是否执行过工具，
+	// 因为工具轮答案不允许进入语义缓存。可视化只是顺带推送提示。
+	// （直接调 onChunk 而非 streamOnChunk，避免提示被写进保存的答案）
+	var toolCalled atomic.Bool
+	traceEnabled := toolTraceEnabled(bot)
+	ctx = agent.WithToolCallObserver(ctx, func(toolName, args string) {
+		toolCalled.Store(true)
+		if traceEnabled {
 			_ = onChunk(fmt.Sprintf("\n> 🔧 调用工具: %s\n", toolName))
-		})
-	}
+		}
+	})
+	injectionHit := false
 
 	// Plan-and-Execute：进度（计划/步骤状态）经 onChunk 实时推送，
 	// 最终答案一次性推送；规划失败自动回退普通流式对话
@@ -1332,7 +1363,6 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 				return "", err
 			}
 			s.saveAssistantMessage(ctx, botID, conversationID, pResp)
-			s.storeSemanticCache(bot, userID, content, pResp)
 			logger.Info("发送流式消息成功(Planner)")
 			return conversationID, nil
 		}
@@ -1345,6 +1375,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 
 	// Prompt 注入防护：命中规则时在上下文开头注入护栏
 	if hit, pattern := DetectPromptInjection(content); hit {
+		injectionHit = true
 		logger.Warn("检测到疑似 prompt 注入，已注入护栏",
 			logger.StringField("user_id", userID),
 			logger.StringField("pattern", pattern))
@@ -1372,7 +1403,8 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 		}
 
 		s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
-		s.storeSemanticCache(bot, userID, content, fullResponse.String())
+		s.storeSemanticCacheWithMeta(bot, userID, content, fullResponse.String(),
+			"chat", toolCalled.Load(), injectionHit)
 		return conversationID, nil
 	}
 
@@ -1384,7 +1416,8 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 	}
 
 	s.saveAssistantMessage(ctx, botID, conversationID, fullResponse.String())
-	s.storeSemanticCache(bot, userID, content, fullResponse.String())
+	s.storeSemanticCacheWithMeta(bot, userID, content, fullResponse.String(),
+		"chat", toolCalled.Load(), injectionHit)
 
 	autoSave := metadata != nil && metadata["auto_save_to_kb"] == "true"
 	safego.Go("bot.auto_save_kb", func() {

@@ -2,239 +2,256 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
-	"sync"
 	"time"
 
+	"Logos/config"
 	botmodel "Logos/internal/service/ai/bot/model"
+	"Logos/internal/service/ai/bot/service/scache"
+	"Logos/pkg/cache"
 	"Logos/pkg/eino"
-	"Logos/pkg/logger"
 	"Logos/pkg/obs"
-
-	"github.com/redis/go-redis/v9"
 )
-
-const (
-	semanticCacheKeyPrefix  = "logos:scache"
-	semanticCacheMaxEntries = 50             // 每个 (用户, Bot) 保留的缓存条数
-	semanticCacheTTL        = 24 * time.Hour // Redis key 整体过期
-	semanticCacheEntryTTL   = 12 * time.Hour // 单条目有效期（查询时判断）
-	semanticCacheThreshold  = 0.90           // 余弦相似度命中阈值
-	semanticCacheDialSkip   = 24 * time.Hour // 拨号失败后多久内不再重试
-)
-
-// SemanticCache 语义缓存：对「语义相似」的重复问题直接返回缓存答案，
-// 省去一次 LLM 调用（省钱 + 毫秒级响应）。
-//
-// 设计要点：
-//   - 查询向量化与历史条目做余弦相似度，超过阈值即命中；
-//   - 向量必须来自同一 embedding 模型（按 Bot 配置解析），否则相似度无意义；
-//   - Redis 惰性拨号，失败后在冷却期内自动降级为直通（不影响主流程）；
-//   - Store 在后台 goroutine 中调用，不阻塞对话主链路。
-type SemanticCache struct {
-	mu       sync.Mutex
-	client   *redis.Client
-	lastFail time.Time // 上次拨号失败时间，冷却期内跳过
-	cfg      redisOptions
-	embed    EmbedForBotFunc
-}
-
-type redisOptions struct {
-	Addr     string
-	Password string
-	DB       int
-}
 
 // EmbedForBotFunc 返回指定 Bot 语境下文本的向量。
 // Bot 配置了自定义 embedding 模型时优先使用，否则回退全局模型。
 type EmbedForBotFunc func(ctx context.Context, bot *botmodel.Bot, text string) ([]float32, error)
 
-type semanticEntry struct {
-	Query     string    `json:"query"`
-	Answer    string    `json:"answer"`
-	Vector    []float32 `json:"vector"`
-	CreatedAt int64     `json:"created_at"`
+// SemanticCache 是 scache v2 的服务层门面。
+//
+// 这一层只做三件事：从 Bot/用户构造 Scope、把 Bot 级灰度映射成 Mode、
+// 把 embedding 适配成 scache.EmbedFunc。判定、索引、持久化和降级全部
+// 留在 scache 包内，避免业务代码再次出现一套「差不多」的缓存逻辑。
+type SemanticCache struct {
+	core  *scache.Cache
+	embed EmbedForBotFunc
 }
 
+// NewSemanticCache 保留 v1 构造函数签名，供已有装配代码平滑迁移。
+// addr/password/db 仅为兼容旧调用方；真正的 Redis 句柄由 pkg/cache 单例提供。
 func NewSemanticCache(addr, password string, db int, embed EmbedForBotFunc) *SemanticCache {
-	return &SemanticCache{
-		cfg:   redisOptions{Addr: addr, Password: password, DB: db},
-		embed: embed,
-	}
+	return NewSemanticCacheWithJudge(addr, password, db, embed, nil)
 }
 
-func semanticCacheKey(userID, botID string) string {
-	return fmt.Sprintf("%s:%s:%s", semanticCacheKeyPrefix, userID, botID)
+// NewSemanticCacheWithJudge 装配判官。judge 为 nil 时灰区一律按 miss，
+// 缓存仍可在高阈值区间工作。
+func NewSemanticCacheWithJudge(addr, password string, db int, embed EmbedForBotFunc, judge scache.JudgeFunc) *SemanticCache {
+	_ = addr
+	_ = password
+	_ = db
+
+	cfg, err := semanticCacheConfig(judge)
+	if err != nil {
+		// 配置非法时让缓存整体停机，而不是带着错误阈值运行。
+		// 服务本身仍能启动，因为缓存是可选优化。
+		return &SemanticCache{embed: embed}
+	}
+	core, err := scache.New(cfg)
+	if err != nil {
+		return &SemanticCache{embed: embed}
+	}
+	return &SemanticCache{core: core, embed: embed}
 }
 
-// getClient 惰性建立 Redis 连接；拨号失败进入冷却期，期间缓存整体直通
-func (c *SemanticCache) getClient(ctx context.Context) (*redis.Client, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.client != nil {
-		return c.client, nil
+func semanticCacheConfig(judge scache.JudgeFunc) (scache.Config, error) {
+	cfg := scache.DefaultConfig()
+	cfg.CacheProvider = func() cache.Cache {
+		if config.TryGetConfig() == nil {
+			return nil
+		}
+		return cache.NewRedisCache()
 	}
-	if time.Since(c.lastFail) < semanticCacheDialSkip {
-		return nil, errors.New("semantic cache redis disabled in cooldown")
-	}
+	cfg.Judge = judge
 
-	client := redis.NewClient(&redis.Options{
-		Addr:     c.cfg.Addr,
-		Password: c.cfg.Password,
-		DB:       c.cfg.DB,
-		PoolSize: 4,
-	})
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	if err := client.Ping(pingCtx).Err(); err != nil {
-		_ = client.Close()
-		c.lastFail = time.Now()
-		return nil, fmt.Errorf("semantic cache redis dial failed: %w", err)
+	app := config.TryGetConfig()
+	if app == nil {
+		if judge == nil {
+			cfg.JudgeEnabled = false
+		}
+		return cfg, nil
 	}
+	sc := app.SemanticCache
 
-	c.client = client
-	logger.Info("语义缓存 Redis 已连接", logger.StringField("addr", c.cfg.Addr))
-	return client, nil
+	if sc.Mode != "" {
+		mode, err := scache.ParseMode(sc.Mode)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.Mode = mode
+	}
+	if sc.MidThreshold > 0 {
+		cfg.MidThreshold = sc.MidThreshold
+	}
+	if sc.HighThreshold > 0 {
+		cfg.HighThreshold = sc.HighThreshold
+	}
+	if sc.MaxEntriesPerScope > 0 {
+		cfg.MaxEntriesPerScope = sc.MaxEntriesPerScope
+	}
+	if sc.MaxTotalEntries > 0 {
+		cfg.MaxTotalEntries = sc.MaxTotalEntries
+	}
+	if sc.MaxTotalBytes > 0 {
+		cfg.MaxTotalBytes = sc.MaxTotalBytes
+	}
+	if sc.EntryTTLHours > 0 {
+		cfg.EntryTTL = time.Duration(sc.EntryTTLHours) * time.Hour
+	}
+	if sc.ExactTTLHours > 0 {
+		cfg.ExactTTL = time.Duration(sc.ExactTTLHours) * time.Hour
+	}
+	cfg.JudgeEnabled = sc.JudgeEnabled
+	if judge == nil {
+		cfg.JudgeEnabled = false
+	}
+	if sc.JudgeTimeoutMS > 0 {
+		cfg.JudgeTimeout = time.Duration(sc.JudgeTimeoutMS) * time.Millisecond
+	}
+	if sc.WriteQueueSize > 0 {
+		cfg.WriteQueueSize = sc.WriteQueueSize
+	}
+	if sc.WriteWorkers > 0 {
+		cfg.WriteWorkers = sc.WriteWorkers
+	}
+	if sc.ReplayChunkRunes > 0 {
+		cfg.ReplayChunkRunes = sc.ReplayChunkRunes
+	}
+	if sc.ReplayBudgetMS > 0 {
+		cfg.ReplayBudget = time.Duration(sc.ReplayBudgetMS) * time.Millisecond
+	}
+	cfg.CalibratedFor = sc.CalibratedFor
+	return cfg, nil
 }
 
-// Lookup 查询语义缓存。任何失败都静默降级为未命中，保证不影响主流程。
+// Lookup 查询语义缓存。任何失败都静默降级为未命中。
 func (c *SemanticCache) Lookup(ctx context.Context, bot *botmodel.Bot, userID, query string) (string, bool) {
-	if c == nil || c.embed == nil || query == "" {
+	if c == nil || c.core == nil || c.embed == nil {
 		obs.RecordSemanticCache(ctx, "lookup", "disabled")
 		return "", false
 	}
 
-	vec, err := c.embed(ctx, bot, query)
-	if err != nil || len(vec) == 0 {
-		obs.RecordSemanticCache(ctx, "lookup", "error")
-		return "", false
-	}
-
-	client, err := c.getClient(ctx)
-	if err != nil {
-		// 拨号失败会进入冷却期，和 Redis 读错误分开：
-		// unavailable 持续升高说明缓存后端不可用，而不是单次抖动。
-		obs.RecordSemanticCache(ctx, "lookup", "unavailable")
-		return "", false
-	}
-
-	// 向量化是一次 API 调用（几十毫秒），Redis 读取同样设置短超时
-	cacheCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	raw, err := client.LRange(cacheCtx, semanticCacheKey(userID, botID(bot)), 0, semanticCacheMaxEntries-1).Result()
-	if err != nil {
-		obs.RecordSemanticCache(ctx, "lookup", "error")
-		return "", false
-	}
-
-	now := time.Now().Unix()
-	var best string
-	bestSim := 0.0
-	for _, item := range raw {
-		var entry semanticEntry
-		if json.Unmarshal([]byte(item), &entry) != nil {
-			continue
-		}
-		if now-entry.CreatedAt > int64(semanticCacheEntryTTL/time.Second) {
-			continue
-		}
-		if sim := cosineSimilarity(vec, entry.Vector); sim > bestSim {
-			bestSim = sim
-			best = entry.Answer
-		}
-	}
-
-	if bestSim >= semanticCacheThreshold {
+	result := c.core.Lookup(ctx, scache.LookupRequest{
+		Scope: c.scopeFor(ctx, bot, userID),
+		Query: query,
+		Embed: c.embedFunc(bot),
+		Mode:  scacheModeForBot(bot),
+	})
+	if result.Decision.Hit() {
 		obs.RecordSemanticCache(ctx, "lookup", "hit")
-		logger.Info("语义缓存命中",
-			logger.StringField("user_id", userID),
-			logger.Float64Field("similarity", bestSim))
-		return best, true
+		return result.Answer, true
 	}
 	obs.RecordSemanticCache(ctx, "lookup", "miss")
 	return "", false
 }
 
-// Store 写入语义缓存（应在后台 goroutine 中调用）。
-// Lua 保证 LPUSH + LTRIM + EXPIRE 原子执行。
-var semanticCacheStoreScript = redis.NewScript(`
-redis.call('LPUSH', KEYS[1], ARGV[1])
-redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]))
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
-`)
-
+// Store 写入语义缓存（进入有界队列，不阻塞主链路）。
 func (c *SemanticCache) Store(ctx context.Context, bot *botmodel.Bot, userID, query, answer string) {
-	if c == nil || c.embed == nil || query == "" || answer == "" {
-		return
-	}
-
-	vec, err := c.embed(ctx, bot, query)
-	if err != nil || len(vec) == 0 {
-		obs.RecordSemanticCache(ctx, "store", "failed")
-		return
-	}
-
-	client, err := c.getClient(ctx)
-	if err != nil {
-		obs.RecordSemanticCache(ctx, "store", "failed")
-		return
-	}
-
-	entry := semanticEntry{
-		Query:     query,
-		Answer:    answer,
-		Vector:    vec,
-		CreatedAt: time.Now().Unix(),
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		obs.RecordSemanticCache(ctx, "store", "failed")
-		return
-	}
-
-	storeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	if err := semanticCacheStoreScript.Run(storeCtx, client,
-		[]string{semanticCacheKey(userID, botID(bot))},
-		string(data),
-		semanticCacheMaxEntries-1,
-		int(semanticCacheTTL/time.Second),
-	).Err(); err != nil {
-		obs.RecordSemanticCache(ctx, "store", "failed")
-		return
-	}
-	obs.RecordSemanticCache(ctx, "store", "ok")
+	c.StoreWithMeta(ctx, bot, userID, query, answer, "chat", false, false)
 }
 
-// botID 从 Bot 对象提取缓存命名空间使用的 ID
-func botID(bot *botmodel.Bot) string {
+// StoreWithMeta 携带准入判断所需的元信息。
+// source/toolCalled/injectionGuardHit 任一触发禁区，答案都会被拒绝入库。
+func (c *SemanticCache) StoreWithMeta(ctx context.Context, bot *botmodel.Bot, userID, query, answer,
+	source string, toolCalled, injectionGuardHit bool) {
+	if c == nil || c.core == nil || c.embed == nil {
+		return
+	}
+	c.core.Store(ctx, scache.StoreRequest{
+		Scope:             c.scopeFor(ctx, bot, userID),
+		Query:             query,
+		Answer:            answer,
+		Embed:             c.embedFunc(bot),
+		Source:            source,
+		ToolCalled:        toolCalled,
+		InjectionGuardHit: injectionGuardHit,
+		Mode:              scacheModeForBot(bot),
+	})
+}
+
+// ReplayStream 把缓存答案按伪流式节奏回放。
+func (c *SemanticCache) ReplayStream(answer string, onChunk func(string) error) error {
+	if c == nil || c.core == nil {
+		return onChunk(answer)
+	}
+	return c.core.ReplayStream(answer, onChunk)
+}
+
+// BumpKBVersion 在知识库写入成功后推进版本，使旧答案立即不可达。
+func (c *SemanticCache) BumpKBVersion(ctx context.Context, botID string) int64 {
+	if c == nil || c.core == nil {
+		return 0
+	}
+	return c.core.BumpKBVersion(ctx, botID)
+}
+
+// Stats 返回当前进程内索引规模，供监控与测试使用。
+func (c *SemanticCache) Stats() (entries int, bytes int64) {
+	if c == nil || c.core == nil {
+		return 0, 0
+	}
+	return c.core.Stats()
+}
+
+// Close 停止后台 worker。重复调用安全。
+func (c *SemanticCache) Close() {
+	if c == nil || c.core == nil {
+		return
+	}
+	c.core.Close()
+}
+
+func (c *SemanticCache) scopeFor(ctx context.Context, bot *botmodel.Bot, userID string) scache.Scope {
+	botID := "default"
+	prompt, modelKey, embedKey := "", "", "global"
+	if bot != nil {
+		if bot.ID != "" {
+			botID = bot.ID
+		}
+		prompt = bot.SystemPrompt
+		modelKey = bot.Provider + "/" + bot.Model + "/t=0"
+		if bot.EmbeddingModel != "" {
+			embedKey = bot.EmbeddingModel
+		}
+	}
+	return scache.Scope{
+		Tenant:     "default",
+		BotID:      botID,
+		UserID:     userID,
+		KBVersion:  c.core.KBVersion(ctx, botID),
+		PromptHash: scache.PromptHash(prompt),
+		ModelKey:   modelKey,
+		EmbedKey:   embedKey,
+	}
+}
+
+func (c *SemanticCache) embedFunc(bot *botmodel.Bot) scache.EmbedFunc {
+	return func(ctx context.Context, text string) ([]float32, error) {
+		return c.embed(ctx, bot, text)
+	}
+}
+
+// scacheModeForBot 把 Bot 级配置映射为灰度模式。
+// 非法值按 off 处理：拼错开关名时宁可不用缓存，也不要猜调用方意图。
+func scacheModeForBot(bot *botmodel.Bot) scache.Mode {
 	if bot == nil {
-		return "default"
+		return ""
 	}
-	return bot.ID
+	if bot.Config["enable_semantic_cache"] == "false" {
+		return scache.ModeOff
+	}
+	if raw := bot.Config["scache_mode"]; raw != "" {
+		mode, err := scache.ParseMode(raw)
+		if err != nil {
+			return scache.ModeOff
+		}
+		return mode
+	}
+	return ""
 }
 
-// cosineSimilarity 计算两个向量的余弦相似度（纯函数，可单测）
+// cosineSimilarity 保留为纯函数，供既有测试与外部调试使用。
 func cosineSimilarity(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	return scache.CosineSimilarity(a, b)
 }
 
 // BuildEmbedForBot 构造按 Bot 配置解析 embedding 的函数：
@@ -263,15 +280,31 @@ func (s *botServiceImpl) embedForBot(ctx context.Context, bot *botmodel.Bot, tex
 	return toFloat32(vec), nil
 }
 
-// storeSemanticCache 后台写入语义缓存（独立 context，不受请求取消影响）
+// semanticCacheJudge 把灰区判官接到当前服务的对话模型。
+//
+// 提示词由 scache 包维护，装配层只负责发起一次普通对话调用。判官
+// 失败、超时或输出不可解析都会被缓存层降级为 miss，不影响主链路。
+func (s *botServiceImpl) semanticCacheJudge(ctx context.Context, prompt string) (string, error) {
+	if s.einoManager == nil || !s.einoManager.HasChatModel() {
+		return "", errors.New("无可用的判官模型")
+	}
+	return s.einoManager.Chat(ctx, []string{scache.JudgeSystemPrompt(), prompt})
+}
+
+// storeSemanticCache 后台写入语义缓存（独立 context，不受请求取消影响）。
 func (s *botServiceImpl) storeSemanticCache(bot *botmodel.Bot, userID, query, answer string) {
+	s.storeSemanticCacheWithMeta(bot, userID, query, answer, "chat", false, false)
+}
+
+func (s *botServiceImpl) storeSemanticCacheWithMeta(bot *botmodel.Bot, userID, query, answer,
+	source string, toolCalled, injectionGuardHit bool) {
 	if s.semanticCache == nil {
 		return
 	}
 	go func() {
 		storeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		s.semanticCache.Store(storeCtx, bot, userID, query, answer)
+		s.semanticCache.StoreWithMeta(storeCtx, bot, userID, query, answer, source, toolCalled, injectionGuardHit)
 	}()
 }
 

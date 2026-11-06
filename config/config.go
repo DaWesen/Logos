@@ -40,6 +40,36 @@ type Config struct {
 	Gateway          GatewayCfg       `mapstructure:"gateway"`
 	Payment          Payment          `mapstructure:"payment"`
 	Planner          Planner          `mapstructure:"planner"`
+	SemanticCache    SemanticCache    `mapstructure:"semantic_cache"`
+}
+
+// SemanticCache 是语义缓存 v2 的配置。
+//
+// 字段零值由装配层合并到 scache.DefaultConfig()，这里只表达
+// 「用户显式配置了什么」，避免在配置结构里再维护一套默认值。
+type SemanticCache struct {
+	// Mode off | shadow | on。shadow 会完整判定但不返回缓存答案。
+	Mode string `mapstructure:"mode"`
+	// MidThreshold 灰区下界；HighThreshold 直接命中上界。
+	MidThreshold  float64 `mapstructure:"mid_threshold"`
+	HighThreshold float64 `mapstructure:"high_threshold"`
+	// 容量与 TTL。
+	MaxEntriesPerScope int   `mapstructure:"max_entries_per_scope"`
+	MaxTotalEntries    int   `mapstructure:"max_total_entries"`
+	MaxTotalBytes      int64 `mapstructure:"max_total_bytes"`
+	EntryTTLHours      int   `mapstructure:"entry_ttl_hours"`
+	ExactTTLHours      int   `mapstructure:"exact_ttl_hours"`
+	// 灰区判官。
+	JudgeEnabled   bool `mapstructure:"judge_enabled"`
+	JudgeTimeoutMS int  `mapstructure:"judge_timeout_ms"`
+	// 有界写入队列。
+	WriteQueueSize int `mapstructure:"write_queue_size"`
+	WriteWorkers   int `mapstructure:"write_workers"`
+	// CalibratedFor 记录阈值标定所用的 embedding 标识；mode=on 时必填。
+	CalibratedFor string `mapstructure:"calibrated_for"`
+	// 伪流式回放。
+	ReplayChunkRunes int `mapstructure:"replay_chunk_runes"`
+	ReplayBudgetMS   int `mapstructure:"replay_budget_ms"`
 }
 
 // Planner 规划执行配置。
