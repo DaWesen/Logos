@@ -72,6 +72,25 @@ func (s *memRunStore) AppendStep(_ context.Context, rec *StepRecord) error {
 	return nil
 }
 
+func (s *memRunStore) UpdateStep(_ context.Context, rec *StepRecord) error {
+	if rec == nil {
+		return errors.New("nil step record")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.steps {
+		if s.steps[i].ID != rec.ID {
+			continue
+		}
+		cp := *rec
+		cp.Facts = append([]Fact(nil), rec.Facts...)
+		cp.Violations = append([]Violation(nil), rec.Violations...)
+		s.steps[i] = &cp
+		return nil
+	}
+	return fmt.Errorf("step %s not found", rec.ID)
+}
+
 func (s *memRunStore) FindStepOutput(_ context.Context, runID string, stepID int, inputHash string) (*StepRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

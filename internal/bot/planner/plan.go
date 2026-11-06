@@ -259,7 +259,10 @@ func canTransition(from, to StepStatus) bool {
 	case StatusReady:
 		return to == StatusRunning || to == StatusBlocked || to == StatusSkipped
 	case StatusRunning:
-		return to == StatusDone || to == StatusFailed
+		// 路径 B 的前提校验发生在执行前：此时步骤已经占用 running，
+		// 但业务调用还没有发生。blocked 比 failed 更准确，也避免把
+		// "前提不成立" 误记成执行失败后直接进入重试。
+		return to == StatusDone || to == StatusFailed || to == StatusBlocked
 	case StatusDone:
 		return to == StatusStale
 	case StatusFailed:
@@ -339,7 +342,9 @@ func (p *Plan) EnsureLinearDependencies() bool {
 }
 
 // ReadyLayer 返回当前可执行的步骤。
-// 语义：status ∈ {pending, stale} 且所有 DependsOn 均 done。
+// 语义：status ∈ {pending, ready, stale} 且所有 DependsOn 均 done。
+// ready 也要被选中：路径 B 的 blocked 步骤在 patch 后由 ResetBlocked
+// 放回 ready，如果这里只认 pending/stale，它们会永远停在 ready 上。
 func (p *Plan) ReadyLayer() []*PlanStep {
 	if p == nil {
 		return nil
@@ -347,7 +352,7 @@ func (p *Plan) ReadyLayer() []*PlanStep {
 	out := make([]*PlanStep, 0, len(p.Steps))
 	for i := range p.Steps {
 		s := &p.Steps[i]
-		if s.Status != StatusPending && s.Status != StatusStale {
+		if s.Status != StatusPending && s.Status != StatusReady && s.Status != StatusStale {
 			continue
 		}
 		ready := true
@@ -363,6 +368,30 @@ func (p *Plan) ReadyLayer() []*PlanStep {
 		}
 	}
 	return out
+}
+
+// ResetBlocked 把 blocked 步骤放回 ready，供 patch 后重新调度。
+// blocked 没有产出，不需要像 stale 那样走 pending 再重新校验；
+// 但它的 err/outcome 是上一版计划的诊断信息，必须清掉，
+// 否则续跑或综合阶段会把旧错误当成这一版的结果。
+func (p *Plan) ResetBlocked() {
+	if p == nil {
+		return
+	}
+	for i := range p.Steps {
+		if p.Steps[i].Status != StatusBlocked {
+			continue
+		}
+		if err := p.Steps[i].Transition(StatusReady); err != nil {
+			continue
+		}
+		p.Steps[i].Output = ""
+		p.Steps[i].Attempt = 0
+		p.Steps[i].StaleReason = ""
+		p.Steps[i].outcome = StepOutcome{}
+		p.Steps[i].duration = 0
+		p.Steps[i].err = nil
+	}
 }
 
 // AllSettled 表示没有可继续推进的步骤（done/skipped 都是终态）。

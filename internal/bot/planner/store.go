@@ -87,6 +87,15 @@ type RunStore interface {
 	ListSteps(ctx context.Context, runID string) ([]*StepRecord, error)
 }
 
+// StepUpdater 是可选的 checkpoint 原地更新能力。
+//
+// 不把它塞进 RunStore 是刻意的：只读的运行仓库、测试替身仍然可以只实现
+// AppendStep；支持更新的实现则能把一步的 running/final 合并成一行，
+// 既减少写放大，也让续跑读取到的就是最终状态。
+type StepUpdater interface {
+	UpdateStep(ctx context.Context, rec *StepRecord) error
+}
+
 // GoalHash 归一化目标后取哈希，用于判断"同一个问题"能否续跑。
 func GoalHash(goal string) string {
 	normalized := strings.Join(strings.Fields(goal), " ")

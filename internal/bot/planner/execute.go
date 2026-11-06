@@ -376,13 +376,15 @@ type ProgressEvent struct {
 
 // 进度事件类型。
 const (
-	EventPlan       = "plan"
-	EventStepStart  = "step_start"
-	EventStepDone   = "step_done"
-	EventStepFailed = "step_failed"
-	EventStale      = "stale"
-	EventReplan     = "replan"
-	EventDone       = "done"
+	EventPlan        = "plan"
+	EventStepStart   = "step_start"
+	EventStepDone    = "step_done"
+	EventStepFailed  = "step_failed"
+	EventStepBlocked = "step_blocked"
+	EventStale       = "stale"
+	EventReplan      = "replan"
+	EventDegrade     = "degrade"
+	EventDone        = "done"
 )
 
 // ProgressListenerV2 结构化进度回调。
@@ -424,8 +426,12 @@ func TextProgressListener(fn func(string)) ProgressListenerV2 {
 			fn(fmt.Sprintf("✔ 步骤 %d 完成\n", ev.StepID))
 		case EventStepFailed:
 			fn(fmt.Sprintf("✖ 步骤 %d 失败：%s\n", ev.StepID, ev.Message))
+		case EventStepBlocked:
+			fn(fmt.Sprintf("⏸ 步骤 %d 被阻塞：%s\n", ev.StepID, ev.Message))
 		case EventStale:
 			fn(fmt.Sprintf("⚠ 步骤 %d 结果失效：%s\n", ev.StepID, ev.Message))
+		case EventDegrade:
+			fn(ev.Message)
 		}
 	}
 }
@@ -464,9 +470,13 @@ type RunResult struct {
 	StaleSteps int
 	// ReplayedSteps 命中华副作用重放、未真正调用工具的步骤数。
 	ReplayedSteps int
-	StartedAt     time.Time
-	Duration      time.Duration
-	Err           error
+	// DegradeStage 记录预算压力下实际走到第几级降级：
+	// 1=并发降到 1，2=关闭路径 C，3=关闭重规划，4=返回部分结果。
+	// 保留在结果里是为了让日志和面试复盘能回答"到底降到了哪一步"。
+	DegradeStage int
+	StartedAt    time.Time
+	Duration     time.Duration
+	Err          error
 
 	// budget 只用于收口统计，不参与序列化。
 	budget *Budget
@@ -488,6 +498,16 @@ type execState struct {
 
 	replayed atomic.Int64
 	observe  func(StepReport)
+
+	// degradeStage 是降级阶梯的游标，只增不减。
+	degradeStage int
+	// budgetUnfit 记录"连单步 prompt 都预留不到"的硬失败。
+	// 这种状态下剩余 token 仍然大于 0，Budget.Check 看不出来；
+	// 必须单独标记，否则降级阶梯会误以为还能靠串行/关校验省出额度。
+	budgetUnfit atomic.Bool
+	// stepRows 保存每步 running checkpoint 的主键与写入完成信号。
+	// 结束更新必须等开始写入完成，否则 UPDATE 会找不到行。
+	stepRows sync.Map
 }
 
 // Execute 使用默认配置执行计划。
@@ -509,6 +529,9 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 	if exec == nil {
 		return nil, fmt.Errorf("执行器为空")
 	}
+	// 先按 patch 累积上限做一次粗校验：13 步以上的计划连续跑都不该接受。
+	// 初始计划更严格的 8 步上限要等续跑判定之后再校验，否则会误伤
+	// 那些由 patch 累积到 9-12 步、正在续跑的计划。
 	cfg := opts.Config.withDefaults()
 	for i := range plan.Steps {
 		if plan.Steps[i].Status == "" {
@@ -578,6 +601,10 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 					st.warnf("续跑计划恢复失败: %v", err)
 					break
 				}
+				if err := validatePlan(hydrated, cfg.MaxSteps); err != nil {
+					st.warnf("续跑计划校验失败: %v", err)
+					break
+				}
 				plan = hydrated
 				run.Plan = plan
 				run.RunID = rec.ID
@@ -592,6 +619,15 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			}
 		}
 		if !resumed {
+			// 新计划必须在入口守住单次生成上限；只依赖 ParsePlan 会让
+			// 直接调用 ExecuteWith 的路径绕过 8 步约束。
+			maxInitialSteps := cfg.MaxSteps
+			if maxInitialSteps > MaxPlanSteps {
+				maxInitialSteps = MaxPlanSteps
+			}
+			if err := validatePlan(plan, maxInitialSteps); err != nil {
+				return nil, err
+			}
 			st.revision = plan.Revision
 			rec := &RunRecord{
 				ID:             run.RunID,
@@ -693,8 +729,27 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 				run.Err = err
 				break
 			}
-			run.Status = RunBudgetExhausted
-			run.Err = ErrBudgetExhausted
+			hard := budget.Check() != nil || st.budgetUnfit.Load()
+			if hard {
+				// 预算已经见底，换调度参数也变不出调用额度。把阶梯走完
+				// 再收口，日志里能明确看到降到了哪一级；部分结果由
+				// 服务层的 DegradedSummary 负责变成可读回答。
+				for st.degradeStage < degradePartial {
+					run.DegradeStage = st.nextDegrade(&cfg)
+					emitter.emit(degradeEvent(run.DegradeStage))
+				}
+				run.Status = RunBudgetExhausted
+				run.Err = ErrBudgetExhausted
+				break
+			}
+			// 软压力：只降一级后重试，让"整层预留失败"真正退化到串行，
+			// 而不是直接丢掉还能跑完的步骤。
+			run.DegradeStage = st.nextDegrade(&cfg)
+			emitter.emit(degradeEvent(run.DegradeStage))
+			if run.DegradeStage < degradePartial {
+				continue
+			}
+			run.Status = RunDegraded
 			break
 		}
 		if len(seeds) == 0 {
@@ -709,6 +764,12 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 				run.Status = RunFailed
 				run.Err = err
 				break
+			}
+			if budget.Check() != nil {
+				for st.degradeStage < degradePartial {
+					run.DegradeStage = st.nextDegrade(&cfg)
+					emitter.emit(degradeEvent(run.DegradeStage))
+				}
 			}
 			run.Status = RunDegraded
 			break
@@ -773,6 +834,9 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			}
 		}
 		plan.ResetStale()
+		// patch 可能替换/移除了 blocked 步骤；仍然存在的那部分说明模型
+		// 选择改写后重试，必须放回 ready，否则会永远卡在不可调度的状态。
+		plan.ResetBlocked()
 		emitter.emit(ProgressEvent{Type: EventPlan, Message: plan.FormatPlan()})
 	}
 
@@ -889,6 +953,54 @@ func replanReason(layer []*PlanStep) string {
 	return "violation"
 }
 
+const (
+	degradeConcurrency = iota + 1
+	degradeVerify
+	degradeReplan
+	degradePartial
+)
+
+// nextDegrade 按规范 §9.3 的顺序推进一级降级，返回当前级别。
+// 配置只作用于当前 ExecuteWith 的局部副本，不会污染后续请求。
+func (st *execState) nextDegrade(cfg *Config) int {
+	if st == nil || cfg == nil || st.degradeStage >= degradePartial {
+		if st != nil {
+			return st.degradeStage
+		}
+		return degradePartial
+	}
+	st.degradeStage++
+	switch st.degradeStage {
+	case degradeConcurrency:
+		cfg.MaxConcurrency = 1
+	case degradeVerify:
+		st.verifyExpects = false
+	case degradeReplan:
+		cfg.MaxReplans = 0
+	}
+	return st.degradeStage
+}
+
+// markBudgetUnfit 记录硬预算失败，nil 状态下安全跳过。
+func (st *execState) markBudgetUnfit() {
+	if st != nil {
+		st.budgetUnfit.Store(true)
+	}
+}
+
+func degradeEvent(stage int) ProgressEvent {
+	message := "预算紧张：并发降到 1"
+	switch stage {
+	case degradeVerify:
+		message = "预算紧张：关闭后置断言（路径 C）"
+	case degradeReplan:
+		message = "预算紧张：关闭重规划，直接综合已有结果"
+	case degradePartial:
+		message = "预算不足：返回已完成的部分结果"
+	}
+	return ProgressEvent{Type: EventDegrade, Message: message}
+}
+
 // recordRunMetrics 记录整轮结果。
 // 标签只用固定枚举，run_id / goal 等高基数字段留在日志里。
 func recordRunMetrics(ctx context.Context, run *RunResult) {
@@ -907,15 +1019,69 @@ func recordRunMetrics(ctx context.Context, run *RunResult) {
 	}
 }
 
-// appendStepCheckpoint 写步骤 checkpoint。
-// 持久化失败不能中断执行：checkpoint 是"下一次能续跑"的增强，
-// 不是本轮正确性的前提；但必须告警，否则会静默退化成没有 checkpoint。
-func (st *execState) appendStepCheckpoint(ctx context.Context, rec *StepRecord) {
+type stepCheckpoint struct {
+	id   string
+	done chan struct{}
+}
+
+// beginStepCheckpoint 异步写 running 记录，不阻塞主链路。
+// 完成信号留给 checkpointStep：结束更新必须先等 INSERT 落库，
+// 否则 UPDATE 会找不到行，最后变成一条永远 running 的脏记录。
+func (st *execState) beginStepCheckpoint(ctx context.Context, rec *StepRecord) {
 	if st == nil || st.store == nil || rec == nil {
 		return
 	}
-	if err := st.store.AppendStep(ctx, rec); err != nil {
-		st.warnf("步骤 checkpoint 写入失败: run=%s step=%d attempt=%d err=%v",
+	cp := *rec
+	cp.Facts = append([]Fact(nil), rec.Facts...)
+	cp.Violations = append([]Violation(nil), rec.Violations...)
+	done := make(chan struct{})
+	st.stepRows.Store(rec.StepID, &stepCheckpoint{id: rec.ID, done: done})
+
+	writeCtx := context.WithoutCancel(ctx)
+	go func() {
+		defer close(done)
+		if err := st.store.AppendStep(writeCtx, &cp); err != nil {
+			st.warnf("步骤 checkpoint 开始写入失败: run=%s step=%d attempt=%d err=%v",
+				cp.RunID, cp.StepID, cp.Attempt, err)
+		}
+	}()
+}
+
+func (st *execState) takeStepCheckpoint(stepID int) *stepCheckpoint {
+	if st == nil {
+		return nil
+	}
+	value, ok := st.stepRows.LoadAndDelete(stepID)
+	if !ok {
+		return nil
+	}
+	cp := value.(*stepCheckpoint)
+	<-cp.done
+	return cp
+}
+
+// writeFinalCheckpoint 阻塞写终态。优先原地更新同一条记录；
+// 仓库不支持更新（或更新失败）时回退为追加，保证 checkpoint 不丢。
+func (st *execState) writeFinalCheckpoint(ctx context.Context, rec *StepRecord, cp *stepCheckpoint) {
+	if st == nil || st.store == nil || rec == nil {
+		return
+	}
+	writeCtx := context.WithoutCancel(ctx)
+	if cp != nil {
+		if updater, ok := st.store.(StepUpdater); ok {
+			rec.ID = cp.id
+			if err := updater.UpdateStep(writeCtx, rec); err == nil {
+				return
+			} else {
+				st.warnf("步骤 checkpoint 更新失败，回退为追加: run=%s step=%d err=%v",
+					rec.RunID, rec.StepID, err)
+				// running 行可能已经写入成功，复用同一个主键追加会冲突。
+				rec.ID = newRunID()
+			}
+		}
+	}
+	if err := st.store.AppendStep(writeCtx, rec); err != nil {
+		st.warnf("步骤 checkpoint 终态写入失败: run=%s step=%d attempt=%d err=%v",
 			rec.RunID, rec.StepID, rec.Attempt, err)
 	}
 }
@@ -948,7 +1114,8 @@ func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHa
 	if err != nil {
 		rec.Error = truncateBytes(err.Error(), 2048)
 	}
-	st.appendStepCheckpoint(ctx, rec)
+	cp := st.takeStepCheckpoint(step.ID)
+	st.writeFinalCheckpoint(ctx, rec, cp)
 }
 
 // reportStep 在步骤收口时生成结构化快照。
@@ -1133,6 +1300,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	if !budget.TryReserveTokens(promptTokens) {
 		// 调用没发出去，调用额度必须同步退回。
 		budget.Release(1)
+		st.markBudgetUnfit()
 		return false
 	}
 	if err := step.Transition(StatusRunning); err != nil {
@@ -1151,7 +1319,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 
 	start := time.Now()
 	if st != nil && st.store != nil {
-		st.appendStepCheckpoint(ctx, &StepRecord{
+		st.beginStepCheckpoint(ctx, &StepRecord{
 			ID:        newRunID(),
 			RunID:     st.runID,
 			StepID:    step.ID,
@@ -1167,8 +1335,9 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	// 路径 B：执行前校验前提。模型说"不成立"才判定失败；
 	// 校验调用本身失败按"校验不可用"放行，避免把观测故障变成业务失败。
 	if st != nil && st.verifyAssumes && len(step.Assumptions) > 0 {
-		if ok, reason := st.checkAssumptions(ctx, p, *step, prior, budget); !ok {
-			reason = strings.TrimSpace(reason)
+		decision := st.checkAssumptions(ctx, p, *step, prior, budget)
+		if !decision.ok {
+			reason := strings.TrimSpace(decision.reason)
 			if reason == "" {
 				reason = "步骤前提不成立"
 			}
@@ -1176,16 +1345,32 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			step.duration = time.Since(start)
 			step.err = err
 			step.Output = err.Error()
-			_ = step.Transition(StatusFailed)
+			step.outcome = StepOutcome{
+				Violations: assumptionViolations(*step, decision.violated, reason),
+			}
+			if trErr := step.Transition(StatusBlocked); trErr != nil {
+				// 正常路径不会走到这里；真出现状态机 bug 时退化为 failed，
+				// 至少不会把步骤留在 running 里让整轮卡死。
+				st.warnf("前提不成立但 blocked 迁移失败: run=%s step=%d err=%v",
+					st.runID, step.ID, trErr)
+				step.Status = StatusFailed
+			}
 			// 前提校验已经单独记过预算，本次步骤调用没有发生，退还预留。
 			budget.Release(1)
 			budget.ReleaseTokens(promptTokens)
 			st.checkpointStep(ctx, step, inputHash, prior, 0, start, err)
-			obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
-			emitter.emit(ProgressEvent{
-				Type: EventStepFailed, StepID: step.ID, Attempt: 0,
-				Message: truncateBytes(err.Error(), 512),
-			})
+			obs.RecordPlannerStep(ctx, string(step.Status), string(step.Effect), step.duration.Seconds())
+			if step.Status == StatusBlocked {
+				emitter.emit(ProgressEvent{
+					Type: EventStepBlocked, StepID: step.ID, Attempt: 0,
+					Message: truncateBytes(err.Error(), 512),
+				})
+			} else {
+				emitter.emit(ProgressEvent{
+					Type: EventStepFailed, StepID: step.ID, Attempt: 0,
+					Message: truncateBytes(err.Error(), 512),
+				})
+			}
 			st.reportStep(step, prior, false)
 			return true
 		}
@@ -1200,6 +1385,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			}
 			if !budget.TryReserveTokens(promptTokens) {
 				budget.Release(1)
+				st.markBudgetUnfit()
 				break
 			}
 		}
@@ -1268,9 +1454,15 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	return true
 }
 
+type verifyViolation struct {
+	Index  int    `json:"index"`
+	Reason string `json:"reason"`
+}
+
 type verifyResult struct {
-	ok     bool
-	reason string
+	ok       bool
+	reason   string
+	violated []verifyViolation
 }
 
 const verifyAssumptionsPrompt = `你是执行前校验器。判断给定步骤的前提是否成立。
@@ -1284,15 +1476,14 @@ const verifyExpectsPrompt = `你是执行结果校验器。判断步骤产出是
 {"valid": true, "reason": "简短理由"}`
 
 func (st *execState) checkAssumptions(ctx context.Context, p *Planner,
-	step PlanStep, facts string, budget *Budget) (bool, string) {
+	step PlanStep, facts string, budget *Budget) verifyResult {
 	key := verifyCacheKey("assume", step, facts)
 	if v, ok := st.verifyCache.Load(key); ok {
-		r := v.(verifyResult)
-		return r.ok, r.reason
+		return v.(verifyResult)
 	}
-	ok, reason := p.verifyAssumptions(ctx, step, facts, budget)
-	st.verifyCache.Store(key, verifyResult{ok: ok, reason: reason})
-	return ok, reason
+	result := p.verifyAssumptions(ctx, step, facts, budget)
+	st.verifyCache.Store(key, result)
+	return result
 }
 
 func (st *execState) checkExpects(ctx context.Context, p *Planner,
@@ -1302,9 +1493,9 @@ func (st *execState) checkExpects(ctx context.Context, p *Planner,
 		r := v.(verifyResult)
 		return r.ok, r.reason
 	}
-	ok, reason := p.verifyExpects(ctx, step, output, budget)
-	st.verifyCache.Store(key, verifyResult{ok: ok, reason: reason})
-	return ok, reason
+	result := p.verifyExpects(ctx, step, output, budget)
+	st.verifyCache.Store(key, result)
+	return result.ok, result.reason
 }
 
 func verifyCacheKey(kind string, step PlanStep, payload string) string {
@@ -1313,13 +1504,13 @@ func verifyCacheKey(kind string, step PlanStep, payload string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// verifyAssumptions 返回 (是否成立, 理由)。
+// verifyAssumptions 返回是否成立、理由与逐条被推翻的前提。
 // 解析失败 / 调用失败一律按"校验不可用"放行：校验是可选增强，
 // 不能因为校验器自己出错就把整轮任务判死。
 func (p *Planner) verifyAssumptions(ctx context.Context, step PlanStep,
-	facts string, budget *Budget) (bool, string) {
+	facts string, budget *Budget) verifyResult {
 	if p == nil || p.chat == nil || len(step.Assumptions) == 0 {
-		return true, ""
+		return verifyResult{ok: true}
 	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("步骤：%s\n前提：\n", step.Description))
@@ -1334,45 +1525,85 @@ func (p *Planner) verifyAssumptions(ctx context.Context, step PlanStep,
 	}
 	resp, err := p.chatWithBudget(ctx, verifyAssumptionsPrompt, sb.String(), budget)
 	if err != nil {
-		return true, ""
+		return verifyResult{ok: true}
 	}
-	return parseVerifyResponse(resp)
+	return parseVerifyDecision(resp)
 }
 
 func (p *Planner) verifyExpects(ctx context.Context, step PlanStep,
-	output string, budget *Budget) (bool, string) {
+	output string, budget *Budget) verifyResult {
 	if p == nil || p.chat == nil || strings.TrimSpace(step.Expects) == "" {
-		return true, ""
+		return verifyResult{ok: true}
 	}
 	prompt := fmt.Sprintf("步骤：%s\n预期产出：%s\n实际产出：\n%s",
 		step.Description, step.Expects, truncateBytes(output, 8*1024))
 	resp, err := p.chatWithBudget(ctx, verifyExpectsPrompt, prompt, budget)
 	if err != nil {
-		return true, ""
+		return verifyResult{ok: true}
 	}
-	return parseVerifyResponse(resp)
+	return parseVerifyDecision(resp)
 }
 
-func parseVerifyResponse(resp string) (bool, string) {
+func parseVerifyDecision(resp string) verifyResult {
 	var out struct {
 		// 兼容两版协议：v2 规格用 holds，早期实现用 valid。
 		// 用指针区分"没返回字段"和"返回了 false"：前者是校验不可用，
 		// 应放行；后者是明确的"前提不成立"，必须进入重规划。
-		Holds  *bool  `json:"holds"`
-		Valid  *bool  `json:"valid"`
-		Reason string `json:"reason"`
+		Holds    *bool             `json:"holds"`
+		Valid    *bool             `json:"valid"`
+		Reason   string            `json:"reason"`
+		Violated []verifyViolation `json:"violated"`
 	}
 	if err := json.Unmarshal([]byte(strutil.ExtractJSON(resp)), &out); err != nil {
-		return true, ""
+		return verifyResult{ok: true}
 	}
 	switch {
 	case out.Holds != nil:
-		return *out.Holds, out.Reason
+		return verifyResult{ok: *out.Holds, reason: out.Reason, violated: out.Violated}
 	case out.Valid != nil:
-		return *out.Valid, out.Reason
+		return verifyResult{ok: *out.Valid, reason: out.Reason, violated: out.Violated}
 	default:
-		return true, ""
+		return verifyResult{ok: true}
 	}
+}
+
+// parseVerifyResponse 保留元组签名，兼容既有协议测试与调用方。
+func parseVerifyResponse(resp string) (bool, string) {
+	result := parseVerifyDecision(resp)
+	return result.ok, result.reason
+}
+
+// assumptionViolations 把校验器的 1-based 前提下标映射回上游步骤。
+// 没有上游时返回空：blocked 步骤本身会作为失效种子进入重规划，
+// 编造一个 step_id=0 的 Violation 只会产生无意义的告警。
+func assumptionViolations(step PlanStep, violated []verifyViolation, fallback string) []Violation {
+	if len(step.DependsOn) == 0 {
+		return nil
+	}
+	if len(violated) == 0 {
+		violated = []verifyViolation{{Index: 1, Reason: fallback}}
+	}
+	out := make([]Violation, 0, len(violated))
+	for _, item := range violated {
+		target := step.DependsOn[0]
+		if item.Index >= 1 && item.Index <= len(step.DependsOn) {
+			target = step.DependsOn[item.Index-1]
+		}
+		claim := "步骤前提"
+		if item.Index >= 1 && item.Index <= len(step.Assumptions) {
+			claim = step.Assumptions[item.Index-1]
+		}
+		reason := strings.TrimSpace(item.Reason)
+		if reason == "" {
+			reason = fallback
+		}
+		out = append(out, Violation{
+			StepID: target,
+			Claim:  claim,
+			Reason: reason,
+		})
+	}
+	return out
 }
 
 // collectInvalidations 汇总失败步骤与被 violation 指向的步骤。
@@ -1390,9 +1621,12 @@ func collectInvalidations(plan *Plan, layer []*PlanStep, warnf func(string, ...a
 		reasons[id] = reason
 	}
 	for _, step := range layer {
-		if step.Status == StatusFailed {
+		if step.Status == StatusFailed || step.Status == StatusBlocked {
 			reason := step.err
 			text := "步骤执行失败"
+			if step.Status == StatusBlocked {
+				text = "步骤前提不成立"
+			}
 			if reason != nil {
 				text = reason.Error()
 			}
