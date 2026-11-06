@@ -23,6 +23,7 @@ var (
 	kafkaProduceCounter  metric.Int64Counter
 	kafkaProduceDuration metric.Float64Histogram
 	kafkaRetryCounter    metric.Int64Counter
+	kafkaReplayCounter   metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -61,6 +62,10 @@ func initReliabilityMetrics() {
 	kafkaRetryCounter, _ = meter.Int64Counter(
 		"logos.kafka.retry.count",
 		metric.WithDescription("同一条 Kafka 消息就地重试的次数（不含最终成功那次）"),
+	)
+	kafkaReplayCounter, _ = meter.Int64Counter(
+		"logos.kafka.replay.count",
+		metric.WithDescription("死信回放处置结果计数（result=replayed/quarantined/failed/commit_error）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -146,6 +151,18 @@ func RecordKafkaRetry(ctx context.Context, topic string) {
 	reliabilityOnce.Do(initReliabilityMetrics)
 	if kafkaRetryCounter != nil {
 		kafkaRetryCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
+	}
+}
+
+// RecordKafkaReplay 记录一条死信回放的处置结果。
+//
+// 回放是人工触发的运维动作，日志只能回答「这一次做了什么」，指标才能回答
+// 「最近是不是在反复回放」「失败有没有收敛」。result 只接受固定枚举，
+// 不拼接 topic 与错误文本：调用频率低但标签一旦失控，代价会长期留在指标后端。
+func RecordKafkaReplay(ctx context.Context, result string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if kafkaReplayCounter != nil {
+		kafkaReplayCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 	}
 }
 
