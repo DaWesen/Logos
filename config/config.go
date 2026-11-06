@@ -39,6 +39,36 @@ type Config struct {
 	ServiceDiscovery ServiceDiscovery `mapstructure:"service_discovery"`
 	Gateway          GatewayCfg       `mapstructure:"gateway"`
 	Payment          Payment          `mapstructure:"payment"`
+	Planner          Planner          `mapstructure:"planner"`
+}
+
+// Planner 规划执行配置。
+//
+// 零值表示"跟随 planner.DefaultConfig()"，不要在装配处再散落一套默认值：
+// 同一份预算既用于单测，也用于线上，默认值只有一处事实来源。
+type Planner struct {
+	// Enabled 全局开关；Bot.Config["enable_planner"] 仍可单 Bot 覆盖。
+	Enabled bool `mapstructure:"enabled"`
+	// Mode legacy | dag，默认 legacy；Bot.Config["planner_mode"] 优先。
+	Mode string `mapstructure:"mode"`
+	// MaxSteps patch 累积后的步骤总数上限。
+	MaxSteps int `mapstructure:"max_steps"`
+	// MaxReplans 整轮重规划次数上限。
+	MaxReplans int `mapstructure:"max_replans"`
+	// MaxConcurrency 层内并发上限（硬上限 4）。
+	MaxConcurrency int `mapstructure:"max_concurrency"`
+	// MaxLLMCalls 规划 + 执行 + 综合共享的模型调用次数上限。
+	MaxLLMCalls int `mapstructure:"max_llm_calls"`
+	// MaxTokens 同一轮共享的 token 预算（按字节估算，供应商未回传 usage 时使用）。
+	MaxTokens int `mapstructure:"max_tokens"`
+	// MaxWallClock 整轮墙钟上限。
+	MaxWallClock time.Duration `mapstructure:"max_wall_clock"`
+	// VerifyAssumes 执行前校验步骤前提（路径 B）。
+	VerifyAssumes bool `mapstructure:"verify_assumptions"`
+	// VerifyExpects 执行后校验产出是否符合 expects（路径 C，默认关闭）。
+	VerifyExpects bool `mapstructure:"verify_expects"`
+	// PersistRuns 落库运行快照与步骤 checkpoint，支持崩溃续跑。
+	PersistRuns bool `mapstructure:"persist_runs"`
 }
 
 // Payment 支付配置

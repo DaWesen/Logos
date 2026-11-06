@@ -176,6 +176,8 @@ type botServiceImpl struct {
 	semanticCache    *SemanticCache
 	compressor       *ConversationCompressor
 	planner          *planner.Planner
+	// planStore 运行快照与 checkpoint；未开启持久化时为 nil，执行器自动跳过落库。
+	planStore planner.RunStore
 	// qqBindCache QQ→Bot 路由缓存的注入点；为 nil 时使用全局 Redis 单例，
 	// 测试中注入内存实现即可在不启动 Redis 的情况下验证缓存维护逻辑
 	qqBindCache cache.Cache
@@ -233,6 +235,11 @@ func NewBotService(
 	impl.compressor = NewConversationCompressor()
 	// Plan-and-Execute 规划器：复杂任务先规划再逐步执行
 	impl.planner = planner.NewPlanner(impl.plannerChat)
+	// 运行快照落库：只有显式开启且仓储提供 DB 时才接线。
+	// 不开持久化时 planStore 为 nil，执行器走无状态路径，行为与旧版一致。
+	if cfg != nil && cfg.Planner.PersistRuns && repo != nil && repo.DB() != nil {
+		impl.planStore = dao.NewPlanRunStore(repo.DB())
+	}
 	return impl
 }
 
@@ -251,6 +258,62 @@ func plannerMode(bot *botmodel.Bot) string {
 	return "legacy"
 }
 
+// plannerEnabledFor 合并全局开关与单个 Bot 配置：
+// Bot 上显式写了 enable_planner 就以它为准，没写才跟随全局默认。
+func (s *botServiceImpl) plannerEnabledFor(bot *botmodel.Bot) bool {
+	if bot != nil {
+		if v, ok := bot.Config["enable_planner"]; ok {
+			return v == "true"
+		}
+	}
+	return s.cfg != nil && s.cfg.Planner.Enabled
+}
+
+// plannerModeFor 合并全局模式与单个 Bot 配置，非法值回退 legacy。
+func (s *botServiceImpl) plannerModeFor(bot *botmodel.Bot) string {
+	if bot != nil {
+		switch bot.Config["planner_mode"] {
+		case "dag":
+			return "dag"
+		case "legacy":
+			return "legacy"
+		}
+	}
+	if s.cfg != nil && s.cfg.Planner.Mode == "dag" {
+		return "dag"
+	}
+	return "legacy"
+}
+
+// plannerConfig 把配置文件映射成执行器配置。
+// 零值字段交给 planner.DefaultConfig 补齐，不在装配层复制默认值。
+func (s *botServiceImpl) plannerConfig() planner.Config {
+	cfg := planner.DefaultConfig()
+	if s.cfg == nil {
+		return cfg
+	}
+	p := s.cfg.Planner
+	if p.MaxSteps > 0 {
+		cfg.MaxSteps = p.MaxSteps
+	}
+	if p.MaxReplans > 0 {
+		cfg.MaxReplans = p.MaxReplans
+	}
+	if p.MaxConcurrency > 0 {
+		cfg.MaxConcurrency = p.MaxConcurrency
+	}
+	if p.MaxLLMCalls > 0 {
+		cfg.MaxLLMCalls = p.MaxLLMCalls
+	}
+	if p.MaxTokens > 0 {
+		cfg.MaxTokens = p.MaxTokens
+	}
+	if p.MaxWallClock > 0 {
+		cfg.MaxWallClock = p.MaxWallClock
+	}
+	return cfg
+}
+
 // toolTraceEnabled 判断 Bot 是否开启工具调用链可视化（流式路径下推送工具调用决策到前端）
 func toolTraceEnabled(bot *botmodel.Bot) bool {
 	return bot != nil && bot.Config["enable_tool_trace"] == "true"
@@ -267,20 +330,28 @@ func (s *botServiceImpl) plannerChat(ctx context.Context, systemPrompt, userProm
 // chatWithPlanner Plan-and-Execute 路径：
 // 生成计划 → 按依赖图用带工具的 ReAct Agent 执行（进度经 onProgress 回调）→ 综合作答。
 // 每步不带聊天历史（任务模式专注当前目标），失败时按预算做最多两次 patch 重规划。
-func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, botAgent agent.BotAgent, mode string, onProgress func(string)) (string, error) {
-	plan, err := s.planner.CreatePlan(ctx, content)
+func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, botAgent agent.BotAgent,
+	mode string, onProgress func(string), meta planner.RunMeta) (string, error) {
+
+	// 规划、执行、综合共用同一本预算，否则每条路径各自限额，
+	// 总成本就只能在事后从账单里反推。
+	cfg := s.plannerConfig()
+	budget := planner.NewBudget(cfg)
+	plan, err := s.planner.CreatePlanWithBudget(ctx, content, budget)
 	if err != nil {
 		return "", fmt.Errorf("任务规划失败: %w", err)
 	}
 	logger.Info("Planner 已生成计划",
 		logger.StringField("goal", plan.Goal),
-		logger.IntField("steps", len(plan.Steps)))
+		logger.IntField("steps", len(plan.Steps)),
+		logger.StringField("mode", mode))
 
 	if mode != "dag" && onProgress != nil {
 		onProgress(plan.FormatPlan())
 	}
 
 	var results []planner.StepResult
+	var runErr error
 	if mode == "dag" {
 		// 模型没给依赖时退化为线性链，避免把有隐含顺序的步骤并发执行。
 		plan.EnsureLinearDependencies()
@@ -295,14 +366,32 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 		if onProgress != nil {
 			listener = planner.TextProgressListener(onProgress)
 		}
-		run, runErr := s.planner.ExecuteWith(ctx, plan, exec, planner.ExecuteOptions{
-			Listener: listener,
-			Warnf: func(format string, args ...any) {
-				logger.Warn(fmt.Sprintf(format, args...))
-			},
+		warnf := func(format string, args ...any) {
+			logger.Warn(fmt.Sprintf(format, args...))
+		}
+		run, err := s.planner.ExecuteWith(ctx, plan, exec, planner.ExecuteOptions{
+			Config:        cfg,
+			Budget:        budget,
+			Store:         s.planStore,
+			Meta:          meta,
+			VerifyAssumes: s.cfg != nil && s.cfg.Planner.VerifyAssumes,
+			VerifyExpects: s.cfg != nil && s.cfg.Planner.VerifyExpects,
+			Listener:      listener,
+			Warnf:         warnf,
 		})
+		runErr = err
 		if run != nil {
 			results = run.Results
+			logger.Info("Planner 执行收口",
+				logger.StringField("run_id", run.RunID),
+				logger.StringField("status", string(run.Status)),
+				logger.IntField("revision", run.Revision),
+				logger.IntField("replans", run.Replans),
+				logger.IntField("llm_calls", run.LLMCalls),
+				logger.IntField("tokens", run.TokensUsed),
+				logger.IntField("stale_steps", run.StaleSteps),
+				logger.IntField("replayed_steps", run.ReplayedSteps),
+				logger.DurationField("duration", run.Duration))
 		}
 		if runErr != nil && run != nil {
 			logger.Warn("DAG Planner 未完整完成",
@@ -313,10 +402,13 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 		exec := func(ctx context.Context, step planner.PlanStep, priorResults string) (string, error) {
 			return botAgent.Chat(ctx, planner.BuildStepPrompt(step, priorResults))
 		}
-		results = s.planner.ExecutePlan(ctx, plan, exec, onProgress)
+		results = s.planner.ExecutePlanWithBudget(ctx, plan, exec, onProgress, budget)
 	}
 
 	if len(results) == 0 {
+		if runErr != nil {
+			return "", fmt.Errorf("计划未产生任何执行结果: %w", runErr)
+		}
 		return "", errors.New("计划未产生任何执行结果")
 	}
 
@@ -329,11 +421,21 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 		}
 	}
 	if !anySuccess {
+		if runErr != nil {
+			return "", fmt.Errorf("全部步骤执行失败：%s（%v）", truncateResult(results), runErr)
+		}
 		return "", fmt.Errorf("全部步骤执行失败：%s", truncateResult(results))
 	}
 
-	answer, err := s.planner.Synthesize(ctx, content, results)
+	answer, err := s.planner.SynthesizeWithBudget(ctx, content, results, budget)
 	if err != nil {
+		if summary := planner.DegradedSummary(results); summary != "" {
+			logger.Warn("Planner 综合失败，返回已完成的部分结果",
+				logger.IntField("llm_calls", budget.Used()),
+				logger.IntField("tokens", budget.TokensUsed()),
+				logger.ErrorField(err))
+			return summary, nil
+		}
 		return "", fmt.Errorf("结果综合失败: %w", err)
 	}
 	return answer, nil
@@ -986,8 +1088,14 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	// Plan-and-Execute：开启任务规划模式的 Bot 先规划再逐步执行；
 	// 规划失败自动回退普通对话
 	var plannerResponse string
-	if plannerEnabled(bot) {
-		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, plannerMode(bot), nil)
+	if s.plannerEnabledFor(bot) {
+		meta := planner.RunMeta{
+			BotID:          botID,
+			ConversationID: conversationID,
+			UserID:         userID,
+			ResumeRunID:    metadata["resume_run_id"],
+		}
+		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, s.plannerModeFor(bot), nil, meta)
 		if pErr != nil {
 			logger.Warn("Planner 执行失败，回退普通对话", logger.ErrorField(pErr))
 		} else {
@@ -1203,10 +1311,16 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 
 	// Plan-and-Execute：进度（计划/步骤状态）经 onChunk 实时推送，
 	// 最终答案一次性推送；规划失败自动回退普通流式对话
-	if plannerEnabled(bot) {
-		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, plannerMode(bot), func(event string) {
+	if s.plannerEnabledFor(bot) {
+		meta := planner.RunMeta{
+			BotID:          botID,
+			ConversationID: conversationID,
+			UserID:         userID,
+			ResumeRunID:    metadata["resume_run_id"],
+		}
+		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, s.plannerModeFor(bot), func(event string) {
 			_ = onChunk(event)
-		})
+		}, meta)
 		if pErr != nil {
 			logger.Warn("Planner 执行失败，回退普通流式对话", logger.ErrorField(pErr))
 		} else {

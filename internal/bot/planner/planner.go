@@ -48,8 +48,16 @@ func NewPlanner(chat ChatFunc) *Planner {
 
 // CreatePlan 为目标生成执行计划
 func (p *Planner) CreatePlan(ctx context.Context, goal string) (*Plan, error) {
+	return p.CreatePlanWithBudget(ctx, goal, nil)
+}
+
+// CreatePlanWithBudget 与 CreatePlan 相同，但把这一次调用计入共享预算。
+//
+// 规划、执行、综合必须是同一本账：只要有一条路径自己 new 一个 Budget，
+// 总调用数上限就可以被绕过，预算就只剩"每一步看起来都不多"。
+func (p *Planner) CreatePlanWithBudget(ctx context.Context, goal string, budget *Budget) (*Plan, error) {
 	userPrompt := fmt.Sprintf("用户目标：%s", goal)
-	resp, err := p.chat(ctx, fmt.Sprintf(planSystemPrompt, MaxPlanSteps), userPrompt)
+	resp, err := p.chatWithBudget(ctx, fmt.Sprintf(planSystemPrompt, MaxPlanSteps), userPrompt, budget)
 	if err != nil {
 		return nil, fmt.Errorf("规划 LLM 调用失败: %w", err)
 	}
@@ -58,12 +66,17 @@ func (p *Planner) CreatePlan(ctx context.Context, goal string) (*Plan, error) {
 
 // Replan 基于已完成步骤与失败原因，重新规划剩余步骤
 func (p *Planner) Replan(ctx context.Context, goal string, results []StepResult, failedStep PlanStep, failReason string) (*Plan, error) {
+	return p.replanWithBudget(ctx, goal, results, failedStep, failReason, nil)
+}
+
+func (p *Planner) replanWithBudget(ctx context.Context, goal string, results []StepResult,
+	failedStep PlanStep, failReason string, budget *Budget) (*Plan, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("原始目标：%s\n\n已完成/已尝试的步骤及结果：\n%s\n", goal, FormatResults(results)))
 	sb.WriteString(fmt.Sprintf("失败步骤：%d - %s\n失败原因：%s\n\n", failedStep.ID, failedStep.Description, failReason))
 	sb.WriteString("请输出修订后的剩余步骤计划。")
 
-	resp, err := p.chat(ctx, replanSystemPrompt, sb.String())
+	resp, err := p.chatWithBudget(ctx, replanSystemPrompt, sb.String(), budget)
 	if err != nil {
 		return nil, fmt.Errorf("重规划 LLM 调用失败: %w", err)
 	}
@@ -72,11 +85,62 @@ func (p *Planner) Replan(ctx context.Context, goal string, results []StepResult,
 
 // Synthesize 综合各步骤结果生成最终答案
 func (p *Planner) Synthesize(ctx context.Context, goal string, results []StepResult) (string, error) {
-	resp, err := p.chat(ctx, synthesizeSystemPrompt, FormatResults(results))
+	return p.SynthesizeWithBudget(ctx, goal, results, nil)
+}
+
+// SynthesizeWithBudget 与 Synthesize 相同，但把这一次调用计入共享预算。
+func (p *Planner) SynthesizeWithBudget(ctx context.Context, goal string, results []StepResult, budget *Budget) (string, error) {
+	resp, err := p.chatWithBudget(ctx, synthesizeSystemPrompt, FormatResults(results), budget)
 	if err != nil {
 		return "", fmt.Errorf("综合 LLM 调用失败: %w", err)
 	}
 	return strings.TrimSpace(resp), nil
+}
+
+// DegradedSummary 在综合阶段不可用时，把已经成功的结果直接交给用户。
+//
+// 此时再回退普通对话会重新规划、重新调用工具，既烧一遍预算，又可能
+// 把已经完成的副作用再做一次。部分结果不完美，但比"全部丢掉"更诚实。
+func DegradedSummary(results []StepResult) string {
+	done := make([]StepResult, 0, len(results))
+	for _, r := range results {
+		if r.Success && !r.Stale {
+			done = append(done, r)
+		}
+	}
+	if len(done) == 0 {
+		return ""
+	}
+	return "已完成的部分结果（综合阶段受限）：\n" + FormatResults(done)
+}
+
+// chatWithBudget 是所有规划器 LLM 调用的唯一入口。
+//
+// 先用 prompt 估算预留输入 token，拿到响应后再补响应 token；
+// 估算比例按 UTF-8 字节/3 计算，中文约 1 token/字，英文略偏保守。
+func (p *Planner) chatWithBudget(ctx context.Context, systemPrompt, userPrompt string, budget *Budget) (string, error) {
+	if budget != nil {
+		if !budget.TryReserve(1) {
+			return "", fmt.Errorf("%w: 调用次数已用尽", ErrBudgetExhausted)
+		}
+		if !budget.TryReserveTokens(EstimateTokens(systemPrompt) + EstimateTokens(userPrompt)) {
+			return "", fmt.Errorf("%w: token 预算已用尽", ErrBudgetExhausted)
+		}
+	}
+	resp, err := p.chat(ctx, systemPrompt, userPrompt)
+	if budget != nil && err == nil {
+		budget.AddTokens(EstimateTokens(resp))
+	}
+	return resp, err
+}
+
+// EstimateTokens 在供应商未回传 usage 时估算 token 数。
+// 按字节/3 估算：中文 3 字节≈1 token，英文 4 字节≈1 token，取偏保守的中间值。
+func EstimateTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	return (len(s) + 2) / 3
 }
 
 // StepExecutor 单步执行器：把步骤交给带工具的 Agent 执行。
@@ -89,11 +153,18 @@ type ProgressListener func(event string)
 // ExecutePlan 顺序执行计划；步骤失败时重规划一次（MaxReplanCount），
 // 返回全部步骤结果（含失败步骤）。
 func (p *Planner) ExecutePlan(ctx context.Context, plan *Plan, exec StepExecutor, onProgress ProgressListener) []StepResult {
+	return p.ExecutePlanWithBudget(ctx, plan, exec, onProgress, nil)
+}
+
+// ExecutePlanWithBudget 是顺序执行器的预算版本。
+// legacy 路径保留原签名，但服务层会传入同一轮共享预算，避免两条路径记账口径不同。
+func (p *Planner) ExecutePlanWithBudget(ctx context.Context, plan *Plan, exec StepExecutor,
+	onProgress ProgressListener, budget *Budget) []StepResult {
 	var allResults []StepResult
 	replans := 0
 
 	for {
-		results := p.runSteps(ctx, plan, exec, onProgress)
+		results := p.runSteps(ctx, plan, exec, onProgress, budget)
 		allResults = append(allResults, results...)
 
 		failed := lastFailed(results)
@@ -114,7 +185,7 @@ func (p *Planner) ExecutePlan(ctx context.Context, plan *Plan, exec StepExecutor
 
 		// D7：把历史轮次结果一并交给重规划，避免第二轮看不到第一轮已完成的步骤。
 		// D6：目标不可被模型改写，重规划只允许调整步骤。
-		newPlan, err := p.Replan(ctx, plan.Goal, allResults, failed.Step, failReason)
+		newPlan, err := p.replanWithBudget(ctx, plan.Goal, allResults, failed.Step, failReason, budget)
 		if err != nil {
 			return allResults
 		}
@@ -128,12 +199,18 @@ func (p *Planner) ExecutePlan(ctx context.Context, plan *Plan, exec StepExecutor
 }
 
 // runSteps 顺序执行一个计划的所有步骤，失败即停（重规划交给上层）
-func (p *Planner) runSteps(ctx context.Context, plan *Plan, exec StepExecutor, onProgress ProgressListener) []StepResult {
+func (p *Planner) runSteps(ctx context.Context, plan *Plan, exec StepExecutor, onProgress ProgressListener, budget *Budget) []StepResult {
 	results := make([]StepResult, 0, len(plan.Steps))
 	var prior strings.Builder
 
 	total := len(plan.Steps)
 	for i, step := range plan.Steps {
+		if budget != nil && !budget.TryReserve(1) {
+			results = append(results, StepResult{
+				Step: step, Output: ErrBudgetExhausted.Error(), Success: false, Err: ErrBudgetExhausted,
+			})
+			return results
+		}
 		if onProgress != nil {
 			onProgress(fmt.Sprintf("▶ 执行步骤 %d/%d：%s\n", i+1, total, step.Description))
 		}

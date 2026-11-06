@@ -91,14 +91,14 @@ type Prompt struct {
 
 // UserMemory 用户记忆模型
 type UserMemory struct {
-	ID         string         `gorm:"primaryKey;size:36" json:"id"`
-	UserID     string         `gorm:"index;size:36;not null" json:"userId"`
-	BotID      string         `gorm:"index;size:36;not null" json:"botId"`
-	Key        string         `gorm:"size:255;not null" json:"key"`
-	Value      string         `gorm:"type:text;not null" json:"value"`
-	Category   string         `gorm:"size:50;index" json:"category"`
-	Source     string         `gorm:"size:50" json:"source"`
-	Confidence float64        `gorm:"type:decimal(3,2);default:0.8" json:"confidence"`
+	ID         string  `gorm:"primaryKey;size:36" json:"id"`
+	UserID     string  `gorm:"index;size:36;not null" json:"userId"`
+	BotID      string  `gorm:"index;size:36;not null" json:"botId"`
+	Key        string  `gorm:"size:255;not null" json:"key"`
+	Value      string  `gorm:"type:text;not null" json:"value"`
+	Category   string  `gorm:"size:50;index" json:"category"`
+	Source     string  `gorm:"size:50" json:"source"`
+	Confidence float64 `gorm:"type:decimal(3,2);default:0.8" json:"confidence"`
 	// Evidence 支撑该记忆的消息 ID 列表（可审计：记忆从哪几句话得出）
 	Evidence StringSlice `gorm:"type:jsonb" json:"evidence"`
 	// ConflictValue 与历史抽取矛盾时保留的旧值（双结论，不自动选边）
@@ -165,7 +165,7 @@ func (m *Message) BeforeCreate(tx *gorm.DB) error {
 
 // AutoMigrate 自动迁移数据库表
 func AutoMigrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{}); err != nil {
+	if err := db.AutoMigrate(&Bot{}, &Conversation{}, &Message{}, &Prompt{}, &UserMemory{}, &PlanRun{}, &PlanStepRecord{}); err != nil {
 		return err
 	}
 

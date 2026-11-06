@@ -5,6 +5,7 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -13,6 +14,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"Logos/pkg/obs"
+	"Logos/pkg/strutil"
 )
 
 // 执行器级哨兵错误。
@@ -37,6 +41,10 @@ var (
 	// ErrEmptyStepOutput 步骤成功返回但既无正文也无事实，视为失败。
 	// 空字符串如果被当成成功，会进入综合阶段并产生一个"看起来正常"的空答案。
 	ErrEmptyStepOutput = errors.New("empty step output")
+	// ErrAssumptionViolated 前置校验判定步骤前提不成立，需要重规划绕开。
+	ErrAssumptionViolated = errors.New("assumption violated")
+	// ErrExpectationMissed 后置校验判定产出不满足 expects，按失败处理。
+	ErrExpectationMissed = errors.New("expectation missed")
 )
 
 // FailKind 失败分级，决定是否重试以及是否消耗重规划配额。
@@ -95,6 +103,8 @@ type Config struct {
 	MaxConcurrency int
 	// MaxLLMCalls 本轮允许的模型/工具调用次数上限。
 	MaxLLMCalls int
+	// MaxTokens 本轮允许的 token 预算（按字节估算；供应商回传 usage 时优先用真实值）。
+	MaxTokens int
 	// MaxWallClock 本轮墙钟上限。
 	MaxWallClock time.Duration
 	// MaxReplans 整轮允许的重规划次数；0 表示使用默认值，
@@ -118,6 +128,7 @@ func DefaultConfig() Config {
 	return Config{
 		MaxConcurrency: 4,
 		MaxLLMCalls:    80,
+		MaxTokens:      150_000,
 		MaxWallClock:   180 * time.Second,
 		MaxReplans:     MaxReplanCount,
 		MaxSteps:       MaxTotalSteps,
@@ -136,6 +147,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MaxLLMCalls <= 0 {
 		c.MaxLLMCalls = def.MaxLLMCalls
+	}
+	if c.MaxTokens <= 0 {
+		c.MaxTokens = def.MaxTokens
 	}
 	if c.MaxWallClock <= 0 {
 		c.MaxWallClock = def.MaxWallClock
@@ -160,16 +174,23 @@ func (c Config) withDefaults() Config {
 
 // Budget 本轮执行预算，内部用原子量扣减，不阻塞等待。
 type Budget struct {
-	maxCalls int
-	maxWall  time.Duration
-	start    time.Time
-	used     atomic.Int64
+	maxCalls  int
+	maxTokens int
+	maxWall   time.Duration
+	start     time.Time
+	used      atomic.Int64
+	tokens    atomic.Int64
 }
 
 // NewBudget 按配置创建预算。
 func NewBudget(cfg Config) *Budget {
 	cfg = cfg.withDefaults()
-	return &Budget{maxCalls: cfg.MaxLLMCalls, maxWall: cfg.MaxWallClock, start: time.Now()}
+	return &Budget{
+		maxCalls:  cfg.MaxLLMCalls,
+		maxTokens: cfg.MaxTokens,
+		maxWall:   cfg.MaxWallClock,
+		start:     time.Now(),
+	}
 }
 
 // TryReserve 预留 n 次调用；预算不足返回 false，由调用方降级而不是等待。
@@ -191,12 +212,66 @@ func (b *Budget) TryReserve(n int) bool {
 	}
 }
 
+// TryReserveTokens 预留 token 预算。
+// 在调用模型前按 prompt 估算预留，拿到响应后再用 AddTokens 补差额：
+// 只在调用后记账的话，超支已经发生，预算就变成了"事后统计"。
+func (b *Budget) TryReserveTokens(n int) bool {
+	if b == nil || n <= 0 {
+		return true
+	}
+	for {
+		cur := b.tokens.Load()
+		if cur+int64(n) > int64(b.maxTokens) {
+			return false
+		}
+		if b.tokens.CompareAndSwap(cur, cur+int64(n)) {
+			return true
+		}
+	}
+}
+
+// AddTokens 追加实际消耗（响应内容）。
+func (b *Budget) AddTokens(n int) {
+	if b == nil || n <= 0 {
+		return
+	}
+	b.tokens.Add(int64(n))
+}
+
+// Used 返回已消耗的调用次数。
+func (b *Budget) Used() int {
+	if b == nil {
+		return 0
+	}
+	return int(b.used.Load())
+}
+
+// TokensUsed 返回已消耗的 token 估算值。
+func (b *Budget) TokensUsed() int {
+	if b == nil {
+		return 0
+	}
+	return int(b.tokens.Load())
+}
+
 // Remaining 返回剩余调用次数。
 func (b *Budget) Remaining() int {
 	if b == nil {
 		return 0
 	}
 	left := int64(b.maxCalls) - b.used.Load()
+	if left < 0 {
+		return 0
+	}
+	return int(left)
+}
+
+// RemainingTokens 返回剩余 token 预算。
+func (b *Budget) RemainingTokens() int {
+	if b == nil {
+		return 0
+	}
+	left := int64(b.maxTokens) - b.tokens.Load()
 	if left < 0 {
 		return 0
 	}
@@ -219,10 +294,31 @@ func (b *Budget) Check() error {
 	if b.Remaining() <= 0 {
 		return fmt.Errorf("%w: 调用次数已用尽", ErrBudgetExhausted)
 	}
+	if b.RemainingTokens() <= 0 {
+		return fmt.Errorf("%w: token 预算已用尽", ErrBudgetExhausted)
+	}
 	if b.RemainingWall() <= 0 {
 		return fmt.Errorf("%w: 执行时间已用尽", ErrBudgetExhausted)
 	}
 	return nil
+}
+
+// ExhaustedKind 返回预算耗尽的具体维度，供指标区分"次数/token/墙钟"。
+// 不返回空串：调用方拿不到原因时，指标会退化成一条无法定位的告警。
+func (b *Budget) ExhaustedKind() string {
+	if b == nil {
+		return ""
+	}
+	switch {
+	case b.Remaining() <= 0:
+		return "calls"
+	case b.RemainingTokens() <= 0:
+		return "tokens"
+	case b.RemainingWall() <= 0:
+		return "wallclock"
+	default:
+		return "unknown"
+	}
 }
 
 // StepExecutorV2 单步执行器。
@@ -291,18 +387,54 @@ type ExecuteOptions struct {
 	Listener ProgressListenerV2
 	// Warnf 记录可恢复异常（例如模型编造了不存在的 violation step_id）。
 	Warnf func(format string, args ...any)
+	// Budget 与规划/综合共享的预算；为 nil 时按 Config 新建。
+	Budget *Budget
+	// Store 运行快照与步骤 checkpoint；为 nil 时不持久化。
+	Store RunStore
+	// Meta 标识这次运行归属，并携带可选的续跑 run_id。
+	Meta RunMeta
+	// VerifyAssumes 执行前校验 assumptions（路径 B）。
+	VerifyAssumes bool
+	// VerifyExpects 执行后校验 expects（路径 C）。
+	VerifyExpects bool
 }
 
 // RunResult 整轮执行结果。
 type RunResult struct {
-	RunID     string
-	Status    RunStatus
-	Plan      *Plan
-	Results   []StepResult
-	Replans   int
-	StartedAt time.Time
-	Duration  time.Duration
-	Err       error
+	RunID      string
+	Status     RunStatus
+	Plan       *Plan
+	Results    []StepResult
+	Replans    int
+	Revision   int
+	LLMCalls   int
+	TokensUsed int
+	StaleSteps int
+	// ReplayedSteps 命中华副作用重放、未真正调用工具的步骤数。
+	ReplayedSteps int
+	StartedAt     time.Time
+	Duration      time.Duration
+	Err           error
+
+	// budget 只用于收口统计，不参与序列化。
+	budget *Budget
+}
+
+// execState 是执行期共享上下文：把 run_id / 当前 revision / 存储接口
+// 收在一个结构里，避免每个步骤函数都传一长串参数。
+type execState struct {
+	runID    string
+	revision int
+	store    RunStore
+	warnf    func(format string, args ...any)
+
+	verifyAssumes bool
+	verifyExpects bool
+	// verifyCache 以"步骤前提 + 已知事实"为键缓存校验结论，
+	// 避免同一层内多个步骤重复问同一个问题。
+	verifyCache sync.Map
+
+	replayed atomic.Int64
 }
 
 // Execute 使用默认配置执行计划。
@@ -349,7 +481,86 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 		Plan:      plan,
 		StartedAt: time.Now(),
 	}
-	budget := NewBudget(cfg)
+	budget := opts.Budget
+	if budget == nil {
+		budget = NewBudget(cfg)
+	}
+	run.budget = budget
+
+	st := &execState{
+		runID:         run.RunID,
+		revision:      plan.Revision,
+		store:         opts.Store,
+		warnf:         opts.Warnf,
+		verifyAssumes: opts.VerifyAssumes,
+		verifyExpects: opts.VerifyExpects,
+	}
+	if st.warnf == nil {
+		st.warnf = func(string, ...any) {}
+	}
+
+	// 运行快照优先走续跑，其次新建。
+	// 续跑失败一律降级为"开一轮新的"，不能因为一条历史记录不可用
+	// 就让用户这次请求直接失败。
+	if opts.Store != nil {
+		resumed := false
+		if opts.Meta.ResumeRunID != "" {
+			rec, err := opts.Store.GetRun(ctx, opts.Meta.ResumeRunID)
+			switch {
+			case err != nil:
+				st.warnf("读取续跑运行记录失败: %v", err)
+			case rec == nil:
+				st.warnf("续跑运行记录不存在: %s", opts.Meta.ResumeRunID)
+			case resumeRejectReason(rec, plan, opts.Meta) != "":
+				st.warnf("忽略续跑请求: %s", resumeRejectReason(rec, plan, opts.Meta))
+			default:
+				steps, err := opts.Store.ListSteps(ctx, rec.ID)
+				if err != nil {
+					st.warnf("读取续跑步骤失败: %v", err)
+					break
+				}
+				hydrated, err := hydrateResume(rec, steps)
+				if err != nil {
+					st.warnf("续跑计划恢复失败: %v", err)
+					break
+				}
+				plan = hydrated
+				run.Plan = plan
+				run.RunID = rec.ID
+				st.runID = rec.ID
+				st.revision = plan.Revision
+				resumed = true
+				status := RunRunning
+				if err := opts.Store.UpdateRun(ctx, rec.ID,
+					RunPatch{Status: &status}); err != nil {
+					st.warnf("续跑状态更新失败: %v", err)
+				}
+			}
+		}
+		if !resumed {
+			st.revision = plan.Revision
+			rec := &RunRecord{
+				ID:             run.RunID,
+				BotID:          opts.Meta.BotID,
+				ConversationID: opts.Meta.ConversationID,
+				UserID:         opts.Meta.UserID,
+				Goal:           plan.Goal,
+				GoalHash:       GoalHash(plan.Goal),
+				Status:         RunRunning,
+				Revision:       plan.Revision,
+				Plan:           plan.DeepCopy(),
+				CreatedAt:      run.StartedAt,
+				UpdatedAt:      run.StartedAt,
+			}
+			if err := opts.Store.CreateRun(ctx, rec); err != nil {
+				run.Status = RunFailed
+				run.Err = fmt.Errorf("创建运行记录失败: %w", err)
+				// 运行记录没建成，后续 UpdateRun 一定失败；这里只收口内存结果与指标。
+				return run.finalize(ctx, nil, st), run.Err
+			}
+		}
+	}
+
 	emitter := newEmitter(opts.Listener)
 	if emitter != nil {
 		defer emitter.Close()
@@ -359,7 +570,7 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 	if err := ctx.Err(); err != nil {
 		run.Status = RunFailed
 		run.Err = err
-		return run.finish(), err
+		return run.finalize(ctx, opts.Store, st), err
 	}
 
 	for {
@@ -393,19 +604,22 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 				if err := step.Transition(StatusPending); err != nil {
 					run.Status = RunFailed
 					run.Err = err
-					return run.finish(), err
+					break
 				}
 				step.StaleReason = ""
 			}
 			if err := step.Transition(StatusReady); err != nil {
 				run.Status = RunFailed
 				run.Err = err
-				return run.finish(), err
+				break
 			}
+		}
+		if run.Status == RunFailed {
+			break
 		}
 
 		prior := FormatPrior(plan.Results())
-		budgetHit := p.runLayer(ctx, layer, prior, exec, budget, emitter, cfg, run.RunID)
+		budgetHit := p.runLayer(ctx, layer, prior, exec, budget, emitter, cfg, st)
 		if err := ctx.Err(); err != nil {
 			run.Status = RunFailed
 			run.Err = err
@@ -436,6 +650,7 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 			break
 		}
 
+		obs.RecordPlannerReplan(ctx, replanReason(layer))
 		markStale(plan, stale, reasons, emitter)
 		emitter.emit(ProgressEvent{
 			Type:    EventReplan,
@@ -459,12 +674,27 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 		}
 		plan.Revision++
 		run.Replans++
+		st.revision = plan.Revision
+		if opts.Store != nil {
+			rev := plan.Revision
+			if err := opts.Store.UpdateRun(ctx, run.RunID, RunPatch{
+				Revision: &rev,
+				Plan:     plan.DeepCopy(),
+			}); err != nil {
+				// 快照写不进去时继续执行，续跑会拿到旧计划结构，
+				// 这比"本轮少一次重规划"更危险，直接按降级收口。
+				st.warnf("计划快照写入失败: run=%s revision=%d err=%v", run.RunID, rev, err)
+				run.Status = RunDegraded
+				run.Err = fmt.Errorf("计划快照写入失败: %w", err)
+				break
+			}
+		}
 		plan.ResetStale()
 		emitter.emit(ProgressEvent{Type: EventPlan, Message: plan.FormatPlan()})
 	}
 
 	emitter.emit(ProgressEvent{Type: EventDone, Message: string(run.Status)})
-	run.finish()
+	run.finalize(ctx, opts.Store, st)
 	if run.Status == RunBlocked {
 		return run, ErrDeadlock
 	}
@@ -474,13 +704,164 @@ func (p *Planner) ExecuteWith(ctx context.Context, plan *Plan, exec StepExecutor
 	return run, nil
 }
 
+// finalize 统一收口：统计、终态落库、指标。
+//
+// 所有退出路径都必须经过这里。分散写终态最容易漏掉 ctx 取消这类路径，
+// 结果就是运行记录永远停在 running，续跑逻辑再也不会选中它。
+func (r *RunResult) finalize(ctx context.Context, store RunStore, st *execState) *RunResult {
+	if r == nil {
+		return nil
+	}
+	if st != nil {
+		r.ReplayedSteps = int(st.replayed.Load())
+	}
+	r.finish()
+	if store != nil && r.RunID != "" {
+		finalCtx := ctx
+		if finalCtx == nil {
+			finalCtx = context.Background()
+		}
+		if finalCtx.Err() != nil {
+			// ctx 已经被取消时仍然要落终态，否则记录会永远停在 running。
+			finalCtx = context.WithoutCancel(finalCtx)
+		}
+		status := r.Status
+		errText := ""
+		if r.Err != nil {
+			errText = r.Err.Error()
+		}
+		rev := r.Revision
+		if err := store.UpdateRun(finalCtx, r.RunID, RunPatch{
+			Status: &status, Revision: &rev, Error: &errText,
+		}); err != nil {
+			if st != nil {
+				st.warnf("运行终态写入失败: run=%s err=%v", r.RunID, err)
+			}
+		}
+	}
+	recordRunMetrics(ctx, r)
+	return r
+}
+
 func (r *RunResult) finish() *RunResult {
 	if r == nil {
 		return nil
 	}
-	r.Results = r.Plan.Results()
+	if r.Plan != nil {
+		r.Results = r.Plan.Results()
+		r.Revision = r.Plan.Revision
+	}
 	r.Duration = time.Since(r.StartedAt)
+	if r.budget != nil {
+		r.LLMCalls = r.budget.Used()
+		r.TokensUsed = r.budget.TokensUsed()
+	}
+	r.StaleSteps = 0
+	for _, res := range r.Results {
+		if res.Stale || res.Step.Status == StatusStale {
+			r.StaleSteps++
+		}
+	}
 	return r
+}
+
+// resumeRejectReason 返回拒绝续跑的原因；空串表示可以续跑。
+// 归属校验只在调用方提供了对应字段时执行，避免后台任务（无 user_id）
+// 因为"空不等于空"被误拒。
+func resumeRejectReason(rec *RunRecord, plan *Plan, meta RunMeta) string {
+	if rec == nil {
+		return "运行记录为空"
+	}
+	if rec.Plan == nil {
+		return "运行记录缺少计划快照"
+	}
+	if rec.Status != RunRunning && rec.Status != RunFailed {
+		return fmt.Sprintf("状态 %s 不允许续跑", rec.Status)
+	}
+	if time.Since(rec.UpdatedAt) > ResumeWindow {
+		return fmt.Sprintf("超过续跑窗口 %s", ResumeWindow)
+	}
+	if meta.BotID != "" && rec.BotID != meta.BotID {
+		return "Bot 归属不一致"
+	}
+	if meta.ConversationID != "" && rec.ConversationID != meta.ConversationID {
+		return "会话归属不一致"
+	}
+	if meta.UserID != "" && rec.UserID != meta.UserID {
+		return "用户归属不一致"
+	}
+	if rec.GoalHash == "" || rec.GoalHash != GoalHash(plan.Goal) {
+		return "目标已变化"
+	}
+	return ""
+}
+
+// replanReason 给重规划指标一个固定枚举标签，不拼接步骤 ID。
+func replanReason(layer []*PlanStep) string {
+	for _, step := range layer {
+		if step.Status == StatusFailed {
+			return "failure"
+		}
+	}
+	return "violation"
+}
+
+// recordRunMetrics 记录整轮结果。
+// 标签只用固定枚举，run_id / goal 等高基数字段留在日志里。
+func recordRunMetrics(ctx context.Context, run *RunResult) {
+	if run == nil {
+		return
+	}
+	obs.RecordPlannerRun(ctx, string(run.Status), run.LLMCalls)
+	if run.StaleSteps > 0 {
+		obs.RecordPlannerStaleSteps(ctx, int64(run.StaleSteps))
+	}
+	if run.ReplayedSteps > 0 {
+		obs.RecordPlannerReplayedSteps(ctx, int64(run.ReplayedSteps))
+	}
+	if run.Status == RunBudgetExhausted && run.budget != nil {
+		obs.RecordPlannerBudgetExhausted(ctx, run.budget.ExhaustedKind())
+	}
+}
+
+// appendStepCheckpoint 写步骤 checkpoint。
+// 持久化失败不能中断执行：checkpoint 是"下一次能续跑"的增强，
+// 不是本轮正确性的前提；但必须告警，否则会静默退化成没有 checkpoint。
+func (st *execState) appendStepCheckpoint(ctx context.Context, rec *StepRecord) {
+	if st == nil || st.store == nil || rec == nil {
+		return
+	}
+	if err := st.store.AppendStep(ctx, rec); err != nil {
+		st.warnf("步骤 checkpoint 写入失败: run=%s step=%d attempt=%d err=%v",
+			rec.RunID, rec.StepID, rec.Attempt, err)
+	}
+}
+
+func (st *execState) checkpointStep(ctx context.Context, step *PlanStep, inputHash string,
+	attempt int, startedAt time.Time, err error) {
+	if st == nil || st.store == nil || step == nil {
+		return
+	}
+	rec := &StepRecord{
+		ID:         newRunID(),
+		RunID:      st.runID,
+		StepID:     step.ID,
+		Revision:   st.revision,
+		Attempt:    attempt,
+		Status:     step.Status,
+		Effect:     step.Effect,
+		InputHash:  inputHash,
+		Output:     step.Output,
+		Facts:      append([]Fact(nil), step.outcome.Facts...),
+		Violations: append([]Violation(nil), step.outcome.Violations...),
+		DurationMs: step.duration.Milliseconds(),
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
+	}
+	if err != nil {
+		rec.Error = truncateBytes(err.Error(), 2048)
+	}
+	st.appendStepCheckpoint(ctx, rec)
 }
 
 // markStale 把已产出结果的失效步骤标为 stale。
@@ -506,7 +887,7 @@ func markStale(plan *Plan, ids []int, reasons map[int]string, emitter *eventEmit
 
 // runLayer 执行一层：只读步骤并发，副作用步骤排在其后串行。
 func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string, exec StepExecutorV2,
-	budget *Budget, emitter *eventEmitter, cfg Config, runID string) bool {
+	budget *Budget, emitter *eventEmitter, cfg Config, st *execState) bool {
 
 	parallel := make([]*PlanStep, 0, len(layer))
 	serial := make([]*PlanStep, 0, len(layer))
@@ -532,7 +913,7 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, runID) {
+				if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st) {
 					budgetHit.Store(true)
 				}
 			}(step)
@@ -540,7 +921,7 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 		wg.Wait()
 	}
 	for _, step := range serial {
-		if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, runID) {
+		if !p.runStep(ctx, step, prior, exec, budget, emitter, cfg, st) {
 			budgetHit.Store(true)
 			break
 		}
@@ -550,11 +931,44 @@ func (p *Planner) runLayer(ctx context.Context, layer []*PlanStep, prior string,
 
 // runStep 执行单步并维护状态机。返回 false 表示预算不足、未能执行。
 func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exec StepExecutorV2,
-	budget *Budget, emitter *eventEmitter, cfg Config, runID string) bool {
+	budget *Budget, emitter *eventEmitter, cfg Config, st *execState) bool {
 
 	if ctx.Err() != nil {
 		return true
 	}
+	inputHash := StepInputHash(*step, prior)
+
+	// 副作用重放：同一次运行里，输入指纹一致且已经成功的副作用不再执行。
+	// 检查放在预算扣减之前——重放是读历史，不应该消耗本轮调用配额。
+	if st != nil && st.store != nil && step.Effect == EffectSideEffect {
+		rec, err := st.store.FindStepOutput(ctx, st.runID, step.ID, inputHash)
+		if err != nil {
+			st.warnf("查询副作用重放记录失败: run=%s step=%d err=%v", st.runID, step.ID, err)
+		} else if rec != nil {
+			if err := step.Transition(StatusRunning); err != nil {
+				step.err = err
+				step.Status = StatusFailed
+				return true
+			}
+			step.Attempt = rec.Attempt
+			step.Output = rec.Output
+			step.outcome = StepOutcome{
+				Output:     rec.Output,
+				Facts:      append([]Fact(nil), rec.Facts...),
+				Violations: append([]Violation(nil), rec.Violations...),
+			}
+			step.duration = time.Duration(rec.DurationMs) * time.Millisecond
+			_ = step.Transition(StatusDone)
+			st.replayed.Add(1)
+			obs.RecordPlannerStep(ctx, string(StatusDone), string(step.Effect), step.duration.Seconds())
+			emitter.emit(ProgressEvent{
+				Type: EventStepDone, StepID: step.ID, Attempt: rec.Attempt,
+				Message: "副作用已执行过，复用历史结果",
+			})
+			return true
+		}
+	}
+
 	if !budget.TryReserve(1) {
 		return false
 	}
@@ -569,6 +983,43 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	step.err = nil
 
 	start := time.Now()
+	if st != nil && st.store != nil {
+		st.appendStepCheckpoint(ctx, &StepRecord{
+			ID:        newRunID(),
+			RunID:     st.runID,
+			StepID:    step.ID,
+			Revision:  st.revision,
+			Attempt:   0,
+			Status:    StatusRunning,
+			Effect:    step.Effect,
+			InputHash: inputHash,
+			StartedAt: start,
+		})
+	}
+
+	// 路径 B：执行前校验前提。模型说"不成立"才判定失败；
+	// 校验调用本身失败按"校验不可用"放行，避免把观测故障变成业务失败。
+	if st != nil && st.verifyAssumes && len(step.Assumptions) > 0 {
+		if ok, reason := st.checkAssumptions(ctx, p, *step, prior, budget); !ok {
+			reason = strings.TrimSpace(reason)
+			if reason == "" {
+				reason = "步骤前提不成立"
+			}
+			err := fmt.Errorf("%w: %s", ErrAssumptionViolated, reason)
+			step.duration = time.Since(start)
+			step.err = err
+			step.Output = err.Error()
+			_ = step.Transition(StatusFailed)
+			st.checkpointStep(ctx, step, inputHash, 0, start, err)
+			obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
+			emitter.emit(ProgressEvent{
+				Type: EventStepFailed, StepID: step.ID, Attempt: 0,
+				Message: truncateBytes(err.Error(), 512),
+			})
+			return true
+		}
+	}
+
 	var outcome StepOutcome
 	var err error
 	for attempt := 1; attempt <= cfg.MaxRetries+1; attempt++ {
@@ -576,7 +1027,7 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 			break
 		}
 		step.Attempt = attempt
-		key := IdempotencyKey(runID, step.ID, step.Tool, []byte(step.Description))
+		key := IdempotencyKey(st.runID, step.ID, step.Tool, []byte(step.Description))
 		stepCtx := WithIdempotencyKey(ctx, key)
 		emitter.emit(ProgressEvent{
 			Type: EventStepStart, StepID: step.ID, Attempt: attempt, Message: step.Description,
@@ -585,6 +1036,20 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 		if err == nil {
 			if strings.TrimSpace(outcome.Output) == "" && len(outcome.Facts) == 0 {
 				err = ErrEmptyStepOutput
+			}
+		}
+		// 路径 C：只对非副作用步骤做后置校验。
+		// 副作用已经发生，校验失败后再跑一次就是重复发送/重复扣款；
+		// 这里只记录结果，让综合阶段说明局限。
+		if err == nil && st != nil && st.verifyExpects && strings.TrimSpace(step.Expects) != "" {
+			if step.Effect == EffectSideEffect {
+				st.warnf("跳过副作用步骤的后置校验: run=%s step=%d", st.runID, step.ID)
+			} else if ok, reason := st.checkExpects(ctx, p, *step, outcome.Output, budget); !ok {
+				reason = strings.TrimSpace(reason)
+				if reason == "" {
+					reason = "产出不符合预期"
+				}
+				err = fmt.Errorf("%w: %s", ErrExpectationMissed, reason)
 			}
 		}
 		if err == nil || ClassifyError(err) != FailTransient || attempt > cfg.MaxRetries {
@@ -598,11 +1063,14 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 
 	if err != nil {
 		step.err = err
+		step.outcome = outcome
 		step.Output = outcome.Output
 		if strings.TrimSpace(step.Output) == "" {
 			step.Output = err.Error()
 		}
 		_ = step.Transition(StatusFailed)
+		st.checkpointStep(ctx, step, inputHash, step.Attempt, start, err)
+		obs.RecordPlannerStep(ctx, string(StatusFailed), string(step.Effect), step.duration.Seconds())
 		emitter.emit(ProgressEvent{
 			Type: EventStepFailed, StepID: step.ID, Attempt: step.Attempt,
 			Message: truncateBytes(err.Error(), 512),
@@ -613,8 +1081,106 @@ func (p *Planner) runStep(ctx context.Context, step *PlanStep, prior string, exe
 	step.Output = outcome.Output
 	step.outcome = outcome
 	_ = step.Transition(StatusDone)
+	st.checkpointStep(ctx, step, inputHash, step.Attempt, start, nil)
+	obs.RecordPlannerStep(ctx, string(StatusDone), string(step.Effect), step.duration.Seconds())
 	emitter.emit(ProgressEvent{Type: EventStepDone, StepID: step.ID, Attempt: step.Attempt})
 	return true
+}
+
+type verifyResult struct {
+	ok     bool
+	reason string
+}
+
+const verifyAssumptionsPrompt = `你是执行前校验器。判断给定步骤的前提是否成立。
+只能依据提供的已知事实；没有证据时不要臆测，按成立处理。
+输出 JSON，不要输出其他内容：
+{"valid": true, "reason": "简短理由"}`
+
+const verifyExpectsPrompt = `你是执行结果校验器。判断步骤产出是否满足预期。
+只判断"是否达到预期"，不要评价文风或补充答案。
+输出 JSON，不要输出其他内容：
+{"valid": true, "reason": "简短理由"}`
+
+func (st *execState) checkAssumptions(ctx context.Context, p *Planner,
+	step PlanStep, facts string, budget *Budget) (bool, string) {
+	key := verifyCacheKey("assume", step, facts)
+	if v, ok := st.verifyCache.Load(key); ok {
+		r := v.(verifyResult)
+		return r.ok, r.reason
+	}
+	ok, reason := p.verifyAssumptions(ctx, step, facts, budget)
+	st.verifyCache.Store(key, verifyResult{ok: ok, reason: reason})
+	return ok, reason
+}
+
+func (st *execState) checkExpects(ctx context.Context, p *Planner,
+	step PlanStep, output string, budget *Budget) (bool, string) {
+	key := verifyCacheKey("expects", step, output)
+	if v, ok := st.verifyCache.Load(key); ok {
+		r := v.(verifyResult)
+		return r.ok, r.reason
+	}
+	ok, reason := p.verifyExpects(ctx, step, output, budget)
+	st.verifyCache.Store(key, verifyResult{ok: ok, reason: reason})
+	return ok, reason
+}
+
+func verifyCacheKey(kind string, step PlanStep, payload string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n%d\n%s\n%s\n", kind, step.ID, strings.Join(step.Assumptions, "|"), payload)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// verifyAssumptions 返回 (是否成立, 理由)。
+// 解析失败 / 调用失败一律按"校验不可用"放行：校验是可选增强，
+// 不能因为校验器自己出错就把整轮任务判死。
+func (p *Planner) verifyAssumptions(ctx context.Context, step PlanStep,
+	facts string, budget *Budget) (bool, string) {
+	if p == nil || p.chat == nil || len(step.Assumptions) == 0 {
+		return true, ""
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("步骤：%s\n前提：\n", step.Description))
+	for _, a := range step.Assumptions {
+		sb.WriteString("- ")
+		sb.WriteString(a)
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(facts) != "" {
+		sb.WriteString("\n已知事实/前序结果：\n")
+		sb.WriteString(truncateBytes(facts, 8*1024))
+	}
+	resp, err := p.chatWithBudget(ctx, verifyAssumptionsPrompt, sb.String(), budget)
+	if err != nil {
+		return true, ""
+	}
+	return parseVerifyResponse(resp)
+}
+
+func (p *Planner) verifyExpects(ctx context.Context, step PlanStep,
+	output string, budget *Budget) (bool, string) {
+	if p == nil || p.chat == nil || strings.TrimSpace(step.Expects) == "" {
+		return true, ""
+	}
+	prompt := fmt.Sprintf("步骤：%s\n预期产出：%s\n实际产出：\n%s",
+		step.Description, step.Expects, truncateBytes(output, 8*1024))
+	resp, err := p.chatWithBudget(ctx, verifyExpectsPrompt, prompt, budget)
+	if err != nil {
+		return true, ""
+	}
+	return parseVerifyResponse(resp)
+}
+
+func parseVerifyResponse(resp string) (bool, string) {
+	var out struct {
+		Valid  bool   `json:"valid"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(strutil.ExtractJSON(resp)), &out); err != nil {
+		return true, ""
+	}
+	return out.Valid, out.Reason
 }
 
 // collectInvalidations 汇总失败步骤与被 violation 指向的步骤。
