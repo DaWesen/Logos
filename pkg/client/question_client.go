@@ -16,6 +16,17 @@ type QuestionClient struct {
 	conn   *grpc.ClientConn
 }
 
+// QuestionResult 是一次问答的完整结果。
+//
+// 只返回 answer 会丢掉 degraded：调用方无法区分「模型真的回答了」
+// 和「模型挂了，这是兜底文案」。消费端必须据此决定是提交 offset
+// 还是重试，因此把状态和答案一起返回。
+type QuestionResult struct {
+	Answer     string
+	QuestionID string
+	Degraded   bool
+}
+
 func NewQuestionClient(client pb.QAServiceClient, conn *grpc.ClientConn) *QuestionClient {
 	return &QuestionClient{client: client, conn: conn}
 }
@@ -30,7 +41,11 @@ func NewQuestionClientFromConfig(cfg *config.Config) (*QuestionClient, error) {
 }
 
 func (c *QuestionClient) AskQuestion(ctx context.Context, content string, userID int64) (string, error) {
-	return c.AskQuestionWithRequestID(ctx, content, userID, "")
+	result, err := c.AskQuestionWithRequestID(ctx, content, userID, "")
+	if err != nil {
+		return "", err
+	}
+	return result.Answer, nil
 }
 
 // AskQuestionWithRequestID 带上调用方的幂等键。
@@ -41,16 +56,20 @@ func (c *QuestionClient) AskQuestionWithRequestID(
 	content string,
 	userID int64,
 	requestID string,
-) (string, error) {
+) (QuestionResult, error) {
 	resp, err := c.client.AskQuestion(ctx, &pb.QuestionReq{
 		Content:   content,
 		UserId:    userID,
 		RequestId: requestID,
 	})
 	if err != nil {
-		return "", err
+		return QuestionResult{}, err
 	}
-	return resp.GetAnswer(), nil
+	return QuestionResult{
+		Answer:     resp.GetAnswer(),
+		QuestionID: resp.GetQuestionId(),
+		Degraded:   resp.GetDegraded(),
+	}, nil
 }
 
 func (c *QuestionClient) GetHistory(ctx context.Context, userID int64, page, pageSize int32) (*pb.HistoryResp, error) {

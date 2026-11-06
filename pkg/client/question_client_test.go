@@ -12,14 +12,15 @@ import (
 
 type stubQAClient struct {
 	pb.QAServiceClient
-	req  *pb.QuestionReq
-	resp *pbCommon.BaseResp
-	err  error
+	req      *pb.QuestionReq
+	resp     *pbCommon.BaseResp
+	degraded bool
+	err      error
 }
 
 func (s *stubQAClient) AskQuestion(_ context.Context, req *pb.QuestionReq, _ ...grpc.CallOption) (*pb.AnswerResp, error) {
 	s.req = req
-	return &pb.AnswerResp{Answer: "ok"}, nil
+	return &pb.AnswerResp{Answer: "ok", QuestionId: "q-1", Degraded: s.degraded}, nil
 }
 
 func (s *stubQAClient) GetRecommendedQuestions(
@@ -98,5 +99,23 @@ func TestQuestionClient_AskQuestionKeepsEmptyRequestID(t *testing.T) {
 	}
 	if stub.req.GetRequestId() != "" {
 		t.Fatalf("request_id = %q, want empty", stub.req.GetRequestId())
+	}
+}
+
+// 只返回 answer 会丢掉降级状态：调用方无法判断模型是否真的回答过，
+// 消费端就会把兜底文案当成成功消息提交 offset。
+func TestQuestionClient_AskQuestionExposesDegradedFlag(t *testing.T) {
+	stub := &stubQAClient{degraded: true}
+	c := NewQuestionClient(stub, nil)
+
+	result, err := c.AskQuestionWithRequestID(context.Background(), "hello", 7, "m-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Degraded {
+		t.Fatal("降级标记必须透传给调用方")
+	}
+	if result.QuestionID != "q-1" || result.Answer != "ok" {
+		t.Fatalf("响应字段未透传: %+v", result)
 	}
 }
