@@ -58,6 +58,31 @@ type stubMessageRepo struct {
 	claimErr     error
 	claimCtxErr  []error
 
+	claimProcessingCalls int
+	claimProcessingID    string
+	claimProcessingGroup string
+	claimProcessingLease time.Time
+	claimProcessingOK    bool
+	claimProcessingErr   error
+	claimProcessingFn    func() (bool, error)
+
+	markProcessedCalls int
+	markProcessedID    string
+	markProcessedGroup string
+	markProcessedErr   error
+	markProcessedLeft  int
+	markProcessedCtx   []error
+
+	releaseCalls    int
+	releaseID       string
+	releaseGroup    string
+	releaseErr      error
+	releaseFailures int
+	releaseCtxErr   []error
+
+	getMessageResult *model.Message
+	getMessageErr    error
+
 	statsRows []dao.TopicStats
 	statsErr  error
 }
@@ -98,6 +123,50 @@ func (s *stubMessageRepo) ClaimPendingMessages(
 		return result, s.claimErr
 	}
 	return s.claimResult, s.claimErr
+}
+
+func (s *stubMessageRepo) TryClaimMessageForProcessing(
+	_ context.Context,
+	id string,
+	claimer string,
+	leaseUntil time.Time,
+) (bool, error) {
+	s.claimProcessingCalls++
+	s.claimProcessingID = id
+	s.claimProcessingGroup = claimer
+	s.claimProcessingLease = leaseUntil
+	if s.claimProcessingFn != nil {
+		return s.claimProcessingFn()
+	}
+	return s.claimProcessingOK, s.claimProcessingErr
+}
+
+func (s *stubMessageRepo) MarkMessageProcessed(ctx context.Context, id string, claimer string) error {
+	s.markProcessedCalls++
+	s.markProcessedID = id
+	s.markProcessedGroup = claimer
+	s.markProcessedCtx = append(s.markProcessedCtx, ctx.Err())
+	if s.markProcessedLeft > 0 {
+		s.markProcessedLeft--
+		return errors.New("finalize failed")
+	}
+	return s.markProcessedErr
+}
+
+func (s *stubMessageRepo) ReleaseMessageClaim(ctx context.Context, id string, claimer string) error {
+	s.releaseCalls++
+	s.releaseID = id
+	s.releaseGroup = claimer
+	s.releaseCtxErr = append(s.releaseCtxErr, ctx.Err())
+	if s.releaseFailures > 0 {
+		s.releaseFailures--
+		return errors.New("release failed")
+	}
+	return s.releaseErr
+}
+
+func (s *stubMessageRepo) GetMessage(_ context.Context, _ string) (*model.Message, error) {
+	return s.getMessageResult, s.getMessageErr
 }
 
 func (s *stubMessageRepo) GetMessageStatsByTopic(_ context.Context) ([]dao.TopicStats, error) {
@@ -671,6 +740,9 @@ func TestHandleGenericMessage_WritesCountedStatus(t *testing.T) {
 	if repo.updatedID != "m-1" || repo.updatedTo != model.StatusProcessed {
 		t.Fatalf("状态更新 = %q/%q, want m-1/%s", repo.updatedID, repo.updatedTo, model.StatusProcessed)
 	}
+	if repo.claimProcessingCalls != 0 {
+		t.Fatalf("非问答消息不应触发幂等认领, calls = %d", repo.claimProcessingCalls)
+	}
 }
 
 // 类型断言失败曾被 `_` 吞掉，content 非字符串会被当成「没有内容」，
@@ -775,5 +847,316 @@ func TestHandleGenericMessage_MissingMessageIDSkipsStatusUpdate(t *testing.T) {
 	}
 	if repo.updatedID != "" {
 		t.Fatalf("没有 message_id 时不应写数据库, updatedID = %q", repo.updatedID)
+	}
+}
+
+// 问答消息必须先认领再调用模型：认领成功才说明这次处理是唯一的。
+// 完成态由 MarkMessageProcessed 写入，不能再用只改 status、保留租约的
+// UpdateMessageStatus——否则租约过期后回放会把它当成可接管消息。
+func TestHandleGenericMessage_QAClaimsBeforeAsking(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("正常问答不应报错: %v", err)
+	}
+	if repo.claimProcessingCalls != 1 || repo.claimProcessingID != "m-1" {
+		t.Fatalf("认领调用 = %d/%q, want 1/m-1", repo.claimProcessingCalls, repo.claimProcessingID)
+	}
+	if repo.claimProcessingGroup != messageConsumerGroup {
+		t.Fatalf("认领者 = %q, want %q", repo.claimProcessingGroup, messageConsumerGroup)
+	}
+	if !repo.claimProcessingLease.After(time.Now()) {
+		t.Fatalf("租约必须指向未来, got %v", repo.claimProcessingLease)
+	}
+	if question.calls != 1 {
+		t.Fatalf("认领成功后应调用模型一次, calls = %d", question.calls)
+	}
+	if repo.markProcessedCalls != 1 || repo.markProcessedID != "m-1" {
+		t.Fatalf("完成写入 = %d/%q, want 1/m-1", repo.markProcessedCalls, repo.markProcessedID)
+	}
+	if repo.updatedID != "" {
+		t.Fatalf("已认领的消息不应走 UpdateMessageStatus, updatedID = %q", repo.updatedID)
+	}
+}
+
+// 回放的核心承诺：已处理成功的消息再次投递时，不能再调一次模型。
+func TestHandleGenericMessage_QAClaimDeniedSkipsModel(t *testing.T) {
+	repo := &stubMessageRepo{
+		claimProcessingOK: false,
+		getMessageResult:  &model.Message{ID: "m-1", Status: model.StatusProcessed},
+	}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("重复消息应静默跳过而不是报错: %v", err)
+	}
+	if question.calls != 0 {
+		t.Fatalf("重复消息不应调用模型, calls = %d", question.calls)
+	}
+	if repo.markProcessedCalls != 0 || repo.releaseCalls != 0 {
+		t.Fatalf("跳过的消息不应再写状态, mark=%d release=%d", repo.markProcessedCalls, repo.releaseCalls)
+	}
+}
+
+// 认领失败但记录是 PENDING/FAILED 时不能直接提交 offset：
+// PENDING 可能只是对方刚释放认领的竞争窗口，重试一次就能重新认领；
+// FAILED 则应交给重试耗尽后的死信，而不是静默跳过。
+func TestHandleGenericMessage_QANonTerminalClaimDeniedIsRetried(t *testing.T) {
+	for _, status := range []string{model.StatusPending, model.StatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			repo := &stubMessageRepo{
+				claimProcessingOK: false,
+				getMessageResult:  &model.Message{ID: "m-1", Status: status},
+			}
+			question := &fakeQuestionService{}
+			svc := &messageServiceImpl{repo: repo, questionService: question}
+
+			msg := &mq.Message{
+				Topic:   mq.TopicQARequest,
+				Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+				Context: context.Background(),
+			}
+			if err := svc.handleGenericMessage(msg); err == nil {
+				t.Fatalf("状态 %s 不允许认领时必须上抛，不能提交 offset", status)
+			}
+			if question.calls != 0 {
+				t.Fatalf("未认领成功不应调用模型, calls = %d", question.calls)
+			}
+		})
+	}
+}
+
+func TestHandleGenericMessage_QAClaimErrorIsReturned(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingErr: errors.New("db down")}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err == nil {
+		t.Fatal("认领失败必须上抛，不能在没有幂等保证的情况下继续调用模型")
+	}
+	if question.calls != 0 {
+		t.Fatalf("认领失败后不应调用模型, calls = %d", question.calls)
+	}
+}
+
+// 处理失败必须归还认领，否则 Kafka 的就地重试会被幂等闸门挡下，
+// 一次可恢复的下游抖动会变成永久跳过。
+func TestHandleGenericMessage_QAFailureReleasesClaim(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true}
+	question := &fakeQuestionService{err: errors.New("llm unavailable")}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err == nil {
+		t.Fatal("问答失败必须返回错误以触发重试")
+	}
+	if repo.releaseCalls != 1 || repo.releaseID != "m-1" || repo.releaseGroup != messageConsumerGroup {
+		t.Fatalf("归还认领 = %d/%q/%q, want 1/m-1/%s",
+			repo.releaseCalls, repo.releaseID, repo.releaseGroup, messageConsumerGroup)
+	}
+	if repo.markProcessedCalls != 0 {
+		t.Fatalf("失败不应写完成态, mark = %d", repo.markProcessedCalls)
+	}
+}
+
+// 归还也可能遇到瞬时数据库抖动；只试一次就放弃会把消息留在 PROCESSING，
+// 紧接着的重试会被当成「别人正在处理」而跳过。
+func TestHandleGenericMessage_QAReleaseRetriesTransientFailure(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true, releaseFailures: 2}
+	question := &fakeQuestionService{err: errors.New("llm unavailable")}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err == nil {
+		t.Fatal("问答失败必须返回错误以触发重试")
+	}
+	if repo.releaseCalls != 3 {
+		t.Fatalf("归还应在第 3 次成功, calls = %d", repo.releaseCalls)
+	}
+}
+
+// 停机时业务 ctx 已取消，释放认领仍要能发出去；
+// 否则消息会卡在 PROCESSING，直到 5 分钟租约过期。
+func TestHandleGenericMessage_QAReleaseSurvivesCancelledLifecycle(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true}
+	question := &fakeQuestionService{block: true}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: parent,
+	}
+
+	if err := svc.handleGenericMessage(msg); err == nil {
+		t.Fatal("生命周期 ctx 已取消时应返回错误")
+	}
+	if repo.releaseCalls != 1 {
+		t.Fatalf("取消后仍应释放一次认领, calls = %d", repo.releaseCalls)
+	}
+	if len(repo.releaseCtxErr) != 1 || repo.releaseCtxErr[0] != nil {
+		t.Fatalf("释放必须使用未取消的 ctx, got %v", repo.releaseCtxErr)
+	}
+}
+
+// 没有 message_id 的事件不参与幂等认领，也不能因此被丢掉。
+func TestHandleGenericMessage_QAMissingMessageIDSkipsClaim(t *testing.T) {
+	repo := &stubMessageRepo{}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("缺少 message_id 不应报错: %v", err)
+	}
+	if repo.claimProcessingCalls != 0 || repo.markProcessedCalls != 0 {
+		t.Fatalf("没有 message_id 不应认领, claim=%d mark=%d",
+			repo.claimProcessingCalls, repo.markProcessedCalls)
+	}
+	if question.calls != 1 {
+		t.Fatalf("没有 message_id 仍应处理, calls = %d", question.calls)
+	}
+}
+
+// 认领失败但记录不存在（外部生产者直投/历史数据已清理）时，
+// 没有可冲突的状态，应退回原有行为继续处理，而不是静默丢消息。
+func TestHandleGenericMessage_QAMissingRecordProcessesWithoutClaim(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: false}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("记录不存在不应阻塞处理: %v", err)
+	}
+	if question.calls != 1 {
+		t.Fatalf("记录不存在时应继续处理, calls = %d", question.calls)
+	}
+	if repo.markProcessedCalls != 0 {
+		t.Fatalf("未认领成功不应写完成态, mark = %d", repo.markProcessedCalls)
+	}
+}
+
+// 完成态写入遇到瞬时抖动时应短重试，而不是立刻把已经成功的消息留在 PROCESSING。
+func TestHandleGenericMessage_QAFinalizeRetriesTransientFailure(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true, markProcessedLeft: 2}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("终态写在第 3 次成功时不应报错: %v", err)
+	}
+	if repo.markProcessedCalls != 3 {
+		t.Fatalf("完成态应重试到成功, calls = %d", repo.markProcessedCalls)
+	}
+	if question.calls != 1 {
+		t.Fatalf("重试终态不能重复调用模型, calls = %d", question.calls)
+	}
+	if repo.releaseCalls != 0 {
+		t.Fatalf("模型已成功，终态重试不应退回认领, release = %d", repo.releaseCalls)
+	}
+}
+
+// 模型成功后的终态写入若持续失败，不能退回认领（会重复计费），
+// 也不能让消费端继续重试业务逻辑；提交 offset，用指标暴露不一致。
+func TestHandleGenericMessage_QAFinalizeFailureCommitsWithoutRelease(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true, markProcessedErr: errors.New("db down")}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: context.Background(),
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("终态写入失败不应上抛，否则消费端重试会再次进入业务逻辑: %v", err)
+	}
+	if repo.markProcessedCalls != claimWriteAttempts {
+		t.Fatalf("完成态应尝试 %d 次, calls = %d", claimWriteAttempts, repo.markProcessedCalls)
+	}
+	if question.calls != 1 {
+		t.Fatalf("模型只应调用一次, calls = %d", question.calls)
+	}
+	if repo.releaseCalls != 0 {
+		t.Fatalf("模型已成功，不能退回认领导致重复调用, release = %d", repo.releaseCalls)
+	}
+}
+
+// 停机时业务 ctx 已取消，完成态仍要能写出去；否则成功的消息会停在 PROCESSING。
+func TestHandleGenericMessage_QAFinalizeSurvivesCancelledLifecycle(t *testing.T) {
+	repo := &stubMessageRepo{claimProcessingOK: true}
+	question := &fakeQuestionService{}
+	svc := &messageServiceImpl{repo: repo, questionService: question}
+
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	msg := &mq.Message{
+		Topic:   mq.TopicQARequest,
+		Value:   []byte(`{"message_id":"m-1","content":"hello"}`),
+		Context: parent,
+	}
+	if err := svc.handleGenericMessage(msg); err != nil {
+		t.Fatalf("终态写入不应受生命周期取消影响: %v", err)
+	}
+	if len(repo.markProcessedCtx) != 1 || repo.markProcessedCtx[0] != nil {
+		t.Fatalf("终态写入必须使用未取消的 ctx, got %v", repo.markProcessedCtx)
+	}
+}
+
+func TestDuplicateReason(t *testing.T) {
+	cases := map[string]string{
+		model.StatusProcessed:  "already_done",
+		model.StatusAcked:      "already_done",
+		model.StatusCleared:    "already_done",
+		model.StatusProcessing: "in_flight",
+		model.StatusPending:    "not_claimable",
+		model.StatusFailed:     "not_claimable",
+	}
+	for status, want := range cases {
+		if got := duplicateReason(status); got != want {
+			t.Fatalf("duplicateReason(%q) = %q, want %q", status, got, want)
+		}
 	}
 }

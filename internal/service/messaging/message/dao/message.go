@@ -20,6 +20,9 @@ type MessageRepository interface {
 	SaveMessages(ctx context.Context, msgs []*model.Message) error
 	GetMessage(ctx context.Context, id string) (*model.Message, error)
 	UpdateMessageStatus(ctx context.Context, id string, status string) error
+	TryClaimMessageForProcessing(ctx context.Context, id string, claimer string, leaseUntil time.Time) (bool, error)
+	MarkMessageProcessed(ctx context.Context, id string, claimer string) error
+	ReleaseMessageClaim(ctx context.Context, id string, claimer string) error
 	ClaimPendingMessages(ctx context.Context, topic string, limit int, consumerGroup string, leaseUntil time.Time) ([]*model.Message, error)
 	AckMessage(ctx context.Context, id string, consumerGroup string) error
 	AckMessages(ctx context.Context, ids []string, consumerGroup string) error
@@ -75,6 +78,88 @@ func (r *messageRepository) GetMessage(ctx context.Context, id string) (*model.M
 
 func (r *messageRepository) UpdateMessageStatus(ctx context.Context, id string, status string) error {
 	return r.db.WithContext(ctx).Model(&model.Message{}).Where("id = ?", id).Update("status", status).Error
+}
+
+// TryClaimMessageForProcessing 把一条消息从「待处理」原子迁移到「处理中」。
+//
+// 这是 Kafka 消费端的幂等闸门：DLQ 回放沿用原始 message_id，如果消息已经处理成功，
+// 这里必须返回 false，让 handler 直接提交 offset，而不是再调一次模型、再计一次费。
+// 用一条带条件的 UPDATE 判断 RowsAffected，而不是先 SELECT 再 UPDATE：后者在
+// 多实例并发时会同时读到 PENDING，然后都去调用模型。
+//
+// 允许重新认领的只有两种状态：
+//   - PENDING：从未被处理过；
+//   - PROCESSING 且租约已过期：上一个处理者崩溃或超时，消息需要被接管。
+//
+// PROCESSED（终态）与 ACKED（客户端已确认）永远不会被重新认领；PROCESSED 的租约
+// 在完成时已被清空，所以「处理成功」和「处理中」不会混淆。
+func (r *messageRepository) TryClaimMessageForProcessing(
+	ctx context.Context,
+	id string,
+	claimer string,
+	leaseUntil time.Time,
+) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	res := r.db.WithContext(ctx).Exec(claimForProcessingSQL, claimer, leaseUntil, id, time.Now())
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+var claimForProcessingSQL = fmt.Sprintf(`
+UPDATE queue_messages
+SET status = '%s', claimed_by = ?, lease_until = ?, attempts = attempts + 1
+WHERE id = ?
+  AND (status = '%s' OR (status = '%s' AND lease_until IS NOT NULL AND lease_until < ?))`,
+	model.StatusProcessing, model.StatusPending, model.StatusProcessing)
+
+// MarkMessageProcessed 把认领成功的消息置为 PROCESSED 并清空租约。
+//
+// 必须同时清空 lease_until：如果保留租约，租约过期后这条 PROCESSED 消息会再次
+// 满足「PROCESSING + 租约过期」的接管条件，回放时又会被处理一遍。
+// 条件里带 claimed_by，避免租约过期后旧处理者迟到的完成写入覆盖新处理者。
+func (r *messageRepository) MarkMessageProcessed(ctx context.Context, id string, claimer string) error {
+	if id == "" {
+		return nil
+	}
+	res := r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id = ? AND status = ? AND claimed_by = ?", id, model.StatusProcessing, claimer).
+		Updates(map[string]interface{}{
+			"status":      model.StatusProcessed,
+			"claimed_by":  "",
+			"lease_until": nil,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 认领已被别人接管：本次处理结果不再写入，由上抛让调用方感知异常。
+		return fmt.Errorf("%w: %s", ErrMessageNotClaimed, id)
+	}
+	return nil
+}
+
+// ReleaseMessageClaim 在处理失败时把消息退回 PENDING，让 Kafka 的就地重试
+// 能重新认领。不释放会让消息停在 PROCESSING，直到租约过期——重试窗口内
+// 每次都会被幂等闸门挡下，等于把一次可恢复的失败变成永久跳过。
+//
+// 0 行受影响不算错误：租约可能已经过期并被其他实例接管，此时不能覆盖别人的认领。
+func (r *messageRepository) ReleaseMessageClaim(ctx context.Context, id string, claimer string) error {
+	if id == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id = ? AND status = ? AND claimed_by = ?", id, model.StatusProcessing, claimer).
+		Updates(map[string]interface{}{
+			"status":      model.StatusPending,
+			"claimed_by":  "",
+			"lease_until": nil,
+		}).Error
 }
 
 // ClaimPendingMessages 原子领取一批消息。
@@ -221,10 +306,12 @@ func (r *messageRepository) GetMessageStatsByTopic(ctx context.Context) ([]Topic
 		Model(&model.Message{}).
 		Select(`topic,
 			COUNT(*) AS total,
-			COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status IN ? THEN 1 ELSE 0 END), 0) AS pending,
 			COALESCE(SUM(CASE WHEN status IN ? THEN 1 ELSE 0 END), 0) AS processed,
 			COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS failed`,
-			model.StatusPending, []string{model.StatusProcessed, model.StatusAcked}, model.StatusFailed).
+			[]string{model.StatusPending, model.StatusProcessing},
+			[]string{model.StatusProcessed, model.StatusAcked},
+			model.StatusFailed).
 		Group("topic").
 		Scan(&rows).Error
 	return rows, err

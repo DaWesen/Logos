@@ -24,6 +24,8 @@ var (
 	kafkaProduceDuration metric.Float64Histogram
 	kafkaRetryCounter    metric.Int64Counter
 	kafkaReplayCounter   metric.Int64Counter
+	kafkaDuplicateNum    metric.Int64Counter
+	kafkaFinalizeFailNum metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -66,6 +68,14 @@ func initReliabilityMetrics() {
 	kafkaReplayCounter, _ = meter.Int64Counter(
 		"logos.kafka.replay.count",
 		metric.WithDescription("死信回放处置结果计数（result=replayed/quarantined/failed/commit_error）"),
+	)
+	kafkaDuplicateNum, _ = meter.Int64Counter(
+		"logos.kafka.duplicate.count",
+		metric.WithDescription("被消费端幂等闸门挡下的重复消息数（reason=already_done/in_flight/not_claimable）"),
+	)
+	kafkaFinalizeFailNum, _ = meter.Int64Counter(
+		"logos.kafka.finalize.failure.count",
+		metric.WithDescription("业务处理成功但消息终态写入失败的次数（消息会停留在 PROCESSING）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -163,6 +173,33 @@ func RecordKafkaReplay(ctx context.Context, result string) {
 	reliabilityOnce.Do(initReliabilityMetrics)
 	if kafkaReplayCounter != nil {
 		kafkaReplayCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordKafkaDuplicate 记录一条因幂等闸门而未再次执行的消息。
+//
+// 「静默跳过」和「真的没收到」在日志里都只是一行 warn，指标才能区分：
+// already_done 说明回放/重复投递被正确挡住，in_flight 说明并发实例在抢同一条，
+// not_claimable 则需要人工看——消息存在，但状态既不是待处理也不是可接管的处理中。
+func RecordKafkaDuplicate(ctx context.Context, topic, reason string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if kafkaDuplicateNum != nil {
+		kafkaDuplicateNum.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("topic", topic),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordMessageFinalizeFailure 记录「业务已完成、但消息终态没写进去」的不一致。
+//
+// 这不是普通的消息处理失败：模型已经调用并计费，重试只会重复调用，
+// 因此 handler 会提交 offset，只留下一条 PROCESSING 记录。这个指标是
+// 唯一能把它和「正常处理中」区分开的信号，必须单独告警。
+func RecordMessageFinalizeFailure(ctx context.Context, topic string) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if kafkaFinalizeFailNum != nil {
+		kafkaFinalizeFailNum.Add(ctx, 1, metric.WithAttributes(attribute.String("topic", topic)))
 	}
 }
 

@@ -10,11 +10,15 @@ import (
 // Kafka 消费路径曾写入 PROCESSED_FROM_KAFKA，而统计只认 PROCESSED/ACKED，
 // 结果处理量永远显示 0。
 const (
-	StatusPending   = "PENDING"
-	StatusProcessed = "PROCESSED"
-	StatusAcked     = "ACKED"
-	StatusFailed    = "FAILED"
-	StatusCleared   = "CLEARED"
+	StatusPending = "PENDING"
+	// StatusProcessing 表示 Kafka 消费端已经认领、正在处理。
+	// 它与 PROCESSED 分开：PROCESSED 是「已成功处理」的终态，重复投递必须跳过；
+	// PROCESSING 只代表「有人正在做」，租约过期后允许被重新认领。
+	StatusProcessing = "PROCESSING"
+	StatusProcessed  = "PROCESSED"
+	StatusAcked      = "ACKED"
+	StatusFailed     = "FAILED"
+	StatusCleared    = "CLEARED"
 )
 
 type Message struct {

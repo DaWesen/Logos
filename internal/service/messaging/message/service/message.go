@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"Logos/internal/service/messaging/message/model"
 	"Logos/pkg/logger"
 	"Logos/pkg/mq"
+	"Logos/pkg/obs"
 	"Logos/pkg/outbox"
 
 	"gorm.io/gorm"
@@ -33,6 +35,23 @@ const (
 	maxConsumeTimeout   = 30 * time.Second
 	consumePollInterval = 200 * time.Millisecond
 )
+
+// messageConsumerGroup 是消息服务自身消费 Kafka 的消费组。
+// 幂等认领把它写进 claimed_by，这样「谁在处理」在库里可查，也不会和
+// 外部客户端拉取消息时使用的消费组混在一起。
+const messageConsumerGroup = "message-service-group"
+
+// qaProcessingLease 必须大于 qaAnswerTimeout：问答还没结束就被别人接管，
+// 会变成两条并发请求同时调模型——既重复计费，也可能写出两份答案。
+const qaProcessingLease = 5 * time.Minute
+
+// claimWriteTimeout 限制「归还认领 / 写完成态」的耗时。
+// 两者都走独立超时，避免停机时 ctx 已取消导致收尾语句根本没发出去。
+const claimWriteTimeout = 5 * time.Second
+
+// claimWriteAttempts 覆盖数据库瞬时抖动。次数不宜多：收尾失败会拖长
+// 分区阻塞时间，而更长时间的故障应该交给指标告警，而不是无限重试。
+const claimWriteAttempts = 3
 
 // ErrMessageNotClaimed 由 dao 透出，供 handler 映射成 404/409 而不是一律 500。
 var ErrMessageNotClaimed = dao.ErrMessageNotClaimed
@@ -464,7 +483,7 @@ func (s *messageServiceImpl) StartKafkaConsumer(ctx context.Context) error {
 	topics := []string{mq.TopicQARequest, mq.TopicRecommendation, mq.TopicSystemEvent}
 
 	for _, topic := range topics {
-		consumer := newMessageConsumer(topic, "message-service-group")
+		consumer := newMessageConsumer(topic, messageConsumerGroup)
 		// 订阅失败必须同步上抛：Subscribe 内部自己起消费循环，这里再包一层
 		// goroutine 只会把初始化错误留在日志里，cmd 层的 fail-fast 永远看不到。
 		if err := consumer.Subscribe(ctx, s.handleGenericMessage); err != nil {
@@ -505,6 +524,9 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 		return err
 	}
 
+	ctx := messageContext(msg)
+	claimed := false
+
 	switch msg.Topic {
 	case mq.TopicQARequest:
 		content, hasContent, err := eventStringField(event, "content")
@@ -528,15 +550,83 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 			return fmt.Errorf("问答服务未初始化，无法处理问答请求")
 		}
 
+		// 幂等闸门必须在调用模型之前：DLQ 回放、offset 提交失败后的重复投递
+		// 都会带着同一个 message_id 再来一次，而 AskQuestion 会真实调用模型并计费。
+		// 先认领再执行，保证同一条消息最多只有一个处理者。
+		if messageID != "" {
+			if s.repo == nil {
+				// 没有仓储就无法记录「已处理」，幂等承诺不成立；宁可报错重试，
+				// 也不要在没有闸门的情况下重复调用模型。
+				return fmt.Errorf("消息仓库未初始化，无法保证问答幂等")
+			}
+
+			acquired, claimErr := s.repo.TryClaimMessageForProcessing(
+				ctx, messageID, messageConsumerGroup, time.Now().Add(qaProcessingLease))
+			if claimErr != nil {
+				return fmt.Errorf("认领问答消息失败: %w", claimErr)
+			}
+			if !acquired {
+				stored, getErr := s.repo.GetMessage(ctx, messageID)
+				if getErr != nil {
+					// 连状态都查不到时无法判断是「已处理」还是「无记录」，
+					// 交给消费端重试比猜一个更安全。
+					return fmt.Errorf("查询问答消息状态失败: %w", getErr)
+				}
+				if stored != nil {
+					reason := duplicateReason(stored.Status)
+					obs.RecordKafkaDuplicate(ctx, msg.Topic, reason)
+					if reason == "not_claimable" {
+						// 状态既不是终态也不是「处理中」：可能是认领失败后对方
+						// 刚好释放回 PENDING，也可能是 FAILED 等需要人工看的记录。
+						// 这时不能提交 offset——PENDING 重试一次就能重新认领，
+						// 其余状态交给重试耗尽后的死信，至少消息还在。
+						return fmt.Errorf("消息状态 %s 不允许认领，交给重试处理: %s",
+							stored.Status, messageID)
+					}
+					// 已处理或正在被其他实例处理：这一次不执行任何业务逻辑，
+					// 直接返回 nil 提交 offset，重复消息到此为止。
+					logger.Warn("重复的问答消息已跳过",
+						logger.StringField("message_id", messageID),
+						logger.StringField("status", stored.Status),
+						logger.StringField("reason", reason))
+					return nil
+				}
+				// 认领失败但记录不存在（外部生产者直投、历史数据已清理）：
+				// 没有可冲突的状态，按原有行为继续处理，避免整类消息被静默丢弃。
+				logger.Warn("问答消息记录不存在，跳过幂等认领",
+					logger.StringField("message_id", messageID))
+			}
+			claimed = acquired
+		}
+
 		// 必须同步等待结果：handler 返回 nil 后 offset 就会被提交，
 		// 裸 goroutine 失败时无法重试，进程崩溃时这条问答请求直接丢失。
 		// 串行消费下会牺牲吞吐，但换来 at-least-once；要提升吞吐应把
 		// 任务先持久化再异步处理，而不是吞掉错误。
-		answerCtx, cancel := context.WithTimeout(messageContext(msg), qaAnswerTimeout)
+		answerCtx, cancel := context.WithTimeout(ctx, qaAnswerTimeout)
 		_, err = s.questionService.AskQuestion(answerCtx, content, nil)
 		cancel()
 		if err != nil {
+			if claimed {
+				// 失败必须把认领还回去，否则 Kafka 的就地重试会被幂等闸门挡下，
+				// 一次可恢复的失败就变成了永久跳过。
+				s.releaseClaim(ctx, messageID)
+			}
 			return fmt.Errorf("问答处理失败: %w", err)
+		}
+		if claimed {
+			// 完成态要同时清空租约，否则租约过期后这条已成功的消息
+			// 会再次满足接管条件，回放时又调一次模型。
+			if err := s.finalizeClaim(ctx, messageID); err != nil {
+				// 模型已经成功、答案也已落库，此时退回认领会造成重复计费，
+				// 因此提交 offset，只把「状态没写进去」作为不一致暴露出去。
+				obs.RecordMessageFinalizeFailure(ctx, msg.Topic)
+				logger.Error("问答已完成但消息终态写入失败，消息将停留在 PROCESSING",
+					logger.StringField("message_id", messageID),
+					logger.ErrorField(err))
+				return nil
+			}
+			return nil
 		}
 	case mq.TopicRecommendation:
 		logger.Info("operation")
@@ -547,12 +637,89 @@ func (s *messageServiceImpl) handleGenericMessage(msg *mq.Message) error {
 	if messageID != "" {
 		// 状态必须落在统计认识的集合里：历史上写 PROCESSED_FROM_KAFKA，
 		// 而统计只累加 PROCESSED/ACKED，Kafka 消费量永远显示为 0。
-		if err := s.repo.UpdateMessageStatus(messageContext(msg), messageID, model.StatusProcessed); err != nil {
+		if err := s.repo.UpdateMessageStatus(ctx, messageID, model.StatusProcessed); err != nil {
 			return fmt.Errorf("更新消息状态失败: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// releaseClaim 把认领退回 PENDING，并做少量重试。
+//
+// 用 WithoutCancel：停机/超时会取消业务 ctx，但「把消息放回队列」不应该
+// 跟着被取消，否则消息会停在 PROCESSING，直到租约过期才能被接管。
+// 重试只覆盖瞬时数据库抖动——归还失败而消费端又立刻重试时，幂等闸门会把
+// 这次重试当成「别人正在处理」直接跳过，那才是真正会丢消息的窗口。
+func (s *messageServiceImpl) releaseClaim(ctx context.Context, messageID string) {
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimWriteTimeout)
+	defer cancel()
+
+	var err error
+	for attempt := 1; attempt <= claimWriteAttempts; attempt++ {
+		err = s.repo.ReleaseMessageClaim(releaseCtx, messageID, messageConsumerGroup)
+		if err == nil {
+			return
+		}
+		if attempt == claimWriteAttempts || !waitClaimRetry(releaseCtx, attempt) {
+			break
+		}
+	}
+	logger.Error("归还问答消息认领失败，消息将在租约过期后才能被接管",
+		logger.StringField("message_id", messageID),
+		logger.ErrorField(err))
+}
+
+// finalizeClaim 把「业务已完成」写成终态，并清空认领。
+//
+// 用 WithoutCancel：停机/超时取消的是业务 ctx，不应该阻止最后一步收尾，
+// 否则一条已经成功的消息会停在 PROCESSING，直到租约过期。
+// 与 releaseClaim 一样做短重试，覆盖数据库瞬时抖动。
+func (s *messageServiceImpl) finalizeClaim(ctx context.Context, messageID string) error {
+	finalizeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimWriteTimeout)
+	defer cancel()
+
+	var err error
+	for attempt := 1; attempt <= claimWriteAttempts; attempt++ {
+		err = s.repo.MarkMessageProcessed(finalizeCtx, messageID, messageConsumerGroup)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrMessageNotClaimed) {
+			// 认领已被接管，重试也写不进去；继续重试只会推迟 offset 提交。
+			return err
+		}
+		if attempt == claimWriteAttempts || !waitClaimRetry(finalizeCtx, attempt) {
+			break
+		}
+	}
+	return err
+}
+
+// waitClaimRetry 在收尾重试之间做线性退避；返回 false 表示 ctx 已取消。
+// 退避刻意比消费重试更短：这里只覆盖「一次 UPDATE 的瞬时失败」，
+// 长时间阻塞只会推迟 offset 提交、拖住整个分区。
+func waitClaimRetry(ctx context.Context, attempt int) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(time.Duration(attempt) * 100 * time.Millisecond):
+		return true
+	}
+}
+
+// duplicateReason 把「认领失败时查到的状态」收敛成固定的指标标签。
+// 不直接把 status 当标签：already_done 与 in_flight 的处置方式不同——
+// 前者是幂等生效，后者是并发竞争，混在一起看不出到底挡下了什么。
+func duplicateReason(status string) string {
+	switch status {
+	case model.StatusProcessed, model.StatusAcked, model.StatusCleared:
+		return "already_done"
+	case model.StatusProcessing:
+		return "in_flight"
+	default:
+		return "not_claimable"
+	}
 }
 
 // eventStringField 按事件契约读取字符串字段，返回 (值, 字段是否存在, 错误)。
