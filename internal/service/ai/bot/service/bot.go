@@ -176,7 +176,9 @@ type botServiceImpl struct {
 	kbCache          sync.Map
 	semanticCache    *SemanticCache
 	compressor       *ConversationCompressor
-	planner          *planner.Planner
+	// indexCache 会话级倒排索引；只在检索触发时建，按会话 ID + 指纹复用。
+	indexCache *ctxmem.IndexCache
+	planner    *planner.Planner
 	// planStore 运行快照与 checkpoint；未开启持久化时为 nil，执行器自动跳过落库。
 	planStore planner.RunStore
 	// qqBindCache QQ→Bot 路由缓存的注入点；为 nil 时使用全局 Redis 单例，
@@ -232,8 +234,10 @@ func NewBotService(
 			cfg.Redis.Password, cfg.Redis.DB, impl.embedForBot, impl.semanticCacheJudge,
 		)
 	}
-	// 长对话上下文压缩：token 预算 + 滚动摘要
-	impl.compressor = NewConversationCompressor()
+	// 长对话上下文压缩：token 预算 + 滚动摘要。
+	// 配了 Redis 时摘要状态跨副本共享，否则退化为进程内存。
+	impl.compressor = NewConversationCompressorWithStore(newSummaryStore(cfg))
+	impl.indexCache = ctxmem.NewIndexCache(retrievalIndexTTL, retrievalIndexMax)
 	// Plan-and-Execute 规划器：复杂任务先规划再逐步执行
 	impl.planner = planner.NewPlanner(impl.plannerChat)
 	// 运行快照落库：只有显式开启且仓储提供 DB 时才接线。
