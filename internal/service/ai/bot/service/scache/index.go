@@ -175,6 +175,21 @@ func (i *index) remove(scopeHash, id string) *Entry {
 	return e
 }
 
+// removeScope 删除整个 scope，供用户级「忘记我」使用。
+func (i *index) removeScope(scopeHash string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	bucket := i.buckets[scopeHash]
+	if bucket == nil {
+		return
+	}
+	for _, e := range bucket {
+		i.total--
+		i.bytes -= e.SizeBytes()
+	}
+	delete(i.buckets, scopeHash)
+}
+
 // oldest 返回全局最旧条目，供后台淘汰使用。调用频率是分钟级，
 // O(total) 扫描不会进入请求路径（禁区 X11）。
 func (i *index) oldest() *Entry {

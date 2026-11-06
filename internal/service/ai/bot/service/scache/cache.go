@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strconv"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"Logos/pkg/cache"
 	"Logos/pkg/logger"
 	"Logos/pkg/obs"
+	"Logos/pkg/singleflight"
 )
 
 const (
@@ -30,9 +32,16 @@ const (
 var (
 	errNoEmbedding = errors.New("scache: no embedding function")
 	errBreakerOpen = errors.New("scache: breaker open")
+	errNoRedis     = errors.New("scache: redis unavailable")
 
 	// 兜底文案入库的代价是用户连续多次拿到同一个错误结果，且刷新无效。
 	degradedAnswerPattern = regexp.MustCompile(`(?i)无法回答|抱歉[^。\n]{0,16}不能|转人工|出错了|请稍后重试`)
+
+	// 价格/库存/活动这类答案有强时效性，按 30 分钟档缓存。
+	priceSensitivePattern = regexp.MustCompile(`库存|优惠|活动|折扣|促销|售价|报价`)
+
+	// 个人数据一旦被缓存，换设备/换会话仍可能被召回，直接拒绝写入。
+	personalDataPattern = regexp.MustCompile(`我的|账号|账户|订单|余额|手机号|身份证|银行卡|收货地址|发票`)
 )
 
 // Cache 是语义缓存的核心。
@@ -60,6 +69,14 @@ type Cache struct {
 	embedCB *breaker
 	judgeCB *breaker
 
+	// 同一 scope + 同一问题的并发 embedding 只真正调用一次。scope 含
+	// UserID，因此合并不会跨用户泄漏；不同问题仍然各算各的。
+	embeds *singleflight.Group[[]float32]
+
+	// 同一 scope + 归一化问题的写入串行化。两个 worker 同时处理同一问题
+	// 时，若「删旧条目」与「写新条目」交错，本地索引与 Redis 会分叉。
+	writeLocks []sync.Mutex
+
 	loadMu sync.Mutex
 	loaded map[string]loadState
 
@@ -69,6 +86,7 @@ type Cache struct {
 
 type writeJob struct {
 	entry *Entry
+	scope Scope
 	embed EmbedFunc
 	text  string
 }
@@ -100,17 +118,19 @@ func New(cfg Config) (*Cache, error) {
 	}
 
 	c := &Cache{
-		cfg:      cfg,
-		mode:     cfg.Mode,
-		idx:      newIndex(cfg.MaxEntriesPerScope),
-		sig:      newSignals(1024, cfg.SignalsTTL),
-		writeCh:  make(chan writeJob, cfg.WriteQueueSize),
-		stopCh:   make(chan struct{}),
-		redisCB:  newBreaker(10, redisFailureCooldown),
-		embedCB:  newBreaker(5, 60*time.Second),
-		judgeCB:  newBreaker(5, 5*time.Minute),
-		loaded:   make(map[string]loadState),
-		versions: make(map[string]versionState),
+		cfg:        cfg,
+		mode:       cfg.Mode,
+		idx:        newIndex(cfg.MaxEntriesPerScope),
+		sig:        newSignals(1024, cfg.SignalsTTL),
+		writeCh:    make(chan writeJob, cfg.WriteQueueSize),
+		stopCh:     make(chan struct{}),
+		redisCB:    newBreaker(10, redisFailureCooldown),
+		embedCB:    newBreaker(5, 60*time.Second),
+		judgeCB:    newBreaker(5, 5*time.Minute),
+		embeds:     singleflight.NewGroup[[]float32](cfg.EmbedTimeout),
+		writeLocks: make([]sync.Mutex, 64),
+		loaded:     make(map[string]loadState),
+		versions:   make(map[string]versionState),
 	}
 
 	for i := 0; i < cfg.WriteWorkers; i++ {
@@ -152,7 +172,7 @@ func (c *Cache) Lookup(ctx context.Context, req LookupRequest) LookupResult {
 	}
 
 	exactStart := now
-	if entry := c.idx.exact(scopeHash, nq, now.Unix()); entry != nil {
+	if entry := c.exactLookup(ctx, scopeHash, nq, now); entry != nil {
 		obs.RecordSCacheStage(ctx, "exact", time.Since(exactStart))
 		return c.finishHit(ctx, result, HitExact, entry, 1, mode, now)
 	}
@@ -167,7 +187,7 @@ func (c *Cache) Lookup(ctx context.Context, req LookupRequest) LookupResult {
 	}
 
 	embedStart := c.cfg.Now()
-	vec, err := c.embed(ctx, req.Query, req.Vector, req.Embed)
+	vec, err := c.embed(ctx, scopeHash, req.Query, req.Vector, req.Embed)
 	obs.RecordSCacheStage(ctx, "embed", time.Since(embedStart))
 	if err != nil || len(vec) == 0 {
 		return c.miss(ctx, result, MissError)
@@ -274,13 +294,64 @@ func (c *Cache) effectiveMode(mode Mode) Mode {
 	return c.mode
 }
 
-func (c *Cache) embed(ctx context.Context, text string, precomputed []float32, fn EmbedFunc) ([]float32, error) {
+// exactLookup 先查本地索引，未加载的 scope 再查一次 Redis 的精确索引。
+//
+// 精确层单独一个 Hash：冷启动/重启后的第一个请求只需 HGET 两次
+// （normQueryHash → entryID → Entry），不必先付一次 embedding。
+// 本地索引加载完成后它就是权威数据，后续 miss 不再多一次 RTT。
+func (c *Cache) exactLookup(ctx context.Context, scopeHash, normQuery string, now time.Time) *Entry {
+	if entry := c.idx.exact(scopeHash, normQuery, now.Unix()); entry != nil {
+		return entry
+	}
+	if c.scopeLoaded(scopeHash) {
+		return nil
+	}
+	redis := c.redisClient()
+	if redis == nil {
+		return nil
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, redisColdLoadTimeout)
+	defer cancel()
+	id, err := redis.HGet(lookupCtx, exactKey(scopeHash), NormalizeHash(normQuery))
+	if err != nil || id == "" {
+		return nil
+	}
+	raw, err := redis.HGet(lookupCtx, bucketKey(scopeHash), id)
+	if err != nil || raw == "" {
+		return nil
+	}
+	entry, err := unmarshalEntry([]byte(raw))
+	if err != nil || !entry.Valid(scopeHash, 0) || entry.Expired(now.Unix()) {
+		return nil
+	}
+	for _, evicted := range c.idx.insert(entry) {
+		c.removePersisted(lookupCtx, evicted.ScopeHash, []*Entry{evicted})
+	}
+	return entry
+}
+
+func (c *Cache) scopeLoaded(scopeHash string) bool {
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	return c.loaded[scopeHash].loaded
+}
+
+func (c *Cache) embed(ctx context.Context, scopeHash, text string, precomputed []float32, fn EmbedFunc) ([]float32, error) {
 	if len(precomputed) > 0 {
 		return precomputed, nil
 	}
 	if fn == nil {
 		return nil, errNoEmbedding
 	}
+	key := scopeHash + ":" + NormalizeHash(Normalize(text))
+	vec, _, err := c.embeds.Do(ctx, key, func(fillCtx context.Context) ([]float32, error) {
+		return c.embedOnce(fillCtx, text, fn)
+	})
+	return vec, err
+}
+
+func (c *Cache) embedOnce(ctx context.Context, text string, fn EmbedFunc) ([]float32, error) {
 	if !c.embedCB.allow(c.cfg.Now()) {
 		return nil, errBreakerOpen
 	}
@@ -353,7 +424,7 @@ func (c *Cache) Store(ctx context.Context, req StoreRequest) {
 	}
 
 	now := c.cfg.Now()
-	ttl := c.cfg.EntryTTL
+	ttl, ttlClass := c.ttlFor(req, slots)
 	// TTL 加 0~10% 抖动：避免同一批条目在同一秒集中过期，
 	// 把一次 miss 洪峰变成一次有界的回源。
 	ttl += time.Duration(float64(ttl) * 0.1 * c.cfg.Rand())
@@ -373,9 +444,10 @@ func (c *Cache) Store(ctx context.Context, req StoreRequest) {
 		ExpireAt:  now.Add(ttl).Unix(),
 		Source:    req.Source,
 	}
+	obs.RecordSCacheStore(ctx, "ttl_"+ttlClass)
 
 	select {
-	case c.writeCh <- writeJob{entry: entry, embed: req.Embed, text: req.Query}:
+	case c.writeCh <- writeJob{entry: entry, scope: req.Scope, embed: req.Embed, text: req.Query}:
 		obs.RecordSCacheStore(ctx, "queued")
 	case <-c.stopCh:
 		obs.RecordSCacheStore(ctx, "rejected_closed")
@@ -404,11 +476,23 @@ func (c *Cache) admissible(req StoreRequest, slots SlotSet) string {
 	if degradedAnswerPattern.MatchString(req.Answer) {
 		return "degraded"
 	}
+	if personalDataPattern.MatchString(req.Query) {
+		return "personal"
+	}
 	// 带相对时间的答案今天有效、明天就可能错，直接不入库。
 	if slots.TimeRef != "" {
 		return "time_sensitive"
 	}
 	return ""
+}
+
+// ttlFor 按内容时效性分档：价格/库存 30 分钟，其余 24 小时。
+// 返回的 class 只用于指标，避免线上无法判断某批条目为什么提前过期。
+func (c *Cache) ttlFor(req StoreRequest, slots SlotSet) (time.Duration, string) {
+	if slots.Intent == "price" || priceSensitivePattern.MatchString(req.Query) {
+		return c.cfg.PriceTTL, "price"
+	}
+	return c.cfg.EntryTTL, "default"
 }
 
 func (c *Cache) writeLoop() {
@@ -429,7 +513,7 @@ func (c *Cache) persistJob(job writeJob) {
 
 	entry := job.entry
 	if len(entry.Vec) == 0 {
-		vec, err := c.embed(ctx, job.text, nil, job.embed)
+		vec, err := c.embed(ctx, entry.ScopeHash, job.text, nil, job.embed)
 		if err != nil {
 			obs.RecordSCacheStore(ctx, "embed_error")
 			return
@@ -448,14 +532,21 @@ func (c *Cache) persistJob(job writeJob) {
 		return
 	}
 
+	// 同一 scope + 同一问题串行化：多个 writer 同时处理相同问题时，
+	// 「删旧 + 插新 + 落 Redis」必须是一个整体，否则后写的旧条目会把
+	// 先写的新条目从索引里删掉，造成本地与 Redis 分叉（D16）。
+	lock := c.writeLock(entry.ScopeHash, entry.NormQuery)
+	lock.Lock()
+	defer lock.Unlock()
+
 	// 同一归一化问题只保留最新一条，否则反复 miss 会让 scope 被同一问题填满。
 	if old := c.idx.exact(entry.ScopeHash, entry.NormQuery, now.Unix()); old != nil && old.ID != entry.ID {
 		c.idx.remove(entry.ScopeHash, old.ID)
-		c.removePersisted(ctx, entry.ScopeHash, []string{old.ID})
+		c.removePersisted(ctx, entry.ScopeHash, []*Entry{old})
 	}
 
 	for _, evicted := range c.idx.insert(entry) {
-		c.removePersisted(ctx, evicted.ScopeHash, []string{evicted.ID})
+		c.removePersisted(ctx, evicted.ScopeHash, []*Entry{evicted})
 	}
 
 	redis := c.redisClient()
@@ -463,7 +554,7 @@ func (c *Cache) persistJob(job writeJob) {
 		obs.RecordSCacheStore(ctx, "local_only")
 		return
 	}
-	if err := c.persist(ctx, redis, entry); err != nil {
+	if err := c.persist(ctx, redis, entry, job.scope); err != nil {
 		c.noteRedisFailure()
 		obs.RecordSCacheStore(ctx, "persist_error")
 		return
@@ -471,17 +562,34 @@ func (c *Cache) persistJob(job writeJob) {
 	obs.RecordSCacheStore(ctx, "ok")
 }
 
-// persistScript 一次 RTT 完成条目、过期索引与 TTL。
+func (c *Cache) writeLock(scopeHash, normQuery string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(scopeHash))
+	_, _ = h.Write([]byte{0x1f})
+	_, _ = h.Write([]byte(normQuery))
+	return &c.writeLocks[int(h.Sum32())%len(c.writeLocks)]
+}
+
+// persistScript 一次 RTT 完成条目、索引、精确层、meta 与 TTL。
 // 半写状态会让冷启动读到「有 Hash 无 ZSet」的孤儿，因此不拆成多条命令。
 var persistScript = `
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
+redis.call('HSET', KEYS[3], ARGV[5], ARGV[1])
+redis.call('HSET', KEYS[4],
+	'tenant', ARGV[6], 'bot', ARGV[7], 'user', ARGV[8],
+	'kb', ARGV[9], 'prompt', ARGV[10], 'model', ARGV[11],
+	'embed', ARGV[12], 'created_at', ARGV[3])
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 redis.call('EXPIRE', KEYS[2], ARGV[4])
+redis.call('EXPIRE', KEYS[3], ARGV[4])
+redis.call('EXPIRE', KEYS[4], ARGV[13])
+redis.call('SADD', KEYS[5], ARGV[14])
+redis.call('EXPIRE', KEYS[5], ARGV[13])
 return 1
 `
 
-func (c *Cache) persist(ctx context.Context, redis cache.Cache, entry *Entry) error {
+func (c *Cache) persist(ctx context.Context, redis cache.Cache, entry *Entry, scope Scope) error {
 	raw, err := entry.marshal()
 	if err != nil {
 		return err
@@ -490,19 +598,35 @@ func (c *Cache) persist(ctx context.Context, redis cache.Cache, entry *Entry) er
 	if ttl < 1 {
 		ttl = 1
 	}
+	metaTTL := ttl * 2
 	_, err = redis.EvalSha(ctx, persistScript,
-		[]string{bucketKey(entry.ScopeHash), indexKey(entry.ScopeHash)},
-		entry.ID, string(raw), entry.CreatedAt, ttl)
+		[]string{
+			bucketKey(entry.ScopeHash),
+			indexKey(entry.ScopeHash),
+			exactKey(entry.ScopeHash),
+			metaKey(entry.ScopeHash),
+			userKey(scope.UserID),
+		},
+		entry.ID, string(raw), entry.CreatedAt, ttl, NormalizeHash(entry.NormQuery),
+		scope.Tenant, scope.BotID, scope.UserID, scope.KBVersion,
+		scope.PromptHash, scope.ModelKey, scope.EmbedKey,
+		metaTTL, entry.ScopeHash)
 	return err
 }
 
-func (c *Cache) removePersisted(ctx context.Context, scopeHash string, ids []string) {
-	if len(ids) == 0 {
+func (c *Cache) removePersisted(ctx context.Context, scopeHash string, entries []*Entry) {
+	if len(entries) == 0 {
 		return
 	}
 	redis := c.redisClient()
 	if redis == nil {
 		return
+	}
+	ids := make([]string, 0, len(entries))
+	exactFields := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		ids = append(ids, entry.ID)
+		exactFields = append(exactFields, NormalizeHash(entry.NormQuery))
 	}
 	if err := redis.HDel(ctx, bucketKey(scopeHash), ids); err != nil {
 		c.noteRedisFailure()
@@ -513,6 +637,9 @@ func (c *Cache) removePersisted(ctx context.Context, scopeHash string, ids []str
 		members[i] = id
 	}
 	if err := redis.ZRem(ctx, indexKey(scopeHash), members...); err != nil {
+		c.noteRedisFailure()
+	}
+	if err := redis.HDel(ctx, exactKey(scopeHash), exactFields); err != nil {
 		c.noteRedisFailure()
 	}
 }
@@ -555,7 +682,7 @@ func (c *Cache) evictOnce() {
 			break
 		}
 		c.idx.remove(oldest.ScopeHash, oldest.ID)
-		c.removePersisted(ctx, oldest.ScopeHash, []string{oldest.ID})
+		c.removePersisted(ctx, oldest.ScopeHash, []*Entry{oldest})
 		removed++
 	}
 	if removed > 0 {
@@ -606,7 +733,7 @@ func (c *Cache) ensureLoaded(ctx context.Context, scopeHash string, now time.Tim
 	}
 	for _, entry := range entries {
 		for _, evicted := range c.idx.insert(entry) {
-			c.removePersisted(ctx, evicted.ScopeHash, []string{evicted.ID})
+			c.removePersisted(ctx, evicted.ScopeHash, []*Entry{evicted})
 		}
 	}
 	obs.RecordSCacheColdStart(ctx, "ok")
@@ -781,6 +908,52 @@ func (c *Cache) ReplayStream(answer string, onChunk func(string) error) error {
 	return ReplayAsStream(answer, c.cfg.ReplayChunkRunes, c.cfg.ReplayBudget, c.cfg.ReplayMaxDelay, onChunk)
 }
 
+// ForgetUser 按用户删除其全部缓存。
+//
+// 不允许按 UserID 扫全库：删除时用 meta 里的 user → scopeHash 反向索引
+// 定位，元素量级是个位数。每个 scope 只属于一个用户（UserID 在 ScopeHash
+// 里），因此删 scope 不会误伤其他用户。
+func (c *Cache) ForgetUser(ctx context.Context, userID string) (int, error) {
+	if c == nil || userID == "" {
+		return 0, nil
+	}
+	redis := c.redisClient()
+	if redis == nil {
+		return 0, errNoRedis
+	}
+	scopes, err := redis.SMembers(ctx, userKey(userID))
+	if err != nil {
+		c.noteRedisFailure()
+		return 0, err
+	}
+	deleted := 0
+	for _, scopeHash := range scopes {
+		for _, key := range []string{
+			bucketKey(scopeHash),
+			indexKey(scopeHash),
+			exactKey(scopeHash),
+			metaKey(scopeHash),
+		} {
+			if err := redis.Delete(ctx, key); err != nil {
+				c.noteRedisFailure()
+				return deleted, err
+			}
+		}
+		c.idx.removeScope(scopeHash)
+		deleted++
+	}
+	if err := redis.Delete(ctx, userKey(userID)); err != nil {
+		c.noteRedisFailure()
+		return deleted, err
+	}
+	obs.RecordSCacheEvict(ctx, deleted)
+	logger.Info("语义缓存按用户删除",
+		logger.StringField("event", "scache_forget_user"),
+		logger.StringField("user_id", userID),
+		logger.IntField("scopes", deleted))
+	return deleted, nil
+}
+
 // Stats 返回本地索引的条目数与估算字节数，供监控与测试使用。
 func (c *Cache) Stats() (entries int, bytes int64) {
 	if c == nil {
@@ -804,4 +977,16 @@ func bucketKey(scopeHash string) string {
 
 func indexKey(scopeHash string) string {
 	return redisKeyPrefix + ":" + scopeHash + ":idx"
+}
+
+func exactKey(scopeHash string) string {
+	return redisKeyPrefix + ":" + scopeHash + ":exact"
+}
+
+func metaKey(scopeHash string) string {
+	return redisKeyPrefix + ":meta:" + scopeHash
+}
+
+func userKey(userID string) string {
+	return redisKeyPrefix + ":user:" + userID
 }

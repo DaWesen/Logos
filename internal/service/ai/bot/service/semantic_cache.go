@@ -116,6 +116,9 @@ func semanticCacheConfig(judge scache.JudgeFunc) (scache.Config, error) {
 	if sc.ExactTTLHours > 0 {
 		cfg.ExactTTL = time.Duration(sc.ExactTTLHours) * time.Hour
 	}
+	if sc.PriceTTLMinutes > 0 {
+		cfg.PriceTTL = time.Duration(sc.PriceTTLMinutes) * time.Minute
+	}
 	cfg.JudgeEnabled = sc.JudgeEnabled
 	if judge == nil {
 		cfg.JudgeEnabled = false
@@ -198,6 +201,17 @@ func (c *SemanticCache) BumpKBVersion(ctx context.Context, botID string) int64 {
 		return 0
 	}
 	return c.core.BumpKBVersion(ctx, botID)
+}
+
+// ForgetUser 删除某个用户在缓存中的全部答案。
+//
+// 用户注销/行使删除权时调用。内部按 user → scopeHash 反向索引定位，
+// 不扫描全库；Redis 不可用时返回错误，由调用方决定是否重试。
+func (c *SemanticCache) ForgetUser(ctx context.Context, userID string) (int, error) {
+	if c == nil || c.core == nil {
+		return 0, nil
+	}
+	return c.core.ForgetUser(ctx, userID)
 }
 
 // Stats 返回当前进程内索引规模，供监控与测试使用。

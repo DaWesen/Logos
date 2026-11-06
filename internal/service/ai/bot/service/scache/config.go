@@ -120,7 +120,7 @@ func (c Config) Validate() error {
 	if c.MaxEntriesPerScope <= 0 || c.MaxTotalEntries <= 0 || c.MaxTotalBytes <= 0 {
 		return &ConfigError{Field: "capacity", Reason: "entry limits must be positive"}
 	}
-	if c.EntryTTL <= 0 || c.ExactTTL <= 0 {
+	if c.EntryTTL <= 0 || c.ExactTTL <= 0 || c.PriceTTL <= 0 {
 		return &ConfigError{Field: "ttl", Reason: "must be positive"}
 	}
 	if c.WriteQueueSize <= 0 || c.WriteWorkers <= 0 {

@@ -59,6 +59,7 @@ type SemanticCache struct {
 	MaxTotalBytes      int64 `mapstructure:"max_total_bytes"`
 	EntryTTLHours      int   `mapstructure:"entry_ttl_hours"`
 	ExactTTLHours      int   `mapstructure:"exact_ttl_hours"`
+	PriceTTLMinutes    int   `mapstructure:"price_ttl_minutes"`
 	// 灰区判官。
 	JudgeEnabled   bool `mapstructure:"judge_enabled"`
 	JudgeTimeoutMS int  `mapstructure:"judge_timeout_ms"`
