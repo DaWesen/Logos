@@ -241,6 +241,16 @@ func plannerEnabled(bot *botmodel.Bot) bool {
 	return bot != nil && bot.Config["enable_planner"] == "true"
 }
 
+// plannerMode 选择执行器版本：
+//   - legacy：顺序执行，保持旧行为；
+//   - dag：依赖图执行，支持失效传播与 patch 重规划。
+func plannerMode(bot *botmodel.Bot) string {
+	if bot != nil && bot.Config["planner_mode"] == "dag" {
+		return "dag"
+	}
+	return "legacy"
+}
+
 // toolTraceEnabled 判断 Bot 是否开启工具调用链可视化（流式路径下推送工具调用决策到前端）
 func toolTraceEnabled(bot *botmodel.Bot) bool {
 	return bot != nil && bot.Config["enable_tool_trace"] == "true"
@@ -257,7 +267,7 @@ func (s *botServiceImpl) plannerChat(ctx context.Context, systemPrompt, userProm
 // chatWithPlanner Plan-and-Execute 路径：
 // 生成计划 → 逐步用带工具的 ReAct Agent 执行（进度经 onProgress 回调）→ 综合作答。
 // 每步不带聊天历史（任务模式专注当前目标），失败自动重规划一次。
-func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, botAgent agent.BotAgent, onProgress func(string)) (string, error) {
+func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, botAgent agent.BotAgent, mode string, onProgress func(string)) (string, error) {
 	plan, err := s.planner.CreatePlan(ctx, content)
 	if err != nil {
 		return "", fmt.Errorf("任务规划失败: %w", err)
@@ -266,15 +276,46 @@ func (s *botServiceImpl) chatWithPlanner(ctx context.Context, content string, bo
 		logger.StringField("goal", plan.Goal),
 		logger.IntField("steps", len(plan.Steps)))
 
-	if onProgress != nil {
+	if mode != "dag" && onProgress != nil {
 		onProgress(plan.FormatPlan())
 	}
 
-	exec := func(ctx context.Context, step planner.PlanStep, priorResults string) (string, error) {
-		return botAgent.Chat(ctx, planner.BuildStepPrompt(step, priorResults))
+	var results []planner.StepResult
+	if mode == "dag" {
+		// 模型没给依赖时退化为线性链，避免把有隐含顺序的步骤并发执行。
+		plan.EnsureLinearDependencies()
+		exec := func(ctx context.Context, step planner.PlanStep, priorResults string) (planner.StepOutcome, error) {
+			out, err := botAgent.Chat(ctx, planner.BuildStepPrompt(step, priorResults))
+			if err != nil {
+				return planner.StepOutcome{Output: out}, err
+			}
+			return planner.ParseStepOutcome(out), nil
+		}
+		var listener planner.ProgressListenerV2
+		if onProgress != nil {
+			listener = planner.TextProgressListener(onProgress)
+		}
+		run, runErr := s.planner.ExecuteWith(ctx, plan, exec, planner.ExecuteOptions{
+			Listener: listener,
+			Warnf: func(format string, args ...any) {
+				logger.Warn(fmt.Sprintf(format, args...))
+			},
+		})
+		if run != nil {
+			results = run.Results
+		}
+		if runErr != nil && run != nil {
+			logger.Warn("DAG Planner 未完整完成",
+				logger.StringField("status", string(run.Status)),
+				logger.ErrorField(runErr))
+		}
+	} else {
+		exec := func(ctx context.Context, step planner.PlanStep, priorResults string) (string, error) {
+			return botAgent.Chat(ctx, planner.BuildStepPrompt(step, priorResults))
+		}
+		results = s.planner.ExecutePlan(ctx, plan, exec, onProgress)
 	}
 
-	results := s.planner.ExecutePlan(ctx, plan, exec, onProgress)
 	if len(results) == 0 {
 		return "", errors.New("计划未产生任何执行结果")
 	}
@@ -302,8 +343,8 @@ func truncateResult(results []planner.StepResult) string {
 	for _, r := range results {
 		if !r.Success && r.Output != "" {
 			out := r.Output
-			if len(out) > 200 {
-				out = out[:200]
+			if runes := []rune(out); len(runes) > 200 {
+				out = string(runes[:200]) + "..."
 			}
 			return out
 		}
@@ -946,7 +987,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 	// 规划失败自动回退普通对话
 	var plannerResponse string
 	if plannerEnabled(bot) {
-		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, nil)
+		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, plannerMode(bot), nil)
 		if pErr != nil {
 			logger.Warn("Planner 执行失败，回退普通对话", logger.ErrorField(pErr))
 		} else {
@@ -1163,7 +1204,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 	// Plan-and-Execute：进度（计划/步骤状态）经 onChunk 实时推送，
 	// 最终答案一次性推送；规划失败自动回退普通流式对话
 	if plannerEnabled(bot) {
-		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, func(event string) {
+		pResp, pErr := s.chatWithPlanner(ctx, content, botAgent, plannerMode(bot), func(event string) {
 			_ = onChunk(event)
 		})
 		if pErr != nil {
