@@ -1074,6 +1074,102 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 
 ---
 
+## 问答消费幂等（message-service）
+
+### 背景：文档承诺不等于代码落地
+
+死信回放文档写的是「沿用原始 `message_id`，由下游主键幂等兜底」。但问答消费路径
+此前的顺序是「先调 `AskQuestion`，成功后再把消息标成 `PROCESSED`」——中间没有认领。
+一旦回放一条已经成功的消息，或者 offset 提交失败后 broker 重投，handler 会再调一次
+模型、再计一次费，文档里的幂等承诺实际上是空的。
+
+### 状态机：PENDING / PROCESSING / PROCESSED
+
+新增 `PROCESSING` 不是多一个展示状态，而是把「有人正在做」和「已经做完」分开：
+
+| 状态 | 含义 | 能否被重新认领 |
+|------|------|---------------|
+| `PENDING` | 等待处理 | 能 |
+| `PROCESSING` | 已被某个消费者认领，租约未到期 | 不能 |
+| `PROCESSING` + 租约过期 | 上一个处理者崩溃/超时 | 能，允许接管 |
+| `PROCESSED` | 成功终态，租约已清空 | 不能 |
+| `ACKED` / `CLEARED` | 客户端确认 / 已清理 | 不能 |
+
+认领用一条条件 `UPDATE` 完成，按 `RowsAffected` 判断是否抢到，而不是
+`SELECT` 后再 `UPDATE`：后者在多实例并发时会同时读到 `PENDING`，然后都去调模型。
+`qaProcessingLease` 取 5 分钟，必须大于 `qaAnswerTimeout`（120 秒），否则问答还没结束
+就会被另一个实例接管，变成两条并发请求同时调模型。
+
+### 失败语义：成功清租约、失败还认领
+
+- **模型失败**：调用 `ReleaseMessageClaim` 把消息退回 `PENDING`。不归还的话，Kafka 的
+  就地重试会被幂等闸门当成「别人正在处理」跳过，一次可恢复的失败就变成永久跳过。
+- **模型成功**：调用 `MarkMessageProcessed`，同时写 `PROCESSED`、清空 `claimed_by`
+  与 `lease_until`。只改 status 会留下旧租约，租约过期后这条已成功的消息会再次满足
+  接管条件。
+- **收尾用 `context.WithoutCancel`**：停机或超时取消的是业务 ctx，不应该阻止
+  「归还认领 / 写完成态」这最后一步，否则消息会卡在 `PROCESSING` 直到租约过期。
+  两者都带 5 秒独立超时和 3 次短重试，只覆盖一次 `UPDATE` 的瞬时抖动。
+
+### 模型成功后终态写失败：不退回，只暴露
+
+这是 at-least-once + 外部副作用的固有窗口：模型已经调用、答案已经落库，但
+`MarkMessageProcessed` 连续失败。此时**不能**退回认领——消费端重试会再调一次模型；
+也不应该让 handler 继续返回错误——重试仍然会被认领闸门挡下。当前选择是重试 3 次后
+提交 offset，并打 `logos.kafka.finalize.failure.count`、记录 `message_id` 错误日志。
+代价是这条记录会停在 `PROCESSING`，需要按指标告警人工修复；换来的是不重复计费。
+
+### 可观测：重复消息按原因拆分
+
+`logos.kafka.duplicate.count` 的 `reason` 只取固定枚举：
+
+| reason | 触发状态 | 含义 |
+|--------|---------|------|
+| `already_done` | `PROCESSED` / `ACKED` / `CLEARED` | 回放或重投被正确挡下，幂等生效 |
+| `in_flight` | `PROCESSING` | 并发实例在抢同一条，或上一次收尾还没完成 |
+| `not_claimable` | `PENDING` / `FAILED` 等 | 状态不允许认领；**不提交 offset**，交给重试/死信 |
+
+只有 `already_done` 与 `in_flight` 会直接提交 offset；`not_claimable` 返回错误让消费端
+重试——`PENDING` 可能只是对方刚释放认领的竞争窗口，重试一次就能重新认领，
+其余状态则交给重试耗尽后的死信，避免「状态不认识就静默跳过」。
+不直接把 `status` 当标签：`already_done` 与 `in_flight` 的处置方式不同，混在一起
+就看不出闸门到底挡下了什么。消息统计里的 `pending` 也同步改为
+`PENDING + PROCESSING`，否则一批处理中的消息会从看板上消失。
+
+### 自动化测试覆盖
+
+`service/message_test.go` 与 `dao/claim_test.go`：
+
+- 认领成功后才调用模型；重复消息（`PROCESSED`）不再调用模型；
+- 认领 SQL 的 `PENDING` / 租约过期接管条件、`RowsAffected` 语义；
+- 模型失败归还认领，归还遇到瞬时失败重试到成功；生命周期 ctx 已取消时仍能归还；
+- 完成态写 `PROCESSED` 并清空租约，不再走只改 status 的旧方法；
+- 终态写入瞬时失败重试到成功；持续失败时只调用一次模型且不归还认领；
+- 生命周期 ctx 已取消时仍能写完成态；
+- 缺少 `message_id`、记录不存在时退回原有行为，不静默丢消息；
+- `duplicateReason` 的状态到枚举映射。
+
+```bash
+go test ./internal/service/messaging/message/... -count=1
+go test ./internal/service/messaging/message/... -count=1 -race
+```
+
+### 已知边界
+
+- 单测用 stub 与 GORM DryRun 断言 SQL，**没有在真实 PostgreSQL 上跑多实例并发集成测试**；
+  条件 `UPDATE` 的原子性依赖数据库行锁，上线前应在预发环境用两个消费者压测同一条消息。
+- `AskQuestion` 把「调模型」和「写问答记录」封装在一次调用里，返回错误时 handler
+  无法区分是哪一步失败，统一归还认领并重试，仍存在「模型成功、记录写失败」导致重复
+  调模型的窗口。要彻底消除，需要让问答服务返回结构化失败阶段，或把答案落库拆成
+  可幂等的独立步骤。
+- 终态持续写失败后记录会停在 `PROCESSING`；租约过期只让它「可被接管」，不会自动
+  修复状态。当前依赖 `logos.kafka.finalize.failure.count` 告警 + 人工把记录修正为
+  `PROCESSED`，没有内置对账任务。
+- 没有 `message_id` 或数据库里没有对应记录时不做认领，按原有行为继续处理；这类
+  消息的幂等仍由生产者/上游保证。
+
+---
+
 ## 已修复问题列表
 
 | 问题 | 位置 | 修复时间 |
