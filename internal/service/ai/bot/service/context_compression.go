@@ -32,8 +32,14 @@ import (
 const (
 	// historyTokenBudget 历史消息的 token 预算（输入侧粗估，不含 system prompt）
 	historyTokenBudget = 6000
-	// historyFetchCount 预算内尽量多取历史用于装载与摘要判断
-	historyFetchCount = 60
+	// historyPageSize 分页回溯时单次拉取的条数。
+	historyPageSize = 100
+	// historyFetchMax 单次请求最多回溯的条数，避免超长会话把 DB 拉爆。
+	historyFetchMax = 500
+	// historyFetchTokenTarget 回溯目标：预算之上再多取一段溢出量。
+	// 只拉到预算刚好装满时 overflow 往往不足 minOverflowToSummarize，
+	// 摘要仍然不会触发；多取 2000 token 才能保证早期消息真的进入摘要。
+	historyFetchTokenTarget = historyTokenBudget + 2000
 	// minOverflowToSummarize 溢出消息少于此数不值得摘要
 	minOverflowToSummarize = 4
 	// summaryRenderRuneLimit 单条消息进入摘要 prompt 的最大字符数。
@@ -106,6 +112,86 @@ func (cc *ConversationCompressor) BuildContextMessages(
 		}, out...)
 	}
 	return out
+}
+
+// messagePageFetcher 按游标拉取一页消息，返回结果必须是 created_at DESC。
+// before 为 nil 表示从最新一页开始。
+type messagePageFetcher func(before *time.Time, limit int) ([]*botmodel.Message, error)
+
+// collectHistoryPages 从最新消息开始分页回溯，直到装满 token 目标或触达条数上限。
+//
+// 旧实现只取最近 60 条：这 60 条通常装不满 6000 token 预算，overflow 恒为空，
+// summarizeOverflow 永远不会执行，第 61 条以前的消息既没有原文也没有摘要。
+// 分页后每次多取一段，压缩层才真正有「溢出内容」可摘要。
+//
+// 游标用 oldest.CreatedAt + 1ns 而不是直接用它本身：created_at 精度可能低于
+// 单条消息的写入间隔，同一毫秒内的多条消息会被 `<` 条件整批跳过。代价是下一页
+// 可能重复返回同时间戳的消息，因此按 ID 去重；若整页都是重复（极端情况下同一
+// 时间戳超过一页），主动停止，避免游标不前进造成死循环。
+func collectHistoryPages(
+	fetch messagePageFetcher,
+	pageSize, maxMessages, tokenTarget int,
+) ([]*botmodel.Message, error) {
+	if pageSize <= 0 || maxMessages <= 0 {
+		return nil, nil
+	}
+
+	all := make([]*botmodel.Message, 0, minInt(maxMessages, pageSize))
+	seen := make(map[string]struct{}, pageSize)
+	var before *time.Time
+	tokens := 0
+
+	for len(all) < maxMessages {
+		page, err := fetch(before, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+
+		added := 0
+		for _, msg := range page {
+			if msg == nil {
+				continue
+			}
+			if msg.ID != "" {
+				if _, ok := seen[msg.ID]; ok {
+					continue
+				}
+				seen[msg.ID] = struct{}{}
+			}
+			all = append(all, msg)
+			tokens += estimateTokenCount(msg.Content)
+			added++
+			if len(all) >= maxMessages {
+				break
+			}
+		}
+
+		// 整页都是已读消息：游标无法继续前进，再查只会得到同一批数据。
+		if added == 0 {
+			break
+		}
+		if len(page) < pageSize {
+			break
+		}
+		if len(all) >= maxMessages || tokens >= tokenTarget {
+			break
+		}
+
+		cursor := page[len(page)-1].CreatedAt.Add(time.Nanosecond)
+		before = &cursor
+	}
+
+	return all, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // summarizeOverflow 把新溢出的消息与旧摘要合并，生成滚动摘要

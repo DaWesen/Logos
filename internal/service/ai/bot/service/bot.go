@@ -1147,7 +1147,7 @@ func (s *botServiceImpl) SendMessage(ctx context.Context, userID, botID, convers
 
 	// 上下文压缩：预算内装最近消息，溢出部分滚动摘要为背景
 	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
-		return s.repo.GetMessages(ctx, conversationID, historyFetchCount, nil)
+		return s.fetchHistoryMessages(ctx, conversationID)
 	}, s.summaryChat)
 
 	// 长期记忆是 per-user 数据，只能作为本轮消息注入。Agent 实例由
@@ -1400,7 +1400,7 @@ func (s *botServiceImpl) SendMessageStream(ctx context.Context, userID, botID, c
 
 	// 上下文压缩：预算内装最近消息，溢出部分滚动摘要为背景
 	historyMessages := s.compressor.BuildContextMessages(ctx, conversationID, func() ([]*botmodel.Message, error) {
-		return s.repo.GetMessages(ctx, conversationID, historyFetchCount, nil)
+		return s.fetchHistoryMessages(ctx, conversationID)
 	}, s.summaryChat)
 
 	// 同 SendMessage：记忆只进本轮消息，不进按 bot 缓存的 Agent system prompt。
@@ -2046,6 +2046,14 @@ func (s *botServiceImpl) createChatModelForBot(bot *botmodel.Bot) (model.BaseCha
 	}
 
 	return p.NewChatModel(bot.APIKey, bot.BaseURL, bot.Model)
+}
+
+// fetchHistoryMessages 分页回溯会话历史：压缩层需要的近期原文 + 摘要原料
+// 一次取回，避免固定 60 条窗口让 overflow 永远为空。
+func (s *botServiceImpl) fetchHistoryMessages(ctx context.Context, conversationID string) ([]*botmodel.Message, error) {
+	return collectHistoryPages(func(before *time.Time, limit int) ([]*botmodel.Message, error) {
+		return s.repo.GetMessages(ctx, conversationID, limit, before)
+	}, historyPageSize, historyFetchMax, historyFetchTokenTarget)
 }
 
 // buildMemoryContextMessages 把长期记忆渲染成本轮请求的 user/assistant 消息。
