@@ -1865,6 +1865,199 @@ func RecordPlannerBudgetExhausted(ctx context.Context, kind string) {
 	}
 }
 
+// Context Memory v2 指标。
+//
+// 这套指标只回答三个问题：请求是否降级、token 花在哪一层、结构化事实
+// 是否真的被用上。标签全部是固定枚举或已知的槽位 key，不把用户输入
+// 或自由文本放进标签，避免高基数把 Prometheus 打爆。
+var (
+	contextMetricsOnce       sync.Once
+	contextAssembleDuration  metric.Float64Histogram
+	contextTokens            metric.Int64Histogram
+	contextOmitted           metric.Int64Counter
+	contextDegraded          metric.Int64Counter
+	contextSlotHit           metric.Int64Counter
+	contextSlotConflict      metric.Int64Counter
+	contextRetrievalTrigger  metric.Int64Counter
+	contextRetrievalRecall   metric.Int64Histogram
+	contextRetrievalSkip     metric.Int64Counter
+	contextSummary           metric.Int64Counter
+	contextSummaryFactDrop   metric.Int64Counter
+	contextInvariantViolated metric.Int64Counter
+)
+
+func initContextMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	contextAssembleDuration, _ = meter.Float64Histogram(
+		"logos.ctx.assemble.duration",
+		metric.WithDescription("上下文组装耗时（不含摘要 LLM 调用）"),
+		metric.WithUnit("s"),
+	)
+	contextTokens, _ = meter.Int64Histogram(
+		"logos.ctx.tokens",
+		metric.WithDescription("各层实际注入的 token 数（layer=working/episodic/semantic/retrieval）"),
+	)
+	contextOmitted, _ = meter.Int64Counter(
+		"logos.ctx.omitted.count",
+		metric.WithDescription("因预算或校验丢弃的内容条数（layer, reason）"),
+	)
+	contextDegraded, _ = meter.Int64Counter(
+		"logos.ctx.degraded.count",
+		metric.WithDescription("上下文降级次数（layer, reason）"),
+	)
+	contextSlotHit, _ = meter.Int64Counter(
+		"logos.ctx.slot.hit.count",
+		metric.WithDescription("事实槽被注入的次数（key）"),
+	)
+	contextSlotConflict, _ = meter.Int64Counter(
+		"logos.ctx.slot.conflict.count",
+		metric.WithDescription("同一 key 出现多值的次数（key）"),
+	)
+	contextRetrievalTrigger, _ = meter.Int64Counter(
+		"logos.ctx.retrieval.trigger.count",
+		metric.WithDescription("检索触发次数（rule=T1/T2/T3）"),
+	)
+	contextRetrievalRecall, _ = meter.Int64Histogram(
+		"logos.ctx.retrieval.recall",
+		metric.WithDescription("单次检索召回条数"),
+	)
+	contextRetrievalSkip, _ = meter.Int64Counter(
+		"logos.ctx.retrieval.skip.count",
+		metric.WithDescription("检索跳过次数（reason=timeout/empty/error）"),
+	)
+	contextSummary, _ = meter.Int64Counter(
+		"logos.ctx.summary.count",
+		metric.WithDescription("摘要结果（result=ok/timeout/parse_error/error/breaker/cached）"),
+	)
+	contextSummaryFactDrop, _ = meter.Int64Counter(
+		"logos.ctx.summary_fact.drop.count",
+		metric.WithDescription("摘要事实校验丢弃条数（key）"),
+	)
+	contextInvariantViolated, _ = meter.Int64Counter(
+		"logos.ctx.invariant.violation.count",
+		metric.WithDescription("上下文不变量兜底次数（rule=I1/I2）"),
+	)
+}
+
+// RecordContextAssemble 记录一次上下文组装耗时。
+func RecordContextAssemble(ctx context.Context, botType string, durationSeconds float64) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextAssembleDuration != nil {
+		contextAssembleDuration.Record(ctx, durationSeconds,
+			metric.WithAttributes(attribute.String("bot_type", botType)))
+	}
+}
+
+// RecordContextTokens 记录某一层实际注入的 token 数。
+func RecordContextTokens(ctx context.Context, layer string, tokens int) {
+	if tokens < 0 {
+		return
+	}
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextTokens != nil {
+		contextTokens.Record(ctx, int64(tokens),
+			metric.WithAttributes(attribute.String("layer", layer)))
+	}
+}
+
+// RecordContextOmitted 记录一次预算/校验丢弃。
+func RecordContextOmitted(ctx context.Context, layer, reason string, count int) {
+	if count <= 0 {
+		return
+	}
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextOmitted != nil {
+		contextOmitted.Add(ctx, int64(count), metric.WithAttributes(
+			attribute.String("layer", layer),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordContextDegraded 记录一次上下文降级。
+func RecordContextDegraded(ctx context.Context, layer, reason string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextDegraded != nil {
+		contextDegraded.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("layer", layer),
+			attribute.String("reason", reason),
+		))
+	}
+}
+
+// RecordContextSlot 记录槽位命中或冲突。
+func RecordContextSlot(ctx context.Context, key, result string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	switch result {
+	case "hit":
+		if contextSlotHit != nil {
+			contextSlotHit.Add(ctx, 1, metric.WithAttributes(attribute.String("key", key)))
+		}
+	case "conflict":
+		if contextSlotConflict != nil {
+			contextSlotConflict.Add(ctx, 1, metric.WithAttributes(attribute.String("key", key)))
+		}
+	}
+}
+
+// RecordContextRetrievalTrigger 记录检索触发规则。
+func RecordContextRetrievalTrigger(ctx context.Context, rule string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextRetrievalTrigger != nil {
+		contextRetrievalTrigger.Add(ctx, 1, metric.WithAttributes(attribute.String("rule", rule)))
+	}
+}
+
+// RecordContextRetrievalRecall 记录召回条数。
+func RecordContextRetrievalRecall(ctx context.Context, count int) {
+	if count < 0 {
+		return
+	}
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextRetrievalRecall != nil {
+		contextRetrievalRecall.Record(ctx, int64(count))
+	}
+}
+
+// RecordContextRetrievalSkip 记录检索跳过原因。
+func RecordContextRetrievalSkip(ctx context.Context, reason string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextRetrievalSkip != nil {
+		contextRetrievalSkip.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+	}
+}
+
+// RecordContextSummary 记录摘要结果。
+func RecordContextSummary(ctx context.Context, result string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextSummary != nil {
+		contextSummary.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
+	}
+}
+
+// RecordContextSummaryFactDrop 记录被事实校验丢弃的条数。
+func RecordContextSummaryFactDrop(ctx context.Context, key string, count int) {
+	if count <= 0 {
+		return
+	}
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextSummaryFactDrop != nil {
+		contextSummaryFactDrop.Add(ctx, int64(count),
+			metric.WithAttributes(attribute.String("key", key)))
+	}
+}
+
+// RecordContextInvariantViolation 记录不变量兜底。
+func RecordContextInvariantViolation(ctx context.Context, rule string) {
+	contextMetricsOnce.Do(initContextMetrics)
+	if contextInvariantViolated != nil {
+		contextInvariantViolated.Add(ctx, 1, metric.WithAttributes(attribute.String("rule", rule)))
+	}
+}
+
 // RecordPlannerReplayedSteps 记录一次运行中命中的副作用重放数。
 func RecordPlannerReplayedSteps(ctx context.Context, count int64) {
 	if count <= 0 {
