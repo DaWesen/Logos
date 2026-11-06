@@ -150,6 +150,49 @@ func TestBuildContextMessages_SummaryFailureDegradesGracefully(t *testing.T) {
 	}
 }
 
+// TestBuildContext_SummaryTimeoutKeepsWorking 摘要超时只允许丢摘要层：
+// 用户当前的问题和近期原文必须继续进入模型，否则一次摘要服务抖动
+// 会升级成整轮对话不可用。
+func TestBuildContext_SummaryTimeoutKeepsWorking(t *testing.T) {
+	cc := NewConversationCompressor()
+	msgs := makeMsgs(40, 1000)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+	defer cancel()
+	chat := func(ctx context.Context, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	parts := cc.BuildContext(ctx, "conv-timeout", msgs, 6000, 2000, chat)
+	if len(parts.Working) == 0 {
+		t.Fatal("摘要超时后 Working 层不能为空")
+	}
+	if len(parts.Summary) != 0 {
+		t.Fatalf("超时不应注入摘要，got %d messages", len(parts.Summary))
+	}
+}
+
+// TestBuildContext_WorkingNeverStartsWithTool 回归 I2：
+// 历史窗口可能从一条 tool 结果开始，但供应商要求 tool 消息必须紧跟在
+// 带 tool_calls 的 assistant 后面。孤立的 tool 消息会直接 400。
+func TestBuildContext_WorkingNeverStartsWithTool(t *testing.T) {
+	cc := NewConversationCompressor()
+	msgs := []*botmodel.Message{
+		{ID: "m3", Role: "assistant", Content: "已查到结果"},
+		{ID: "m2", Role: "user", Content: "帮我查物流"},
+		{ID: "m1", Role: "tool", Content: "{\"status\":\"运输中\"}"},
+	}
+
+	parts := cc.BuildContext(t.Context(), "conv-tool", msgs, 4000, 0, nil)
+	if len(parts.Working) == 0 {
+		t.Fatal("Working 层不应为空")
+	}
+	if parts.Working[0].Role == "tool" {
+		t.Fatalf("Working 首条不能是 tool 消息: %+v", parts.Working[0])
+	}
+}
+
 func TestBuildContextMessages_EmptyHistoryReturnsNil(t *testing.T) {
 	cc := NewConversationCompressor()
 	if out := cc.BuildContextMessages(t.Context(), "conv-1", nil, 6000, 2000, nil); out != nil {
@@ -326,7 +369,8 @@ func TestSummarizeOverflow_ConcurrentSameConversationRunsOnce(t *testing.T) {
 		t.Fatalf("summary calls = %d, want 1", got)
 	}
 	for i, got := range results {
-		if got != "同一会话的共享摘要" {
+		// 兼容入口现在返回结构化渲染结果，但所有等待者必须拿到同一份内容。
+		if !strings.Contains(got, "同一会话的共享摘要") {
 			t.Errorf("caller %d got summary %q", i, got)
 		}
 	}
