@@ -28,6 +28,9 @@ var (
 	kafkaFinalizeFailNum metric.Int64Counter
 	qaIdempotencyNum     metric.Int64Counter
 	qaAnswerNum          metric.Int64Counter
+	qaRetrievalNum       metric.Int64Counter
+	qaRetrievalDur       metric.Float64Histogram
+	qaContextItemNum     metric.Int64Counter
 	outboxDispatchCount  metric.Int64Counter
 	outboxDispatchDur    metric.Float64Histogram
 	outboxDeadLetterNum  metric.Int64Counter
@@ -86,6 +89,19 @@ func initReliabilityMetrics() {
 	qaAnswerNum, _ = meter.Int64Counter(
 		"logos.qa.answer.count",
 		metric.WithDescription("问答实际生成结果计数（result=ok/degraded）"),
+	)
+	qaRetrievalNum, _ = meter.Int64Counter(
+		"logos.qa.retrieval.count",
+		metric.WithDescription("问答检索来源结果计数（source=knowledge_graph/search/vector, result=ok/empty/error/timeout/canceled）"),
+	)
+	qaRetrievalDur, _ = meter.Float64Histogram(
+		"logos.qa.retrieval.duration",
+		metric.WithDescription("问答单个检索来源耗时"),
+		metric.WithUnit("s"),
+	)
+	qaContextItemNum, _ = meter.Int64Counter(
+		"logos.qa.context.item.count",
+		metric.WithDescription("拼入 prompt 的参考信息条目计数（result=kept/duplicated/truncated/dropped）"),
 	)
 	outboxDispatchCount, _ = meter.Int64Counter(
 		"logos.outbox.dispatch.count",
@@ -238,6 +254,36 @@ func RecordQAAnswer(ctx context.Context, result string) {
 	if qaAnswerNum != nil {
 		qaAnswerNum.Add(ctx, 1, metric.WithAttributes(attribute.String("result", result)))
 	}
+}
+
+// RecordQARetrieval 记录一个检索来源的结果与耗时。
+//
+// 检索失败是被吞掉的：回答仍然能生成，只是没有证据。如果只看问答成功率，
+// 「RAG 一直超时、模型一直在裸答」在监控上完全不可见。按 source 拆开
+// ok/empty/error/timeout，才能区分「没有命中文档」和「依赖挂了」。
+// source 与 result 都是固定枚举，标签基数可控。
+func RecordQARetrieval(ctx context.Context, source, result string, durationSeconds float64) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("source", source),
+		attribute.String("result", result),
+	)
+	if qaRetrievalNum != nil {
+		qaRetrievalNum.Add(ctx, 1, attrs)
+	}
+	if qaRetrievalDur != nil {
+		qaRetrievalDur.Record(ctx, durationSeconds, attrs)
+	}
+}
+
+// RecordQAContextItem 记录参考信息在拼 prompt 时的去向。
+// dropped 持续偏高说明检索在返回重复或无效内容，需要回到上游查召回质量。
+func RecordQAContextItem(ctx context.Context, result string, count int) {
+	reliabilityOnce.Do(initReliabilityMetrics)
+	if qaContextItemNum == nil || count <= 0 {
+		return
+	}
+	qaContextItemNum.Add(ctx, int64(count), metric.WithAttributes(attribute.String("result", result)))
 }
 
 // RecordOutboxDispatch 记录一条 Outbox 消息的投递结果与耗时。

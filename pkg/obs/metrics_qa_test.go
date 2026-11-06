@@ -22,7 +22,29 @@ func TestRecordQAAnswer_ReportsDegraded(t *testing.T) {
 	})
 }
 
+// 检索失败是被吞掉的：回答照样能生成。只有按来源拆分结果，
+// 「RAG 一直超时、模型一直在裸答」才在监控上可见。
+func TestRecordQARetrieval_ReportsTimeoutBySource(t *testing.T) {
+	assertCounterHasAttrs(t,
+		"logos.qa.retrieval.count",
+		map[string]string{"source": "vector", "result": "timeout"},
+		func() {
+			RecordQARetrieval(context.Background(), "vector", "timeout", 0.8)
+		})
+}
+
+func TestRecordQAContextItem_ReportsDropped(t *testing.T) {
+	assertCounterHasLabel(t, "logos.qa.context.item.count", "result", "dropped", func() {
+		RecordQAContextItem(context.Background(), "dropped", 3)
+	})
+}
+
 func assertCounterHasLabel(t *testing.T, name, key, want string, record func()) {
+	t.Helper()
+	assertCounterHasAttrs(t, name, map[string]string{key: want}, record)
+}
+
+func assertCounterHasAttrs(t *testing.T, name string, want map[string]string, record func()) {
 	t.Helper()
 	record()
 
@@ -41,14 +63,20 @@ func assertCounterHasLabel(t *testing.T, name, key, want string, record func()) 
 				t.Fatalf("指标 %s 类型 = %T", name, m.Data)
 			}
 			for _, p := range sum.DataPoints {
-				value, _ := p.Attributes.Value(attribute.Key(key))
-				if value.AsString() == want && p.Value >= 1 {
+				matched := p.Value >= 1
+				for key, wantValue := range want {
+					value, _ := p.Attributes.Value(attribute.Key(key))
+					if value.AsString() != wantValue {
+						matched = false
+					}
+				}
+				if matched {
 					found = true
 				}
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("未找到 %s=%s 的指标 %s", key, want, name)
+		t.Fatalf("未找到标签 %v 的指标 %s", want, name)
 	}
 }
