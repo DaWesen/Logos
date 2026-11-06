@@ -41,7 +41,7 @@ type ChatClient interface {
 }
 
 type QAService interface {
-	AskQuestion(ctx context.Context, content string, userID int64, context map[string]string, requestID string) (string, float64, []string, string, int64, bool, error)
+	AskQuestion(ctx context.Context, content string, userID int64, reqContext map[string]string, requestID string) (string, float64, []string, string, int64, bool, error)
 	BatchAskQuestions(ctx context.Context, questions []string, userID int64) (map[string]string, error)
 	GetHistory(ctx context.Context, userID int64, page, pageSize int) ([]*model.QARecord, int64, error)
 	SubmitFeedback(ctx context.Context, questionID string, feedback string, rating *int32) error
@@ -55,6 +55,12 @@ type qaServiceImpl struct {
 	searchService    SearchService
 	vectorService    VectorService
 	cache            cache.Cache
+
+	// 三个预算字段留空时使用 retrieval.go 里的默认值；
+	// 测试通过注入更短的预算来验证超时与降级路径。
+	answerTimeout    time.Duration
+	retrievalTimeout time.Duration
+	persistTimeout   time.Duration
 }
 
 // ErrQARequestIDConflict 表示同一个幂等键被不同用户或不同问题复用。
@@ -86,7 +92,7 @@ func (s *qaServiceImpl) AskQuestion(
 	ctx context.Context,
 	content string,
 	userID int64,
-	context map[string]string,
+	reqContext map[string]string,
 	requestID string,
 ) (string, float64, []string, string, int64, bool, error) {
 	logger.Info("Processing question",
@@ -143,70 +149,43 @@ func (s *qaServiceImpl) AskQuestion(
 		}
 	}
 
+	// 从这里到模型返回共用同一个端到端预算。检索、模型、落库都在这条
+	// 时间线上，避免“每一步都没超时，加起来却把调用方拖死”。
+	ctx, cancel := context.WithTimeout(ctx, s.answerBudget())
+	defer cancel()
+
 	timestamp := time.Now().Unix()
 
 	var answer string
 	confidence := 0.8
 	degraded := false
-	sources := []string{}
-	backgroundInfo := []string{}
 
-	if s.knowledgeService != nil {
-		entities, err := s.knowledgeService.SearchEntities(ctx, content)
-		if err != nil {
-			logger.Warn("Failed to search knowledge graph", logger.ErrorField(err))
-		} else if len(entities) > 0 {
-			logger.Info("Found entities from knowledge graph",
-				logger.IntField("count", len(entities)))
-			backgroundInfo = append(backgroundInfo, entities...)
-			sources = append(sources, "knowledge_graph")
-		}
-	}
-
-	if s.searchService != nil {
-		searchResults, err := s.searchService.Search(ctx, content, "document")
-		if err != nil {
-			logger.Warn("Failed to search documents", logger.ErrorField(err))
-		} else if len(searchResults) > 0 {
-			logger.Info("Found documents from search",
-				logger.IntField("count", len(searchResults)))
-			backgroundInfo = append(backgroundInfo, searchResults...)
-			sources = append(sources, "search")
-		}
-	}
-
-	if s.vectorService != nil {
-		vectorResults, err := s.vectorService.SearchSimilar(ctx, content, 5)
-		if err != nil {
-			logger.Warn("Failed to search vectors", logger.ErrorField(err))
-		} else if len(vectorResults) > 0 {
-			logger.Info("Found similar from vector search",
-				logger.IntField("count", len(vectorResults)))
-			backgroundInfo = append(backgroundInfo, vectorResults...)
-			sources = append(sources, "vector")
-		}
+	// 检索并行执行：总耗时从“三个依赖之和”收敛到“最慢的那个”，
+	// 单个依赖超时只丢这一条证据，不影响整次回答。
+	rawBackground, sources := s.gatherBackground(ctx, content)
+	backgroundInfo, stats := assembleContext(rawBackground)
+	obs.RecordQAContextItem(ctx, "kept", stats.kept)
+	obs.RecordQAContextItem(ctx, "duplicated", stats.duplicated)
+	obs.RecordQAContextItem(ctx, "truncated", stats.truncated)
+	obs.RecordQAContextItem(ctx, "dropped", stats.dropped)
+	if stats.duplicated > 0 || stats.truncated > 0 || stats.dropped > 0 {
+		logger.Info("问答参考信息已按预算裁剪",
+			logger.StringField("stats", contextStatsSummary(stats)))
 	}
 
 	if s.chat != nil && s.chat.HasChatModel() {
-		prompt := "You are a helpful AI assistant. Please answer the user's question based on the following information.\n\n"
-		if len(backgroundInfo) > 0 {
-			prompt += "Reference information:\n"
-			for _, info := range backgroundInfo {
-				prompt += "- " + info + "\n"
-			}
-			prompt += "\n"
-		}
-		prompt += "User question: " + content
-
-		messages := []string{
-			"You are a helpful AI assistant. Please answer the user's question based on the provided reference information.",
-			prompt,
-		}
+		messages := s.buildPrompt(content, backgroundInfo)
 
 		var err error
 		answer, err = s.chat.Chat(ctx, messages)
 		if err != nil {
-			logger.Warn("Failed to answer using Eino, using default answer", logger.ErrorField(err))
+			if errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("模型调用超出问答预算，返回降级答案",
+					logger.StringField("budget", s.answerBudget().String()),
+					logger.ErrorField(err))
+			} else {
+				logger.Warn("Failed to answer using Eino, using default answer", logger.ErrorField(err))
+			}
 			answer = "Thank you for your question. We are currently working on answering it. Please try again later."
 			confidence = 0.5
 			degraded = true
@@ -236,12 +215,17 @@ func (s *qaServiceImpl) AskQuestion(
 		Degraded:   degraded,
 	}
 
-	err := s.qaRepo.CreateQARecord(ctx, record)
+	// 答案已经生成，落库不再继承请求的取消信号：否则预算边界上的成功
+	// 生成会被记成一次失败，消费端只能重试并再付一次模型成本。
+	persistCtx, persistCancel := s.persistContext(ctx)
+	defer persistCancel()
+
+	err := s.qaRepo.CreateQARecord(persistCtx, record)
 	if err != nil {
 		if requestID != "" {
 			// 并发请求可能已经用同一个确定性 ID 写入成功；唯一键冲突时
 			// 返回先写入的答案，而不是把一次成功问答报成失败。
-			existing, getErr := s.qaRepo.GetQARecord(ctx, questionID)
+			existing, getErr := s.qaRepo.GetQARecord(persistCtx, questionID)
 			if getErr == nil && existing != nil {
 				if existing.UserID != userID || existing.Question != content {
 					obs.RecordQAIdempotency(ctx, "conflict")
@@ -250,7 +234,7 @@ func (s *qaServiceImpl) AskQuestion(
 				if existing.Degraded && !degraded {
 					// 本次真正生成了回答：用条件更新把降级记录升级成正常记录。
 					// 条件更新保证多个重试实例里只有一个能覆盖，后到的回查即可。
-					upgraded, upgradeErr := s.qaRepo.ReplaceDegradedAnswer(ctx, questionID, answer, confidence)
+					upgraded, upgradeErr := s.qaRepo.ReplaceDegradedAnswer(persistCtx, questionID, answer, confidence)
 					if upgradeErr != nil {
 						logger.Error("覆盖降级问答记录失败，本次回答未能落库",
 							logger.StringField("question_id", questionID),
@@ -267,7 +251,7 @@ func (s *qaServiceImpl) AskQuestion(
 						return answer, confidence, sources, questionID, existing.Timestamp, false, nil
 					}
 					// 没抢到说明另一个实例已经覆盖成功，优先返回它的答案。
-					latest, latestErr := s.qaRepo.GetQARecord(ctx, questionID)
+					latest, latestErr := s.qaRepo.GetQARecord(persistCtx, questionID)
 					if latestErr == nil && latest != nil && !latest.Degraded {
 						return latest.Answer, latest.Confidence, sources, latest.ID, latest.Timestamp, false, nil
 					}
