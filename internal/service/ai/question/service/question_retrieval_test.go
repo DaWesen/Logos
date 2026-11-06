@@ -237,16 +237,16 @@ func TestAskQuestion_ModelTimeoutReturnsDegraded(t *testing.T) {
 
 func TestAssembleContext_DedupTruncateAndBudget(t *testing.T) {
 	long := strings.Repeat("长", contextItemMaxRunes+500)
-	items := []string{
-		"alpha",
-		"  alpha  ",
-		"beta\n\nwith   spaces",
-		long,
-		"",
-		"gamma",
+	items := []contextItem{
+		{source: "knowledge_graph", text: "alpha"},
+		{source: "vector", text: "  alpha  "},
+		{source: "vector", text: "beta\n\nwith   spaces"},
+		{source: "search", text: long},
+		{source: "knowledge_graph", text: ""},
+		{source: "search", text: "gamma"},
 	}
 
-	kept, stats := assembleContext(items)
+	kept, sources, stats := assembleContext(items)
 	if stats.duplicated != 1 {
 		t.Fatalf("重复条目统计 = %d, want 1", stats.duplicated)
 	}
@@ -268,6 +268,30 @@ func TestAssembleContext_DedupTruncateAndBudget(t *testing.T) {
 	}
 	if total > contextBudgetRunes {
 		t.Fatalf("参考信息总量 %d 超出预算 %d", total, contextBudgetRunes)
+	}
+	if strings.Join(sources, ",") != "knowledge_graph,vector,search" {
+		t.Fatalf("来源应按首次命中保序去重, sources = %v", sources)
+	}
+}
+
+// 检索命中不等于进入 prompt：如果某个来源的条目全部被去重丢掉，
+// 就不能把它报成有效来源。
+func TestAssembleContext_DoesNotReportSourceWhoseItemsWereDropped(t *testing.T) {
+	items := []contextItem{
+		{source: "knowledge_graph", text: "the same evidence"},
+		{source: "search", text: "  the   same evidence "},
+		{source: "vector", text: ""},
+	}
+
+	kept, sources, stats := assembleContext(items)
+	if len(kept) != 1 {
+		t.Fatalf("只应保留一条证据, kept = %v", kept)
+	}
+	if stats.duplicated != 1 || stats.dropped != 1 {
+		t.Fatalf("统计异常: %+v", stats)
+	}
+	if len(sources) != 1 || sources[0] != "knowledge_graph" {
+		t.Fatalf("只有真正进入 prompt 的来源才算数, sources = %v", sources)
 	}
 }
 

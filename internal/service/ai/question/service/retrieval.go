@@ -56,6 +56,14 @@ type contextStats struct {
 	dropped    int
 }
 
+// contextItem 保留每条证据的来源。
+// 去重之后才能知道哪些来源真正进了 prompt；否则 sources 会把
+// 「检索到了但被当成重复条目丢掉」的来源也报给调用方。
+type contextItem struct {
+	source string
+	text   string
+}
+
 // retrievals 按固定顺序返回当前配置可用的检索来源。
 // 固定顺序保证同一份检索结果拼出的 prompt 是稳定的，便于排查与复现。
 func (s *qaServiceImpl) retrievals(content string) []retrieval {
@@ -94,10 +102,10 @@ func (s *qaServiceImpl) retrievals(content string) []retrieval {
 //     等到整体预算耗尽，而不是被一个坏依赖永久拖住。
 //  2. 每个来源单独计时、单独记录结果，这样“检索一直返回空”能在指标上
 //     看见，而不是悄悄退化成没有依据的回答。
-func (s *qaServiceImpl) gatherBackground(ctx context.Context, content string) ([]string, []string) {
+func (s *qaServiceImpl) gatherBackground(ctx context.Context, content string) []contextItem {
 	retrievals := s.retrievals(content)
 	if len(retrievals) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	outcomes := make(chan retrievalOutcome, len(retrievals))
@@ -142,8 +150,7 @@ collect:
 		}
 	}
 
-	items := make([]string, 0, len(retrievals))
-	sources := make([]string, 0, len(retrievals))
+	items := make([]contextItem, 0, len(retrievals))
 	for index, out := range collected {
 		if out == nil {
 			continue
@@ -164,10 +171,11 @@ collect:
 		logger.Info("检索来源命中",
 			logger.StringField("source", out.source),
 			logger.IntField("count", len(out.items)))
-		items = append(items, out.items...)
-		sources = append(sources, retrievals[index].source)
+		for _, text := range out.items {
+			items = append(items, contextItem{source: retrievals[index].source, text: text})
+		}
 	}
-	return items, sources
+	return items
 }
 
 func classifyRetrieval(err error, items []string) string {
@@ -185,16 +193,18 @@ func classifyRetrieval(err error, items []string) string {
 	}
 }
 
-// assembleContext 对检索结果做去重、单条截断和总量裁剪。
-// 返回值里的 stats 只用于指标和日志，不参与回答逻辑。
-func assembleContext(items []string) ([]string, contextStats) {
+// assembleContext 对检索结果做去重、单条截断和总量裁剪，
+// 并返回真正进入 prompt 的来源列表。
+func assembleContext(items []contextItem) ([]string, []string, contextStats) {
 	stats := contextStats{}
 	kept := make([]string, 0, len(items))
+	sources := make([]string, 0, len(items))
+	sourceSeen := make(map[string]struct{}, len(items))
 	seen := make(map[string]struct{}, len(items))
 	used := 0
 
 	for _, raw := range items {
-		item := strings.Join(strings.Fields(raw), " ")
+		item := strings.Join(strings.Fields(raw.text), " ")
 		if item == "" {
 			stats.dropped++
 			continue
@@ -223,11 +233,15 @@ func assembleContext(items []string) ([]string, contextStats) {
 			stats.truncated++
 		}
 		kept = append(kept, trimmed)
+		if _, ok := sourceSeen[raw.source]; !ok {
+			sourceSeen[raw.source] = struct{}{}
+			sources = append(sources, raw.source)
+		}
 		used += utf8.RuneCountInString(trimmed)
 	}
 
 	stats.kept = len(kept)
-	return kept, stats
+	return kept, sources, stats
 }
 
 func truncateRunes(value string, limit int) string {
@@ -273,17 +287,15 @@ func (s *qaServiceImpl) persistContext(ctx context.Context) (context.Context, co
 }
 
 func (s *qaServiceImpl) buildPrompt(content string, background []string) []string {
-	prompt := "You are a helpful AI assistant. Please answer the user's question based on the following information.\n\n"
+	var prompt string
 	if len(background) > 0 {
+		prompt = "You are a helpful AI assistant. Please answer the user's question based on the following information.\n\n"
 		prompt += "Reference information:\n"
 		for _, info := range background {
 			prompt += "- " + info + "\n"
 		}
-		prompt += "\n"
-	}
-	prompt += "User question: " + content
-
-	if len(background) == 0 {
+		prompt += "\nUser question: " + content
+	} else {
 		// 没有证据时显式告诉模型不要编造，比让它自由发挥更可控。
 		prompt = "You are a helpful AI assistant. No reference information was retrieved for this question. " +
 			"If you are not sure, say so instead of inventing facts.\n\nUser question: " + content

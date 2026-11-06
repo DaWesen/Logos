@@ -165,8 +165,8 @@ func (s *qaServiceImpl) AskQuestion(
 
 	// 检索并行执行：总耗时从“三个依赖之和”收敛到“最慢的那个”，
 	// 单个依赖超时只丢这一条证据，不影响整次回答。
-	rawBackground, sources := s.gatherBackground(ctx, content)
-	backgroundInfo, stats := assembleContext(rawBackground)
+	rawBackground := s.gatherBackground(ctx, content)
+	backgroundInfo, sources, stats := assembleContext(rawBackground)
 	obs.RecordQAContextItem(ctx, "kept", stats.kept)
 	obs.RecordQAContextItem(ctx, "duplicated", stats.duplicated)
 	obs.RecordQAContextItem(ctx, "truncated", stats.truncated)
