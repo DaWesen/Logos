@@ -1599,3 +1599,126 @@ func RecordMonitoringRetention(ctx context.Context, kind, result string, rows in
 		))
 	}
 }
+
+// Planner 执行指标。
+//
+// 规划链路的关键问题不是"总耗时"，而是"钱花在哪、为什么重跑"：
+// calls 直方图回答单轮成本，replan 标签回答重规划来源，
+// stale/replayed 回答失效传播与副作用去重是否真的生效。
+// 所有标签都是固定枚举，run_id / step_id / goal 不进指标。
+var (
+	plannerOnce     sync.Once
+	plannerRuns     metric.Int64Counter
+	plannerSteps    metric.Int64Counter
+	plannerStepDur  metric.Float64Histogram
+	plannerReplans  metric.Int64Counter
+	plannerStale    metric.Int64Counter
+	plannerBudget   metric.Int64Counter
+	plannerReplayed metric.Int64Counter
+	plannerLLMCalls metric.Int64Histogram
+)
+
+func initPlannerMetrics() {
+	meter := otel.GetMeterProvider().Meter(
+		meterName,
+		metric.WithInstrumentationVersion("1.0.0"),
+	)
+	plannerRuns, _ = meter.Int64Counter(
+		"logos.planner.runs.count",
+		metric.WithDescription("规划执行轮次（status=completed/degraded/budget_exhausted/blocked/failed）"),
+	)
+	plannerSteps, _ = meter.Int64Counter(
+		"logos.planner.steps.count",
+		metric.WithDescription("规划步骤执行结果（status=done/failed, effect=none/idempotent/side_effect）"),
+	)
+	plannerStepDur, _ = meter.Float64Histogram(
+		"logos.planner.step.duration",
+		metric.WithDescription("规划步骤执行耗时"),
+		metric.WithUnit("s"),
+	)
+	plannerReplans, _ = meter.Int64Counter(
+		"logos.planner.replans.count",
+		metric.WithDescription("局部重规划次数（reason=failure/violation）"),
+	)
+	plannerStale, _ = meter.Int64Counter(
+		"logos.planner.stale_steps.count",
+		metric.WithDescription("一次运行中因失效传播被作废的步骤数"),
+	)
+	plannerBudget, _ = meter.Int64Counter(
+		"logos.planner.budget_exhausted.count",
+		metric.WithDescription("预算耗尽次数（kind=calls/tokens/wallclock）"),
+	)
+	plannerReplayed, _ = meter.Int64Counter(
+		"logos.planner.replayed_steps.count",
+		metric.WithDescription("命中副作用重放、未真正调用工具的步骤数"),
+	)
+	plannerLLMCalls, _ = meter.Int64Histogram(
+		"logos.planner.llm_calls_per_run",
+		metric.WithDescription("单轮规划执行的模型/工具调用次数"),
+	)
+}
+
+// RecordPlannerRun 记录一轮执行的状态与总调用次数。
+func RecordPlannerRun(ctx context.Context, status string, llmCalls int) {
+	plannerOnce.Do(initPlannerMetrics)
+	if plannerRuns != nil {
+		plannerRuns.Add(ctx, 1, metric.WithAttributes(attribute.String("status", status)))
+	}
+	if plannerLLMCalls != nil && llmCalls >= 0 {
+		plannerLLMCalls.Record(ctx, int64(llmCalls))
+	}
+}
+
+// RecordPlannerStep 记录单步执行结果与耗时。
+func RecordPlannerStep(ctx context.Context, status, effect string, durationSeconds float64) {
+	plannerOnce.Do(initPlannerMetrics)
+	attrs := metric.WithAttributes(
+		attribute.String("status", status),
+		attribute.String("effect", effect),
+	)
+	if plannerSteps != nil {
+		plannerSteps.Add(ctx, 1, attrs)
+	}
+	if plannerStepDur != nil {
+		plannerStepDur.Record(ctx, durationSeconds,
+			metric.WithAttributes(attribute.String("effect", effect)))
+	}
+}
+
+// RecordPlannerReplan 记录一次局部重规划。
+func RecordPlannerReplan(ctx context.Context, reason string) {
+	plannerOnce.Do(initPlannerMetrics)
+	if plannerReplans != nil {
+		plannerReplans.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
+	}
+}
+
+// RecordPlannerStaleSteps 记录一次运行中作废的步骤数。
+func RecordPlannerStaleSteps(ctx context.Context, count int64) {
+	if count <= 0 {
+		return
+	}
+	plannerOnce.Do(initPlannerMetrics)
+	if plannerStale != nil {
+		plannerStale.Add(ctx, count)
+	}
+}
+
+// RecordPlannerBudgetExhausted 记录一次预算耗尽及具体维度。
+func RecordPlannerBudgetExhausted(ctx context.Context, kind string) {
+	plannerOnce.Do(initPlannerMetrics)
+	if plannerBudget != nil {
+		plannerBudget.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", kind)))
+	}
+}
+
+// RecordPlannerReplayedSteps 记录一次运行中命中的副作用重放数。
+func RecordPlannerReplayedSteps(ctx context.Context, count int64) {
+	if count <= 0 {
+		return
+	}
+	plannerOnce.Do(initPlannerMetrics)
+	if plannerReplayed != nil {
+		plannerReplayed.Add(ctx, count)
+	}
+}
