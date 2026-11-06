@@ -8,9 +8,13 @@
 > **实现状态（2026-11-06）**
 >
 > - **已实现（P0 全部）**：D1 长期记忆改为 per-user 消息注入、D2 连续同角色消息合并、D3 rune-safe 截断、D4 分页回溯历史（100 条/页，最多 500 条，目标预算 6000 + 2000 token）。
-> - **回归测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`。
+> - **已实现（P0 收尾）**：
+>   - 摘要状态由 `map[string]*summaryState` 改为存值 + 锁内整体替换，读者不会再看到被并发改写的半成品。
+>   - 同一会话的摘要回源走 singleflight（key = conversationID），并发请求只打一次模型，等待者共享同一结果与同一错误。
+>   - 摘要正文在落状态前 `TrimSpace` 并截断到 300 rune（含省略号），空摘要按失败处理；prompt 里的"300 字以内"不再被当作模型保证。
+> - **回归测试**：`TestToSchemaMessages_MergesConsecutiveUserMessages`、`TestRenderMessages_TruncatesChineseByRune`、`TestMemoryContextMessages_IsPerRequestUserPair`、`TestCollectHistoryPages_*`、`TestSummarizeOverflow_CapsSummaryLength`、`TestSummarizeOverflow_ConcurrentSameConversationRunsOnce`。
 > - **未实现**：P1–P4 全部内容。
-> - **已执行验证（收尾）**：`go build ./...`、`go test ./internal/service/ai/bot/service/... ./internal/bot/agent/...`、`go vet ./internal/service/ai/bot/service/... ./internal/bot/agent/...` 全部通过。
+> - **已执行验证（收尾）**：`go build ./...`、`go vet ./...`、`go test ./... -count=1` 全部通过；`go test -race ./internal/service/ai/bot/service -run TestSummarizeOverflow_ConcurrentSameConversationRunsOnce` 通过。以上均为本地单机验证，未做压测、灰度或故障注入。
 > - §1、§2 与附录 A 描述的是 **P0 改造前**的基线；本文其余数字与分层仍是设计目标，不是已上线事实。
 
 ---
