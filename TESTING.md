@@ -1197,6 +1197,42 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 带确定性主键落库，就等于把一次瞬时故障变成永久状态；正确做法是把「是否成功」
 编码进记录，并让后续重试有机会用条件更新修正它。
 
+### 一次问答只有一条时间线：检索并行 + 分级预算
+
+原来的问答链路是「知识图谱 → 文档搜索 → 向量检索 → 模型」四段串行，而且每一段
+都没有自己的超时。单看每一段都不算慢，但总延迟是四段之和；只要有一个依赖挂住，
+整个 gRPC 请求就会被一直吊着，Kafka 消费协程也会停在这条消息上，极端情况下超过
+`max poll interval` 直接被踢出消费组，引发重复消费。
+
+现在的处理方式：
+
+- **端到端预算**：`AskQuestion` 从检索开始就套一个 20s 的整体 deadline，模型调用
+  继承它，而不是各段各超时、加起来仍然失控；
+- **并行 + 单源预算**：三个检索源用 goroutine 同时发起，每个再套 800ms 子预算，
+  总耗时从「三者之和」收敛到「最慢的那个」；
+- **等待方不假设被调方听话**：主流程用 `select` 等结果，整体 ctx 一到就直接返回
+  已拿到的证据。即使某个 SDK 完全忽略取消，也只是那条 goroutine 晚点结束，
+  不会把回答永久拖住（通道有缓冲，提前返回也不会泄漏发送方）；
+- **失败降级为「没有这条证据」**：单源报错/超时只从 `sources` 里消失，回答继续；
+  没有证据时 prompt 会显式要求模型不要编造，而不是让它自由发挥；
+- **上下文预算**：参考信息先折叠空白、按内容去重，再做单条 1200 字截断和
+  总量 6000 字的裁剪。检索结果不能无脑全塞进 prompt，否则 token 成本和上下文
+  窗口都会被上游召回质量绑架；
+- **落库不继承取消**：回答已经生成后，用 `context.WithoutCancel` + 3s 独立超时
+  写库。否则模型刚好在预算边界返回时，一次成功的生成会被记成
+  「answered but failed to record」，消费端只能重试并再付一次模型成本。
+
+可观测性上补了两个维度，解决「检索一直挂但问答成功率 100%」看不出来的问题：
+
+| 指标 | 标签 | 用途 |
+|------|------|------|
+| `logos.qa.retrieval.count` | `source`, `result=ok/empty/error/timeout/canceled` | 区分「没召回」和「依赖挂了」 |
+| `logos.qa.retrieval.duration` | `source`, `result` | 定位是哪个检索源在拖慢回答 |
+| `logos.qa.context.item.count` | `result=kept/duplicated/truncated/dropped` | 召回质量与预算裁剪情况 |
+
+一句话总结：超时不是「每一层都设一个数」就够了，而是每一层都要知道自己还剩多少
+预算；同时等待方不能假设被调方一定遵守取消，否则一个不听话的依赖就能绕过所有超时。
+
 ### 自动化测试覆盖
 
 `service/message_test.go` 与 `dao/claim_test.go`：
@@ -1224,6 +1260,16 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 
 `pkg/obs/metrics_qa_test.go`：验证幂等结果与问答降级指标按固定 `result` 标签上报。
 
+`internal/service/ai/question/service/question_retrieval_test.go`：
+
+- 三个检索源必须同时在跑（用屏障收集，串行实现会直接超时失败）；
+- 单源超时只丢该来源的证据，回答仍成功且 `sources` 不谎报；
+- 完全不看 ctx 的坏依赖也不能把主流程拖过整体预算；
+- 模型挂住时在预算内返回降级答案，并把 `degraded=true` 落库；
+- 上下文去重、空白折叠、单条截断与总量预算；
+- 无证据时 prompt 显式约束模型不要编造；
+- 落库上下文不继承父级取消，但仍有独立超时。
+
 ```bash
 go test ./internal/service/messaging/message/... -count=1
 go test ./internal/service/messaging/message/... -count=1 -race
@@ -1243,6 +1289,11 @@ go test ./internal/service/ai/question/... -count=1 -race
   `PROCESSED`，没有内置对账任务。
 - 没有 `message_id` 或数据库里没有对应记录时不做认领，按原有行为继续处理；这类
   消息的幂等仍由生产者/上游保证。
+- 参考信息预算按 rune 而不是 token 计：不用引入 tokenizer，但对中英文混排只是
+  近似值。如果上游模型窗口很紧，应该把 `contextBudgetRunes` 下调并按模型侧
+  tokenizer 校准，而不是假设 6000 字一定安全。
+- 检索并行化只覆盖单次请求内的三个来源，没有做跨请求的缓存/合流；相同问题在
+  高并发下仍会各自检索一次。下一步可以用 `singleflight` 按 query 合并同瞬发查询。
 
 ---
 
