@@ -9,14 +9,20 @@ import (
 // ChatFunc 规划器专用的 LLM 调用（注入式，便于测试）
 type ChatFunc func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 
-const planSystemPrompt = `你是任务规划器。把用户目标分解为可顺序执行的步骤清单。
+const planSystemPrompt = `你是任务规划器。把用户目标分解为带依赖关系的步骤图。
 规则：
 1. 步骤数在 1 到 %d 之间，每步是一个原子子任务，能用现有工具（知识库检索、图谱查询、MCP 工具等）或模型知识完成
 2. 如果目标足够简单一步可完成，就只输出一个步骤
 3. 每步的 description 要具体、自包含（执行者看不到其他上下文）
 4. tool 字段填建议使用的工具名，没有合适工具就留空
+5. depends_on 填直接前驱步骤的 id：能并行的步骤不要串成一条链
+6. assumptions 写这一步成立所依赖的前提（一条一句）；没有就留空数组
+7. expects 用一句话写这一步应产出什么，用于判断"真的完成了"而不只是"没报错"
+8. effect 只能是 none / idempotent / side_effect：只读检索用 none，可重复写入用 idempotent，
+   发消息、发邮件、扣款等不可重放动作必须标记 side_effect
 输出 JSON，不要输出其他内容：
-{"goal": "目标复述", "steps": [{"id": 1, "description": "步骤描述", "tool": "工具名或空"}]}`
+{"goal": "目标复述", "steps": [{"id": 1, "description": "步骤描述", "tool": "工具名或空",
+  "depends_on": [], "assumptions": [], "expects": "预期产出", "effect": "none"}]}`
 
 const replanSystemPrompt = `你是任务规划器。之前的计划在执行中失败，需要修订。
 规则：
@@ -28,7 +34,8 @@ const synthesizeSystemPrompt = `你是任务综合器。根据各步骤的执行
 规则：
 1. 直接给出最终答案，不要复述步骤过程
 2. 如果部分步骤失败，基于成功步骤的结果尽力回答，并简要说明局限
-3. 用清晰自然的语言组织答案`
+3. 标记为【已失效】的步骤结果一律不得引用，也不要猜测其内容
+4. 用清晰自然的语言组织答案`
 
 // Planner 生成/修订计划、综合作答
 type Planner struct {
@@ -105,10 +112,13 @@ func (p *Planner) ExecutePlan(ctx context.Context, plan *Plan, exec StepExecutor
 			onProgress(fmt.Sprintf("✖ 步骤 %d 失败，正在重新规划剩余步骤...\n", failed.Step.ID))
 		}
 
-		newPlan, err := p.Replan(ctx, plan.Goal, results, failed.Step, failReason)
+		// D7：把历史轮次结果一并交给重规划，避免第二轮看不到第一轮已完成的步骤。
+		// D6：目标不可被模型改写，重规划只允许调整步骤。
+		newPlan, err := p.Replan(ctx, plan.Goal, allResults, failed.Step, failReason)
 		if err != nil {
 			return allResults
 		}
+		newPlan.Goal = plan.Goal
 		replans++
 		plan = newPlan
 		if onProgress != nil {
@@ -164,6 +174,14 @@ func BuildStepPrompt(step PlanStep, priorResults string) string {
 		sb.WriteString("\n\n前序步骤的结果（供参考）：\n")
 		sb.WriteString(priorResults)
 	}
+	sb.WriteString(`
+
+【结构化输出】
+完成上述步骤后，在回答末尾追加一行 JSON（不要用代码块包裹）：
+{"facts":[{"key":"2.doc_ids","value":"d_1,d_2"}],
+ "violations":[{"step_id":2,"claim":"文件是 CSV","reason":"实际是 XLSX"}]}
+没有可上报的内容时输出 {"facts":[],"violations":[]}。
+如果发现前序步骤的结论不成立，必须写进 violations，不要只在正文里提及。`)
 	return sb.String()
 }
 
@@ -178,5 +196,5 @@ func lastFailed(results []StepResult) *StepResult {
 }
 
 func truncateForContext(s string) string {
-	return truncateRunes(s, maxStepOutputKB*1024)
+	return truncateBytes(s, maxStepOutputBytes)
 }
