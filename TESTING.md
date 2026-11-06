@@ -1158,6 +1158,21 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 这一层不依赖 `queue_messages` 是否还在，也不依赖消费端是否成功写入 `PROCESSED`，
 是消费端闸门之外的第二次兜底。
 
+### 可观测：幂等到底挡下了多少
+
+`logos.qa.idempotency.count` 的 `result` 只取固定枚举，不把 `request_id` 放进标签，
+避免高基数：
+
+| result | 含义 |
+|--------|------|
+| `hit` | 重放/重复投递命中已落库答案，没有再次调用模型 |
+| `concurrent_hit` | 两个实例同时执行，后写入者撞唯一键后回查到先写入者 |
+| `conflict` | 同一幂等键被不同用户或不同问题复用，按错误日志排查 |
+
+`hit` 与 `concurrent_hit` 的区别很重要：前者说明重复投递被正常挡住，后者说明消费端
+仍有并发窗口，但业务侧已经把它收敛成一次成功问答。只看「模型调用次数下降」无法区分
+这两种情况。
+
 ### 自动化测试覆盖
 
 `service/message_test.go` 与 `dao/claim_test.go`：
@@ -1179,6 +1194,8 @@ go test ./pkg/mq/ -run 'TestDeadLetterReplay|TestReplay' -count=1 -v
 - 不同用户、不同问题复用同一个 `request_id` 都返回冲突；
 - 空 `request_id` 保持 UUID 行为，不查询幂等记录；
 - 并发写入唯一键冲突后回查已有记录，返回先写入者的答案。
+
+`pkg/obs/metrics_qa_test.go`：验证幂等结果指标按固定 `result` 标签上报。
 
 ```bash
 go test ./internal/service/messaging/message/... -count=1
