@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	botmodel "Logos/internal/service/ai/bot/model"
 )
@@ -170,6 +171,44 @@ func TestToSchemaMessages_SkipsEmptyAssistant(t *testing.T) {
 	}
 }
 
+func TestToSchemaMessages_MergesConsecutiveUserMessages(t *testing.T) {
+	// IM 连发场景：两条都是用户消息，第一条携带订单号，第二条才是意图。
+	// 旧实现会丢掉第一条，模型只能凭空猜测「帮我查下」查什么。
+	msgs := []*botmodel.Message{
+		{ID: "1", Role: "user", Content: "订单号 20261106001"},
+		{ID: "2", Role: "user", Content: "帮我查下"},
+		{ID: "3", Role: "assistant", Content: "好的，我来查询。"},
+	}
+	out := toSchemaMessages(msgs)
+	if len(out) != 2 {
+		t.Fatalf("consecutive user messages should merge, got %d messages", len(out))
+	}
+	if !strings.Contains(out[0].Content, "20261106001") {
+		t.Errorf("first user message was dropped: %q", out[0].Content)
+	}
+	if !strings.Contains(out[0].Content, "帮我查下") {
+		t.Errorf("second user message missing: %q", out[0].Content)
+	}
+	if !strings.Contains(out[0].Content, "\n") {
+		t.Error("merged messages should keep a visible boundary")
+	}
+}
+
+func TestToSchemaMessages_MergesConsecutiveAssistantMessages(t *testing.T) {
+	msgs := []*botmodel.Message{
+		{ID: "1", Role: "user", Content: "hi"},
+		{ID: "2", Role: "assistant", Content: "第一段"},
+		{ID: "3", Role: "assistant", Content: "第二段"},
+	}
+	out := toSchemaMessages(msgs)
+	if len(out) != 2 {
+		t.Fatalf("consecutive assistant messages should merge, got %d", len(out))
+	}
+	if !strings.Contains(out[1].Content, "第一段") || !strings.Contains(out[1].Content, "第二段") {
+		t.Errorf("assistant content lost during merge: %q", out[1].Content)
+	}
+}
+
 func TestRenderMessages_TruncatesLongContent(t *testing.T) {
 	msgs := []*botmodel.Message{
 		{ID: "1", Role: "user", Content: strings.Repeat("y", 1000)},
@@ -180,5 +219,28 @@ func TestRenderMessages_TruncatesLongContent(t *testing.T) {
 	}
 	if !strings.Contains(out, "...") {
 		t.Error("truncated content should carry ellipsis")
+	}
+}
+
+func TestRenderMessages_TruncatesChineseByRune(t *testing.T) {
+	// 1000 个汉字按字节切 500 会得到 166 个半截字符；
+	// 按 rune 切应保留 500 个完整汉字，且输出必须是合法 UTF-8。
+	msgs := []*botmodel.Message{
+		{ID: "1", Role: "user", Content: strings.Repeat("中", 1000)},
+	}
+	out := renderMessages(msgs)
+
+	if !utf8.ValidString(out) {
+		t.Fatal("truncated summary input must stay valid UTF-8")
+	}
+	if strings.ContainsRune(out, utf8.RuneError) {
+		t.Fatal("truncation introduced replacement characters")
+	}
+	if !strings.HasSuffix(strings.TrimSuffix(out, "\n"), "...") {
+		t.Errorf("expected ellipsis at end, got suffix %q", out[len(out)-10:])
+	}
+	body := strings.TrimSuffix(strings.TrimPrefix(out, "用户: "), "...\n")
+	if got := utf8.RuneCountInString(body); got != summaryRenderRuneLimit {
+		t.Errorf("expected %d runes kept, got %d", summaryRenderRuneLimit, got)
 	}
 }

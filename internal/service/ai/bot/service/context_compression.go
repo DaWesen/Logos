@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	botmodel "Logos/internal/service/ai/bot/model"
 	"Logos/pkg/logger"
@@ -34,6 +36,9 @@ const (
 	historyFetchCount = 60
 	// minOverflowToSummarize 溢出消息少于此数不值得摘要
 	minOverflowToSummarize = 4
+	// summaryRenderRuneLimit 单条消息进入摘要 prompt 的最大字符数。
+	// 用 rune 而不是 byte：中文一字三字节，按字节切会把多字节序列拦腰截断。
+	summaryRenderRuneLimit = 500
 )
 
 // contextSummaryPrompt 让 LLM 把早期对话合并为简洁背景
@@ -206,20 +211,32 @@ func reverseChronological(msgs []*botmodel.Message) []*botmodel.Message {
 	return out
 }
 
-// toSchemaMessages 转 eino 消息（跳过连续同角色与空 assistant）
+// toSchemaMessages 转 eino 消息（跳过空 assistant）。
+//
+// 连续同角色消息必须合并而不是丢弃：IM 里用户连发「订单号 20261106001」
+// 和「帮我查下」是常态，丢掉第一条会让模型在缺少关键信息的情况下作答，
+// 而且这种丢失不报错、不进摘要，线上很难定位。
 func toSchemaMessages(msgs []*botmodel.Message) []*schema.Message {
 	var out []*schema.Message
 	var lastRole string
 	for _, msg := range msgs {
 		switch msg.Role {
 		case "user":
-			if lastRole == "user" {
+			if msg.Content == "" {
+				continue
+			}
+			if lastRole == "user" && len(out) > 0 {
+				out[len(out)-1].Content = mergeContent(out[len(out)-1].Content, msg.Content)
 				continue
 			}
 			out = append(out, schema.UserMessage(msg.Content))
 			lastRole = "user"
 		case "assistant":
 			if msg.Content == "" {
+				continue
+			}
+			if lastRole == "assistant" && len(out) > 0 {
+				out[len(out)-1].Content = mergeContent(out[len(out)-1].Content, msg.Content)
 				continue
 			}
 			out = append(out, schema.AssistantMessage(msg.Content, nil))
@@ -229,19 +246,41 @@ func toSchemaMessages(msgs []*botmodel.Message) []*schema.Message {
 	return out
 }
 
+// mergeContent 用换行拼接同角色消息，保留两条消息原来的边界。
+func mergeContent(prev, next string) string {
+	if prev == "" {
+		return next
+	}
+	if next == "" {
+		return prev
+	}
+	return prev + "\n" + next
+}
+
 // renderMessages 把消息渲染为摘要 prompt 中的文本
 func renderMessages(msgs []*botmodel.Message) string {
-	out := ""
+	var out strings.Builder
 	for _, m := range msgs {
 		role := "助手"
 		if m.Role == "user" {
 			role = "用户"
 		}
-		content := m.Content
-		if len(content) > 500 {
-			content = content[:500] + "..."
-		}
-		out += role + ": " + content + "\n"
+		out.WriteString(role)
+		out.WriteString(": ")
+		out.WriteString(truncateRunes(m.Content, summaryRenderRuneLimit))
+		out.WriteString("\n")
 	}
-	return out
+	return out.String()
+}
+
+// truncateRunes 按字符（rune）截断，保证输出始终是合法 UTF-8。
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:limit]) + "..."
 }
