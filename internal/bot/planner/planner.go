@@ -245,13 +245,28 @@ func (p *Planner) runSteps(ctx context.Context, plan *Plan, exec StepExecutor, o
 }
 
 // BuildStepPrompt 构建单步执行的 prompt（纯函数，可单测）：
-// 步骤描述 + 建议工具 + 前序结果参考。
+// 步骤描述 + 建议工具 + 成立前提 + 预期产出 + 前序结果参考。
+//
+// Assumptions/Expects 不参与调度，但必须进入执行 prompt：模型只有看到
+// 「这一步假设了什么、要交付什么」，才会在前提不成立时上报，而不是硬编
+// 一个看起来完成的答案。校验器是事后兜底，不能替代执行时的上下文。
 func BuildStepPrompt(step PlanStep, priorResults string) string {
 	var sb strings.Builder
-	sb.WriteString("请完成以下任务步骤：")
+	sb.WriteString("请完成以下任务步骤：\n")
 	sb.WriteString(step.Description)
 	if step.Tool != "" {
 		sb.WriteString(fmt.Sprintf("\n建议优先使用工具：%s", step.Tool))
+	}
+	if len(step.Assumptions) > 0 {
+		sb.WriteString("\n\n本步骤成立的前提（不成立时请在正文说明并写入 violations）：")
+		for _, assumption := range step.Assumptions {
+			sb.WriteString("\n- ")
+			sb.WriteString(assumption)
+		}
+	}
+	if strings.TrimSpace(step.Expects) != "" {
+		sb.WriteString("\n\n预期产出：")
+		sb.WriteString(step.Expects)
 	}
 	if priorResults != "" {
 		sb.WriteString("\n\n前序步骤的结果（供参考）：\n")

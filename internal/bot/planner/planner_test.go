@@ -270,6 +270,17 @@ func TestBuildStepPrompt(t *testing.T) {
 	if !strings.Contains(got, "前序结果ABC") {
 		t.Errorf("step prompt should carry prior results: %q", got)
 	}
+
+	// 前提与预期必须进入执行 prompt：只在执行后校验，模型已经按
+	// 错误前提编完了答案。
+	step.Assumptions = []string{"知识库中存在《架构设计》"}
+	step.Expects = "列出三条关键约束"
+	got = BuildStepPrompt(step, "")
+	for _, want := range []string{"知识库中存在《架构设计》", "列出三条关键约束"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("step prompt missing %q: %q", want, got)
+		}
+	}
 }
 
 func TestFormatResults(t *testing.T) {

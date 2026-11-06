@@ -298,6 +298,10 @@ func (p *Plan) DeepCopy() *Plan {
 		cp.Steps[i] = s
 		cp.Steps[i].DependsOn = append([]int(nil), s.DependsOn...)
 		cp.Steps[i].Assumptions = append([]string(nil), s.Assumptions...)
+		// outcome 是运行态，但 facts/violations 是切片；浅拷贝会让
+		// patch 副本与原计划共享底层数组，审计时看到被改写的历史结果。
+		cp.Steps[i].outcome.Facts = append([]Fact(nil), s.outcome.Facts...)
+		cp.Steps[i].outcome.Violations = append([]Violation(nil), s.outcome.Violations...)
 	}
 	return cp
 }
