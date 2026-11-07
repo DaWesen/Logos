@@ -318,7 +318,9 @@ func TestSummarizeOverflow_ConcurrentSameConversationRunsOnce(t *testing.T) {
 	cc := NewConversationCompressor()
 	overflow := makeMsgs(10, 1000)
 
-	const callers = 8
+	// 50 个并发调用者：规格 T15 要求验证「同一会话只回源一次」在
+	// 明显高于日常并发的压力下仍成立，而不是碰巧被 8 个 goroutine 掩盖。
+	const callers = 50
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
